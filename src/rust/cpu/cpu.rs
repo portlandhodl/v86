@@ -4015,7 +4015,7 @@ pub unsafe fn safe_read_write32(addr: i32, instruction: &dyn Fn(i32) -> i32) {
     }
 }
 
-fn get_reg8_index(index: i32) -> i32 { return index << 2 & 12 | index >> 2 & 1; }
+fn get_reg8_index(index: i32) -> i32 { return index << 3 & 24 | index >> 2 & 1; }
 
 pub unsafe fn read_reg8(index: i32) -> i32 {
     dbg_assert!(index >= 0 && index < 8);
@@ -4027,7 +4027,7 @@ pub unsafe fn write_reg8(index: i32, value: i32) {
     *reg8.offset(get_reg8_index(index) as isize) = value as u8;
 }
 
-fn get_reg16_index(index: i32) -> i32 { return index << 1; }
+fn get_reg16_index(index: i32) -> i32 { return index << 2; }
 
 pub unsafe fn read_reg16(index: i32) -> i32 {
     dbg_assert!(index >= 0 && index < 8);
@@ -4040,13 +4040,24 @@ pub unsafe fn write_reg16(index: i32, value: i32) {
 }
 
 pub unsafe fn read_reg32(index: i32) -> i32 {
-    dbg_assert!(index >= 0 && index < 8);
-    *reg32.offset(index as isize)
+    dbg_assert!(index >= 0 && index < 16);
+    *reg32.offset((index << 1) as isize)
 }
 
 pub unsafe fn write_reg32(index: i32, value: i32) {
-    dbg_assert!(index >= 0 && index < 8);
-    *reg32.offset(index as isize) = value;
+    dbg_assert!(index >= 0 && index < 16);
+    // 32-bit writes zero-extend into the full 64-bit register
+    *reg64.offset(index as isize) = value as u32 as u64;
+}
+
+pub unsafe fn read_reg64(index: i32) -> u64 {
+    dbg_assert!(index >= 0 && index < 16);
+    *reg64.offset(index as isize)
+}
+
+pub unsafe fn write_reg64(index: i32, value: u64) {
+    dbg_assert!(index >= 0 && index < 16);
+    *reg64.offset(index as isize) = value;
 }
 
 pub unsafe fn read_mmx32s(r: i32) -> i32 { (*fpu_st.offset(r as isize)).mantissa as i32 }
@@ -4565,7 +4576,7 @@ pub unsafe fn reset_cpu() {
         *segment_offsets.offset(i) = 0;
         *segment_access_bytes.offset(i) = 0x80 | (0 << 5) | 0x10 | 0x02; // P dpl0 S RW
 
-        *reg32.offset(i) = 0;
+        *reg64.offset(i) = 0;
 
         *sreg.offset(i) = 0;
         *dreg.offset(i) = 0;
@@ -4574,6 +4585,10 @@ pub unsafe fn reset_cpu() {
 
         *fpu_st.offset(i) = softfloat::F80::ZERO;
     }
+    for i in 8..16 {
+        *reg64.offset(i) = 0;
+    }
+
     *segment_access_bytes.offset(CS as isize) = 0x80 | (0 << 5) | 0x10 | 0x08 | 0x02; // P dpl0 S E RW
 
     for i in 0..4 {

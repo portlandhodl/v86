@@ -4,9 +4,12 @@ use crate::cpu::cpu::reg128;
 use crate::softfloat::F80;
 use crate::state_flags::CachedStateFlags;
 
-pub const reg8: *mut u8 = 64 as *mut u8;
-pub const reg16: *mut u16 = 64 as *mut u16;
-pub const reg32: *mut i32 = 64 as *mut i32;
+// 16 general purpose registers, 64 bits each (little-endian).
+// The 8/16/32-bit views alias the low bytes of the 64-bit registers.
+pub const reg8: *mut u8 = 128 as *mut u8;
+pub const reg16: *mut u16 = 128 as *mut u16;
+pub const reg32: *mut i32 = 128 as *mut i32;
+pub const reg64: *mut u64 = 128 as *mut u64;
 
 pub const last_op_size: *mut i32 = 96 as *mut i32;
 pub const flags_changed: *mut i32 = 100 as *mut i32;
@@ -76,8 +79,13 @@ pub const fpu_st: *mut F80 = 1152 as *mut F80;
 pub const pat: *mut u64 = 1288 as *mut u64;
 
 pub fn get_reg32_offset(r: u32) -> u32 {
-    dbg_assert!(r < 8);
-    (unsafe { reg32.offset(r as isize) }) as u32
+    dbg_assert!(r < 16);
+    (unsafe { reg32.offset((r * 2) as isize) }) as u32
+}
+
+pub fn get_reg64_offset(r: u32) -> u32 {
+    dbg_assert!(r < 16);
+    (unsafe { reg64.offset(r as isize) }) as u32
 }
 
 pub fn get_reg_mmx_offset(r: u32) -> u32 {

@@ -106,6 +106,7 @@ export function CPU(bus, wm, stop_idling)
 
     // current operand/address size
     this.is_32 = view(Int32Array, memory, 804, 1);
+    this.is_64 = view(Int32Array, memory, 272, 1);
 
     this.stack_size_32 = view(Int32Array, memory, 808, 1);
 
@@ -172,7 +173,10 @@ export function CPU(bus, wm, stop_idling)
     this.instruction_counter = view(Uint32Array, memory, 664, 1);
 
     // registers
-    this.reg32 = view(Int32Array, memory, 64, 8);
+    // 16 general purpose registers, 64 bits each (little-endian)
+    this.reg64 = view(BigUint64Array, memory, 128, 16);
+    // 32-bit view of the above: reg32s[r * 2] is the low half of r
+    this.reg32s = view(Int32Array, memory, 128, 32);
 
     this.fpu_st = view(Int32Array, memory, 1152, 4 * 8);
 
@@ -230,6 +234,18 @@ export function CPU(bus, wm, stop_idling)
 
     //Object.seal(this);
 }
+
+CPU.prototype.get_reg32 = function(r)
+{
+    return this.reg32s[r << 1];
+};
+
+CPU.prototype.set_reg32 = function(r, v)
+{
+    // 32-bit writes zero-extend into the full 64-bit register
+    this.reg32s[r << 1] = v | 0;
+    this.reg32s[(r << 1) + 1] = 0;
+};
 
 CPU.prototype.mmap_read8 = function(addr)
 {
@@ -475,6 +491,7 @@ CPU.prototype.get_state = function()
     state[11] = this.cpl[0];
 
     state[13] = this.is_32[0];
+    state[96] = this.is_64[0];
 
     state[16] = this.stack_size_32[0];
     state[17] = this.in_hlt[0];
@@ -493,7 +510,19 @@ CPU.prototype.get_state = function()
 
     state[37] = this.instruction_pointer[0];
     state[38] = this.previous_ip[0];
-    state[39] = this.reg32;
+    // low halves of r0-r7 (kept for compatibility with older state images)
+    state[39] = new Int32Array(8);
+    // high halves of r0-r7
+    state[94] = new Int32Array(8);
+    // r8-r15 as interleaved lo/hi pairs
+    state[95] = new Int32Array(16);
+    for(let i = 0; i < 8; i++)
+    {
+        state[39][i] = this.reg32s[i << 1];
+        state[94][i] = this.reg32s[(i << 1) + 1];
+        state[95][i << 1] = this.reg32s[16 + (i << 1)];
+        state[95][(i << 1) + 1] = this.reg32s[16 + (i << 1) + 1];
+    }
     state[40] = this.sreg;
     state[41] = this.dreg;
     state[42] = this.reg_pdpte;
@@ -665,6 +694,7 @@ CPU.prototype.set_state = function(state)
     this.cpl[0] = state[11];
 
     this.is_32[0] = state[13];
+    this.is_64[0] = state[96] || 0;
 
     this.stack_size_32[0] = state[16];
 
@@ -685,7 +715,13 @@ CPU.prototype.set_state = function(state)
 
     this.instruction_pointer[0] = state[37];
     this.previous_ip[0] = state[38];
-    this.reg32.set(state[39]);
+    for(let i = 0; i < 8; i++)
+    {
+        this.reg32s[i << 1] = state[39][i];
+        this.reg32s[(i << 1) + 1] = state[94] ? state[94][i] : 0;
+        this.reg32s[16 + (i << 1)] = state[95] ? state[95][i << 1] : 0;
+        this.reg32s[16 + (i << 1) + 1] = state[95] ? state[95][(i << 1) + 1] : 0;
+    }
     this.sreg.set(state[40]);
     this.dreg.set(state[41]);
     state[42] && this.reg_pdpte.set(state[42]);
@@ -1276,7 +1312,7 @@ CPU.prototype.init = function(settings, device_bus)
             else
             {
                 dbg_log("loaded multiboot without bios", LOG_CPU);
-                this.reg32[REG_EAX] = this.io.port_read32(0xF4);
+                this.set_reg32(REG_EAX, this.io.port_read32(0xF4));
             }
         }
     }
@@ -1295,7 +1331,7 @@ CPU.prototype.load_multiboot = function (buffer)
     if(option_rom)
     {
         dbg_log("loaded multiboot", LOG_CPU);
-        this.reg32[REG_EAX] = this.io.port_read32(0xF4);
+        this.set_reg32(REG_EAX, this.io.port_read32(0xF4));
     }
 };
 
@@ -1546,7 +1582,7 @@ CPU.prototype.load_multiboot_option_rom = function(buffer, initrd, cmdline)
 
             // set state for multiboot
 
-            cpu.reg32[REG_EBX] = multiboot_info_addr;
+            cpu.set_reg32(REG_EBX, multiboot_info_addr);
             cpu.cr[0] = 1;
             cpu.protected_mode[0] = +true;
             cpu.flags[0] = FLAGS_DEFAULT;
@@ -1964,7 +2000,7 @@ CPU.prototype.dump_stack = function(start, end)
 {
     if(!DEBUG) return;
 
-    var esp = this.reg32[REG_ESP];
+    var esp = this.get_reg32(REG_ESP);
     dbg_log("========= STACK ==========");
 
     if(end >= start || end === undefined)
@@ -1996,7 +2032,7 @@ CPU.prototype.debug_get_state = function(where)
     var iopl = this.getiopl();
     var cpl = this.cpl[0];
     var cs_eip = h(this.sreg[REG_CS], 4) + ":" + h(this.get_real_eip() >>> 0, 8);
-    var ss_esp = h(this.sreg[REG_SS], 4) + ":" + h(this.reg32[REG_ES] >>> 0, 8);
+    var ss_esp = h(this.sreg[REG_SS], 4) + ":" + h(this.get_reg32(REG_ES) >>> 0, 8);
     var op_size = this.is_32[0] ? "32" : "16";
     var if_ = (this.flags[0] & FLAG_INTERRUPT) ? 1 : 0;
 
@@ -2060,8 +2096,8 @@ CPU.prototype.get_regs_short = function()
 
     for(var i = 0; i < 4; i++)
     {
-        line1 += r32_names[i] + "="  + h(this.reg32[r32[r32_names[i]]] >>> 0, 8) + " ";
-        line2 += r32_names[i+4] + "="  + h(this.reg32[r32[r32_names[i+4]]] >>> 0, 8) + " ";
+        line1 += r32_names[i] + "="  + h(this.get_reg32(r32[r32_names[i]]) >>> 0, 8) + " ";
+        line2 += r32_names[i+4] + "="  + h(this.get_reg32(r32[r32_names[i+4]]) >>> 0, 8) + " ";
     }
 
     //line1 += " eip=" + h(this.get_real_eip() >>> 0, 8);
