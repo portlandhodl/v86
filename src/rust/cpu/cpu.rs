@@ -3239,7 +3239,8 @@ pub fn update_state_flags() {
             (*is_32 as u32) << 0
                 | (*stack_size_32 as u32) << 1
                 | ((*cpl == 3) as u32) << 2
-                | (has_flat_segmentation() as u32) << 3,
+                | (has_flat_segmentation() as u32) << 3
+                | (*is_64 as u32) << 4,
         )
     }
 }
@@ -4627,6 +4628,7 @@ pub unsafe fn reset_cpu() {
     *cpl = 0;
 
     *is_32 = false;
+    *is_64 = false;
     *stack_size_32 = false;
     *prefixes = 0;
 

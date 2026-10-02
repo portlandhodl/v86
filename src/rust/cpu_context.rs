@@ -59,6 +59,7 @@ impl CpuContext {
 
     pub fn cpl3(&self) -> bool { self.state_flags.cpl3() }
     pub fn has_flat_segmentation(&self) -> bool { self.state_flags.has_flat_segmentation() }
+    pub fn is_64(&self) -> bool { self.state_flags.is_64() }
     pub fn osize_32(&self) -> bool {
         self.state_flags.is_32() != (self.prefixes & PREFIX_MASK_OPSIZE != 0)
     }
