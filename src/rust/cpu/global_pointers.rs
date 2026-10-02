@@ -84,6 +84,16 @@ pub const is_64: *mut bool = 272 as *mut bool;
 pub const last_op1_64: *mut u64 = 280 as *mut u64;
 pub const last_result_64: *mut u64 = 288 as *mut u64;
 
+// 64-bit MSRs
+pub const efer: *mut u64 = 296 as *mut u64;
+pub const star: *mut u64 = 304 as *mut u64;
+pub const lstar: *mut u64 = 312 as *mut u64;
+pub const cstar: *mut u64 = 320 as *mut u64;
+pub const sfmask: *mut u64 = 328 as *mut u64;
+pub const fs_base: *mut u64 = 336 as *mut u64;
+pub const gs_base: *mut u64 = 344 as *mut u64;
+pub const kernel_gs_base: *mut u64 = 352 as *mut u64;
+
 pub fn get_reg32_offset(r: u32) -> u32 {
     dbg_assert!(r < 16);
     (unsafe { reg32.offset((r * 2) as isize) }) as u32

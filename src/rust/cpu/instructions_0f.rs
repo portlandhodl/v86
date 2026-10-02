@@ -812,6 +812,7 @@ pub unsafe fn instr_0F22(r: i32, creg: i32) {
                     full_clear_tlb();
                 }
                 if data & CR4_PAE != 0
+                    && *efer & EFER_LME == 0
                     && 0 != (*cr.offset(4) ^ data) & (CR4_PGE | CR4_PSE | CR4_SMEP)
                 {
                     load_pdpte(*cr.offset(3));
@@ -1224,8 +1225,33 @@ pub unsafe fn instr_0F30() {
         },
         IA32_MCG_CAP => {}, // netbsd
         IA32_KERNEL_GS_BASE => {
-            // Only used in 64 bit mode (by SWAPGS), but set by kvm-unit-test
-            dbg_log!("GS Base written");
+            *kernel_gs_base = (high as u32 as u64) << 32 | low as u32 as u64;
+        },
+        IA32_EFER => {
+            let value = (high as u32 as u64) << 32 | low as u32 as u64;
+            dbg_assert!(
+                value & !(EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE) == 0,
+                "Unsupported efer bits"
+            );
+            // LMA is read-only (set by enabling paging while LME=1)
+            *efer = value & !EFER_LMA | *efer & EFER_LMA;
+            update_efer_lma();
+        },
+        IA32_STAR => *star = (high as u32 as u64) << 32 | low as u32 as u64,
+        IA32_LSTAR => *lstar = (high as u32 as u64) << 32 | low as u32 as u64,
+        IA32_CSTAR => *cstar = (high as u32 as u64) << 32 | low as u32 as u64,
+        IA32_SFMASK => *sfmask = (high as u32 as u64) << 32 | low as u32 as u64,
+        IA32_FS_BASE => {
+            let value = (high as u32 as u64) << 32 | low as u32 as u64;
+            dbg_assert!(high == 0 || high == -1, "Non-32-bit fs base not supported");
+            *fs_base = value;
+            *segment_offsets.offset(FS as isize) = value as i32;
+        },
+        IA32_GS_BASE => {
+            let value = (high as u32 as u64) << 32 | low as u32 as u64;
+            dbg_assert!(high == 0 || high == -1, "Non-32-bit gs base not supported");
+            *gs_base = value;
+            *segment_offsets.offset(GS as isize) = value as i32;
         },
         IA32_PERFEVTSEL0 | IA32_PERFEVTSEL1 => {}, // linux/9legacy
         IA32_PMC0 | IA32_PMC1 => {},               // linux
@@ -1320,6 +1346,38 @@ pub unsafe fn instr_0F32() {
             low = *pat as i32;
             high = (*pat >> 32) as i32;
         },
+        IA32_EFER => {
+            low = *efer as i32;
+            high = (*efer >> 32) as i32;
+        },
+        IA32_STAR => {
+            low = *star as i32;
+            high = (*star >> 32) as i32;
+        },
+        IA32_LSTAR => {
+            low = *lstar as i32;
+            high = (*lstar >> 32) as i32;
+        },
+        IA32_CSTAR => {
+            low = *cstar as i32;
+            high = (*cstar >> 32) as i32;
+        },
+        IA32_SFMASK => {
+            low = *sfmask as i32;
+            high = (*sfmask >> 32) as i32;
+        },
+        IA32_FS_BASE => {
+            low = *fs_base as i32;
+            high = (*fs_base >> 32) as i32;
+        },
+        IA32_GS_BASE => {
+            low = *gs_base as i32;
+            high = (*gs_base >> 32) as i32;
+        },
+        IA32_KERNEL_GS_BASE => {
+            low = *kernel_gs_base as i32;
+            high = (*kernel_gs_base >> 32) as i32;
+        },
         MSR_PKG_C2_RESIDENCY => {},
         IA32_SPEC_CTRL => {},      // linux 5.19
         IA32_TSX_CTRL => {},       // linux 5.19
@@ -1358,7 +1416,7 @@ pub unsafe fn instr_0F34() {
         *segment_limits.offset(CS as isize) = -1i32 as u32;
         *segment_offsets.offset(CS as isize) = 0;
         *segment_access_bytes.offset(CS as isize) = 0x80 | (0 << 5) | 0x10 | 0x08 | 0x02; // P dpl0 S E RW
-        update_cs_size(true);
+        update_cs_size(true, false);
         *cpl = 0;
         cpl_changed();
         *sreg.offset(SS as isize) = (seg + 8) as u16;
@@ -1387,7 +1445,7 @@ pub unsafe fn instr_0F35() {
         *segment_limits.offset(CS as isize) = -1i32 as u32;
         *segment_offsets.offset(CS as isize) = 0;
         *segment_access_bytes.offset(CS as isize) = 0x80 | (3 << 5) | 0x10 | 0x08 | 0x02; // P dpl3 S E RW
-        update_cs_size(true);
+        update_cs_size(true, false);
         *cpl = 3;
         cpl_changed();
         *sreg.offset(SS as isize) = (seg + 24 | 3) as u16;
@@ -3329,8 +3387,18 @@ pub unsafe fn instr_0FA2() {
 
         0x80000000 => {
             // maximum supported extended level
-            eax = 5;
+            eax = 8;
             // other registers are reserved
+        },
+
+        0x80000001 => {
+            // extended feature bits
+            edx = 1 << 29; // long mode
+        },
+
+        0x80000008 => {
+            // address sizes: 48-bit virtual, 40-bit physical
+            eax = 48 | 40 << 8;
         },
 
         0x40000000 => {
