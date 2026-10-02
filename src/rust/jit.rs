@@ -2163,6 +2163,11 @@ pub fn jit_increase_hotness_and_maybe_compile(
         return;
     }
 
+    if state_flags.is_64() {
+        // 64-bit JIT not implemented yet, run 64-bit code in the interpreter
+        return;
+    }
+
     let mut ctx = get_jit_state();
     let is_compiling = ctx.compiling.is_some();
     let page = Page::page_of(phys_address);

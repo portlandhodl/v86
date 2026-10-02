@@ -892,7 +892,7 @@ pub unsafe fn instr16_8D_reg(_r: i32, _r2: i32) {
 pub unsafe fn instr16_8D_mem(modrm_byte: i32, r: i32) {
     // lea
     *prefixes |= prefix::SEG_PREFIX_ZERO;
-    if let Ok(addr) = modrm_resolve(modrm_byte) {
+    if let Ok(addr) = modrm_resolve(modrm_byte, 0) {
         write_reg16(r, addr);
     }
     *prefixes = 0;
@@ -905,7 +905,7 @@ pub unsafe fn instr32_8D_mem(modrm_byte: i32, r: i32) {
     // lea
     // override prefix, so modrm_resolve does not return the segment part
     *prefixes |= prefix::SEG_PREFIX_ZERO;
-    if let Ok(addr) = modrm_resolve(modrm_byte) {
+    if let Ok(addr) = modrm_resolve(modrm_byte, 0) {
         write_reg32(r, addr);
     }
     *prefixes = 0;
@@ -938,7 +938,7 @@ pub unsafe fn instr16_8F_0_mem(modrm_byte: i32) {
     // pop
     // Update esp *before* resolving the address
     adjust_stack_reg(2);
-    match modrm_resolve(modrm_byte) {
+    match modrm_resolve(modrm_byte, 0) {
         Err(()) => {
             // a pagefault happened, reset esp
             adjust_stack_reg(-2);
@@ -955,7 +955,7 @@ pub unsafe fn instr16_8F_0_reg(r: i32) { write_reg16(r, return_on_pagefault!(pop
 pub unsafe fn instr32_8F_0_mem(modrm_byte: i32) {
     // Update esp *before* resolving the address
     adjust_stack_reg(4);
-    match modrm_resolve(modrm_byte) {
+    match modrm_resolve(modrm_byte, 0) {
         Err(()) => {
             // a pagefault happened, reset esp
             adjust_stack_reg(-4);
@@ -970,21 +970,28 @@ pub unsafe fn instr32_8F_0_mem(modrm_byte: i32) {
 }
 pub unsafe fn instr32_8F_0_reg(r: i32) { write_reg32(r, return_on_pagefault!(pop32s())); }
 
-pub unsafe fn instr_90() {}
-pub unsafe fn instr16_91() { xchg16r(CX); }
-pub unsafe fn instr32_91() { xchg32r(ECX); }
-pub unsafe fn instr16_92() { xchg16r(DX); }
-pub unsafe fn instr32_92() { xchg32r(EDX); }
-pub unsafe fn instr16_93() { xchg16r(BX); }
-pub unsafe fn instr32_93() { xchg32r(EBX); }
-pub unsafe fn instr16_94() { xchg16r(SP); }
-pub unsafe fn instr32_94() { xchg32r(ESP); }
-pub unsafe fn instr16_95() { xchg16r(BP); }
-pub unsafe fn instr32_95() { xchg32r(EBP); }
-pub unsafe fn instr16_96() { xchg16r(SI); }
-pub unsafe fn instr32_96() { xchg32r(ESI); }
-pub unsafe fn instr16_97() { xchg16r(DI); }
-pub unsafe fn instr32_97() { xchg32r(EDI); }
+pub unsafe fn instr_90() {
+    // nop, or xchg rax, r8 with a REX.B prefix in 64-bit mode
+    if *prefixes & prefix::PREFIX_REX_B != 0 {
+        let t = read_reg64(EAX);
+        write_reg64(EAX, read_reg64(8));
+        write_reg64(8, t);
+    }
+}
+pub unsafe fn instr16_91() { xchg16r(1 + rex_b()); }
+pub unsafe fn instr32_91() { xchg32r(1 + rex_b()); }
+pub unsafe fn instr16_92() { xchg16r(2 + rex_b()); }
+pub unsafe fn instr32_92() { xchg32r(2 + rex_b()); }
+pub unsafe fn instr16_93() { xchg16r(3 + rex_b()); }
+pub unsafe fn instr32_93() { xchg32r(3 + rex_b()); }
+pub unsafe fn instr16_94() { xchg16r(4 + rex_b()); }
+pub unsafe fn instr32_94() { xchg32r(4 + rex_b()); }
+pub unsafe fn instr16_95() { xchg16r(5 + rex_b()); }
+pub unsafe fn instr32_95() { xchg32r(5 + rex_b()); }
+pub unsafe fn instr16_96() { xchg16r(6 + rex_b()); }
+pub unsafe fn instr32_96() { xchg32r(6 + rex_b()); }
+pub unsafe fn instr16_97() { xchg16r(7 + rex_b()); }
+pub unsafe fn instr32_97() { xchg32r(7 + rex_b()); }
 
 pub unsafe fn instr16_98() { write_reg16(AX, read_reg8(AL) << 24 >> 24); }
 pub unsafe fn instr32_98() { write_reg32(EAX, read_reg16(AX) as i16 as i32); }
@@ -2502,3 +2509,5 @@ pub unsafe fn instr32_FF_6_mem(addr: i32) {
 pub unsafe fn instr32_FF_6_reg(r1: i32) {
     return_on_pagefault!(push32(read_reg32(r1)));
 }
+
+pub use crate::cpu::instructions_64::*;

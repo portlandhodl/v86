@@ -5264,3 +5264,5 @@ pub unsafe fn instr_0FFF() {
     dbg_log!("#ud: 0F FF");
     trigger_ud();
 }
+
+pub use crate::cpu::instructions_64::*;

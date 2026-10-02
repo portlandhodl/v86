@@ -1,4 +1,5 @@
 use crate::cpu::cpu::*;
+use crate::cpu::global_pointers::instruction_pointer;
 use crate::paging::OrPageFault;
 
 pub unsafe fn resolve_modrm16(modrm_byte: i32) -> OrPageFault<i32> {
@@ -97,6 +98,87 @@ unsafe fn resolve_sib(with_imm: bool) -> OrPageFault<i32> {
         offset = read_reg32(m) << s
     }
     Ok(get_seg_prefix(seg)? + base + offset)
+}
+
+// 64-bit addressing (long mode, no 0x67 prefix). REX.B extends the base
+// register, REX.X the SIB index; mod=00 rm=101 is RIP+disp32 relative.
+// imm_len is the number of immediate bytes following the modrm/sib/disp
+// (needed for RIP-relative addressing, which is relative to the end of the
+// whole instruction).
+// M1 limitation: linear addresses are truncated to 32 bits.
+pub unsafe fn resolve_modrm64(modrm_byte: i32, imm_len: i32) -> OrPageFault<i32> {
+    dbg_assert!(modrm_byte < 192);
+    let r = modrm_byte & 7;
+    if r == 4 {
+        // SIB byte
+        let sib_byte = read_imm8()?;
+        let base_field = sib_byte & 7;
+        let index_field = sib_byte >> 3 & 7;
+        let scale = sib_byte >> 6 & 3;
+
+        let index_value = if index_field == 4 {
+            // no index (rsp/r12 cannot be an index)
+            0
+        }
+        else {
+            read_reg64(index_field | rex_x()) << scale
+        };
+
+        let base;
+        let seg;
+        if base_field == 5 && modrm_byte < 64 {
+            // disp32 with no base register; with REX.B this is r13 + disp32
+            let disp32 = read_imm32s()? as i64 as u64;
+            if rex_b() != 0 {
+                base = read_reg64(13).wrapping_add(disp32);
+                seg = SS;
+            }
+            else {
+                base = disp32;
+                seg = DS;
+            }
+        }
+        else {
+            base = read_reg64(base_field | rex_b());
+            seg = if base_field == 4 || base_field == 5 { SS } else { DS };
+        }
+
+        let disp: i64 = if modrm_byte < 64 {
+            0
+        }
+        else if modrm_byte < 128 {
+            read_imm8s()? as i64
+        }
+        else {
+            read_imm32s()? as i64
+        };
+
+        Ok((get_seg_prefix(seg)? as i64 as u64)
+            .wrapping_add(base)
+            .wrapping_add(index_value)
+            .wrapping_add(disp as u64) as u32 as i32)
+    }
+    else if r == 5 && modrm_byte < 64 {
+        // RIP + disp32 (relative to the end of the whole instruction)
+        let disp = read_imm32s()? as i64 as u64;
+        let rip = (*instruction_pointer).wrapping_add(imm_len) as i64 as u64;
+        Ok((get_seg_prefix(DS)? as i64 as u64).wrapping_add(rip).wrapping_add(disp) as u32 as i32)
+    }
+    else {
+        let base = read_reg64(r | rex_b());
+        let seg = if r == 5 { SS } else { DS };
+        let disp: i64 = if modrm_byte < 64 {
+            0
+        }
+        else if modrm_byte < 128 {
+            read_imm8s()? as i64
+        }
+        else {
+            read_imm32s()? as i64
+        };
+        Ok((get_seg_prefix(seg)? as i64 as u64).wrapping_add(base).wrapping_add(disp as u64)
+            as u32 as i32)
+    }
 }
 
 pub unsafe fn resolve_modrm32(modrm_byte: i32) -> OrPageFault<i32> {

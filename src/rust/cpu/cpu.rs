@@ -8,7 +8,7 @@ use crate::cpu::misc_instr::{
     adjust_stack_reg, get_stack_pointer, getaf, getcf, getof, getpf, getsf, getzf, pop16, pop32s,
     push16, push32,
 };
-use crate::cpu::modrm::{resolve_modrm16, resolve_modrm32};
+use crate::cpu::modrm::{resolve_modrm16, resolve_modrm32, resolve_modrm64};
 use crate::cpu::{apic, ioapic, pic};
 use crate::dbg::dbg_trace;
 use crate::gen;
@@ -2521,6 +2521,12 @@ pub unsafe fn read_imm32s() -> OrPageFault<i32> {
     };
 }
 
+pub unsafe fn read_imm64s() -> OrPageFault<u64> {
+    let low = read_imm32s()? as u32 as u64;
+    let high = read_imm32s()? as u32 as u64;
+    Ok(low | high << 32)
+}
+
 pub unsafe fn is_osize_32() -> bool {
     dbg_assert!(!in_jit);
     return *is_32 != (*prefixes & prefix::PREFIX_MASK_OPSIZE == prefix::PREFIX_MASK_OPSIZE);
@@ -3009,8 +3015,20 @@ pub unsafe fn get_seg_prefix_ss(offset: i32) -> OrPageFault<i32> {
     Ok(get_seg_prefix(SS)? + offset)
 }
 
-pub unsafe fn modrm_resolve(modrm_byte: i32) -> OrPageFault<i32> {
-    if is_asize_32() {
+// imm_len: number of immediate bytes following modrm/sib/disp, needed for
+// RIP-relative addressing in 64-bit mode (ignored in 16/32-bit modes)
+pub unsafe fn modrm_resolve(modrm_byte: i32, imm_len: i32) -> OrPageFault<i32> {
+    if *is_64 {
+        if *prefixes & prefix::PREFIX_MASK_ADDRSIZE != 0 {
+            // 0x67: 32-bit addressing in 64-bit mode
+            // (note: REX.B/X register extension not applied here)
+            resolve_modrm32(modrm_byte)
+        }
+        else {
+            resolve_modrm64(modrm_byte, imm_len)
+        }
+    }
+    else if is_asize_32() {
         resolve_modrm32(modrm_byte)
     }
     else {
@@ -3020,7 +3038,15 @@ pub unsafe fn modrm_resolve(modrm_byte: i32) -> OrPageFault<i32> {
 
 pub unsafe fn run_instruction(opcode: i32) { gen::interpreter::run(opcode as u32) }
 pub unsafe fn run_instruction0f_16(opcode: i32) { gen::interpreter0f::run(opcode as u32) }
-pub unsafe fn run_instruction0f_32(opcode: i32) { gen::interpreter0f::run(opcode as u32 | 0x100) }
+pub unsafe fn run_instruction0f_32(opcode: i32) {
+    if *is_64 && gen::interpreter0f::is_default_64_operand_size(opcode as u32) {
+        // default-64-bit 0F instructions (push/pop fs/gs) in long mode
+        gen::interpreter0f::run(opcode as u32 | 0x200)
+    }
+    else {
+        gen::interpreter0f::run(opcode as u32 | 0x100)
+    }
+}
 
 pub unsafe fn cycle_internal() {
     profiler::stat_increment(stat::CYCLE_INTERNAL);
@@ -3208,7 +3234,25 @@ unsafe fn jit_run_interpreted(mut phys_addr: u32) {
         let opcode = *memory::mem8.offset(phys_addr as isize) as i32;
         *instruction_pointer += 1;
         dbg_assert!(*prefixes == 0);
-        run_instruction(opcode | (*is_32 as i32) << 8);
+        if *is_64 && opcode & 0xF0 == 0x40 {
+            // REX prefix
+            *prefixes =
+                prefix::PREFIX_REX_PRESENT | ((opcode as u16 & 0xF) << 8);
+            run_prefix_instruction();
+            *prefixes = 0;
+        }
+        else if *is_64 {
+            // in 64-bit mode the default operand size tier is 32 bit
+            if gen::interpreter::is_default_64_operand_size(opcode as u32) {
+                run_instruction(opcode | 0x200);
+            }
+            else {
+                run_instruction(opcode | 0x100);
+            }
+        }
+        else {
+            run_instruction(opcode | (*is_32 as i32) << 8);
+        }
         dbg_assert!(*prefixes == 0);
 
         if jit_block_boundary
@@ -3255,12 +3299,35 @@ pub unsafe fn has_flat_segmentation() -> bool {
 }
 
 pub unsafe fn run_prefix_instruction() {
-    run_instruction(return_on_pagefault!(read_imm8()) | (is_osize_32() as i32) << 8);
+    let opcode = return_on_pagefault!(read_imm8());
+    if *is_64 && opcode & 0xF0 == 0x40 {
+        // REX prefix (0x40-0x4F in 64-bit mode); only the last REX before the
+        // opcode takes effect, a legacy prefix after a REX annuls it
+        *prefixes = *prefixes & !prefix::PREFIX_MASK_REX
+            | prefix::PREFIX_REX_PRESENT
+            | ((opcode as u16 & 0xF) << 8);
+        run_prefix_instruction();
+        *prefixes = 0;
+        return;
+    }
+    if *prefixes & prefix::PREFIX_REX_W != 0
+        || *is_64
+            && is_osize_32()
+            && gen::interpreter::is_default_64_operand_size(opcode as u32)
+    {
+        // REX.W (overrides the 0x66 prefix) or a default-64-bit instruction
+        // (push/pop/call/ret/... in long mode)
+        run_instruction(opcode | 0x200);
+    }
+    else {
+        run_instruction(opcode | (is_osize_32() as i32) << 8);
+    }
 }
 
 pub unsafe fn segment_prefix_op(seg: i32) {
     dbg_assert!(seg <= 5 && seg >= 0);
-    *prefixes = *prefixes & !prefix::PREFIX_MASK_SEGMENT | (seg as u16 + 1);
+    // a legacy prefix after a REX prefix annuls the REX prefix
+    *prefixes = *prefixes & !(prefix::PREFIX_MASK_SEGMENT | prefix::PREFIX_MASK_REX) | (seg as u16 + 1);
     run_prefix_instruction();
     *prefixes = 0
 }
@@ -4016,15 +4083,37 @@ pub unsafe fn safe_read_write32(addr: i32, instruction: &dyn Fn(i32) -> i32) {
     }
 }
 
+// REX extension bits of the current instruction's prefixes (64-bit mode only):
+// return 8 when the corresponding bit is set, 0 otherwise
+#[inline]
+pub unsafe fn rex_r() -> i32 { (*prefixes & prefix::PREFIX_REX_R) as i32 >> 7 }
+#[inline]
+pub unsafe fn rex_x() -> i32 { (*prefixes & prefix::PREFIX_REX_X) as i32 >> 6 }
+#[inline]
+pub unsafe fn rex_b() -> i32 { (*prefixes & prefix::PREFIX_REX_B) as i32 >> 5 }
+#[inline]
+pub unsafe fn rex_w() -> bool { *prefixes & prefix::PREFIX_REX_W != 0 }
+
 fn get_reg8_index(index: i32) -> i32 { return index << 3 & 24 | index >> 2 & 1; }
 
 pub unsafe fn read_reg8(index: i32) -> i32 {
-    dbg_assert!(index >= 0 && index < 8);
+    dbg_assert!(index >= 0 && index < 16);
+    if *prefixes & prefix::PREFIX_REX_PRESENT != 0 {
+        // with a REX prefix, indices 4-15 encode the low bytes of rsp-r15
+        // (ah/ch/dh/bh are not encodable)
+        return *reg8.offset((index << 3) as isize) as i32;
+    }
+    dbg_assert!(index < 8);
     return *reg8.offset(get_reg8_index(index) as isize) as i32;
 }
 
 pub unsafe fn write_reg8(index: i32, value: i32) {
-    dbg_assert!(index >= 0 && index < 8);
+    dbg_assert!(index >= 0 && index < 16);
+    if *prefixes & prefix::PREFIX_REX_PRESENT != 0 {
+        *reg8.offset((index << 3) as isize) = value as u8;
+        return;
+    }
+    dbg_assert!(index < 8);
     *reg8.offset(get_reg8_index(index) as isize) = value as u8;
 }
 
