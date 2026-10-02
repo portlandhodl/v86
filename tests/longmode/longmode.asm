@@ -21,23 +21,27 @@ zero_tables:
     dec ecx
     jnz zero_tables
 
-    mov dword [0x1000], 0x2003   ; PML4[0] -> PDPT, present+rw
-    mov dword [0x2000], 0x3003   ; PDPT[0] -> PD, present+rw
+    mov dword [0x1000], 0x2007   ; PML4[0] -> PDPT, present+rw+user
+    mov dword [0x2000], 0x3007   ; PDPT[0] -> PD, present+rw+user
 
-    ; PD: 2 MiB pages, identity map 0..256 MiB
+    ; PD: 2 MiB pages, identity map 0..256 MiB (user+rw so ring 3 works)
     xor eax, eax
     mov edi, 0x3000
     mov ecx, 128
 fill_pd:
     mov edx, eax
     shl edx, 21
-    or  edx, 0x83              ; P|RW|PS
+    or  edx, 0x87              ; P|RW|US|PS
     mov [edi], edx
     mov dword [edi+4], 0
     inc eax
     add edi, 8
     dec ecx
     jnz fill_pd
+
+    ; PD[256]: 2 MiB page at 0x20000000 (phys 0x200000), with the NX bit set
+    mov dword [0x3000 + 256*8], 0x00200087
+    mov dword [0x3000 + 256*8 + 4], 0x80000000  ; bit 63 = NX
 
     ; --- GDT at 0x800: null, 64-bit code (0x08), data (0x10) ---
     xor eax, eax
@@ -61,7 +65,7 @@ zero_gdt:
 
     mov ecx, 0xC0000080          ; IA32_EFER
     rdmsr
-    or  eax, 0x100               ; EFER.LME
+    or  eax, 0x100 | 0x800       ; EFER.LME | EFER.NXE
     wrmsr
 
     mov eax, 0x1000
@@ -273,13 +277,203 @@ t27_loop:
     sbb rax, -1                  ; 0 - (-1) - 1 = 0
     mov [r15 + 38*8], rax
 
-    ; done
+    ; ======== test 47-49: cmpxchg16b ========
+    mov rax, 0x1111111111111111
+    mov rdx, 0x2222222222222222
+    mov rbx, 0x3333333333333333
+    mov rcx, 0x4444444444444444
+    mov r10, 0xAAAA2222BBBB1111
+    mov [rel cx16_scratch], r10
+    cmpxchg16b [rel cx16_scratch]    ; mismatch: rdx:rax <- mem, ZF=0
+    mov [r15 + 47*8], rax            ; 0xAAAA2222BBBB1111
+    mov [r15 + 48*8], rdx            ; 0
+    ; now rdx:rax match memory: exchange rcx:rbx into memory
+    mov rbx, 0x5555555555555555
+    mov rcx, 0x6666666666666666
+    cmpxchg16b [rel cx16_scratch]
+    setz al
+    movzx rax, al
+    mov [r15 + 49*8], rax            ; 1 (ZF set on exchange)
+    mov rax, [rel cx16_scratch]
+    mov [r15 + 50*8], rax            ; 0x5555555555555555
+
+    ; ======== test 44/45: demand paging through a #PF handler ========
+    ; build the IDT (one entry: vector 14 = #PF, 64-bit interrupt gate)
+    mov rdi, 0x6000
+    mov ecx, 0x100
+    xor eax, eax
+.idt_zero:
+    mov [rdi], rax
+    add rdi, 8
+    dec ecx
+    jnz .idt_zero
+    mov rax, pf_handler
+    mov rdi, 0x6000 + 14*16
+    mov word [rdi], ax                  ; offset 15:0
+    mov word [rdi + 2], 0x08            ; selector
+    mov byte [rdi + 4], 0x00            ; reserved
+    mov byte [rdi + 5], 0x8E            ; P|dpl0|interrupt gate
+    shr rax, 16
+    mov word [rdi + 6], ax              ; offset 31:16
+    shr rax, 16
+    mov qword [rdi + 8], rax            ; offset 63:32
+    lidt [rel idt_ptr]
+
+    ; the page at phys 0x800000 contains a marker (identity-mapped via 2MiB page)
+    mov rax, 0x123456789ABCDEF
+    mov [abs 0x800000], rax
+
+    ; fault on the unmapped 0x40000000; the handler maps it and iretq re-runs
+    mov rax, [abs 0x40000000]
+    mov [r15 + 44*8], rax            ; 0x123456789ABCDEF
+
+    ; ======== test 46: NX fault ========
+    ; the 2MiB page at 0x20000000 (phys 0x200000) is mapped NX in the PD; the
+    ; #PF handler resumes directly after the "call" (nothing on an NX page can
+    ; ever execute)
+    mov rax, 0xDEAD
+    push after_nx
+    jmp 0x20000000                     ; faults on instruction fetch
+after_nx:
+    add rsp, 8                         ; discard the fake return address
+    mov [r15 + 51*8], rax              ; 0xDEAD
+
+    ; ======== test 39-43: syscall/sysret round trip + swapgs ========
+    ; set up IA32_STAR: kernel cs 0x08, user cs 0x18
+    xor eax, eax
+    mov edx, 0x00180008          ; star[47:32] = 0x08, star[63:48] = 0x18
+    mov ecx, 0xC0000081          ; IA32_STAR
+    wrmsr
+    ; LSTAR = syscall_handler
+    mov ecx, 0xC0000082          ; IA32_LSTAR
+    mov eax, syscall_handler
+    xor edx, edx
+    wrmsr
+    ; SFMASK: clear DF on syscall
+    mov ecx, 0xC0000084          ; IA32_SFMASK
+    mov eax, 0x400
+    xor edx, edx
+    wrmsr
+    ; kernel gs base for swapgs
+    mov ecx, 0xC0000101          ; IA32_KERNEL_GS_BASE
+    mov eax, 0x1234000
+    xor edx, edx
+    wrmsr
+    ; a marker qword at the kernel gs base
+    mov rax, 0xFEEDFACEF00DF00D
+    mov [abs 0x1234000], rax
+    ; enable EFER.SCE
+    mov ecx, 0xC0000080          ; IA32_EFER
+    rdmsr
+    or  eax, 1                   ; SCE
+    wrmsr
+
+    ; set DF before the syscall: r11 must carry it, rflags must lose it
+    pushfq
+    or  qword [rsp], 0x400
+    popfq
+    syscall
+after_syscall1:
+    ; we are now at cpl 3 (sysret); immediately syscall back
+    syscall
+after_syscall2:
+    ; we are at cpl 3 again; the third syscall makes the handler write 'K'
+    ; from ring 0 and halt
+    syscall
+after_syscall3:
+    ; not reached
+    jmp hang
+
+; ---- fallback: reached only when syscalls are not enabled ----
     mov al, 'K'
     mov dx, 0x3F8
     out dx, al
 hang:
     hlt
     jmp hang
+
+; ---- syscall handler (ring 0, entered with rcx=return rip, r11=rflags) ----
+syscall_handler:
+    mov r14, rcx                 ; save the return rip (rcx is clobbered below)
+    swapgs                       ; kernel view of the gs base while in the handler
+    mov rax, [rel call_count]
+    inc rax
+    mov [rel call_count], rax
+    cmp rax, 1
+    je .first
+    cmp rax, 2
+    je .second
+
+    ; third call: done - write 'K' and halt
+    mov al, 'K'
+    mov dx, 0x3F8
+    out dx, al
+.hang:
+    hlt
+    jmp .hang
+
+.first:
+    ; rcx = rip of the instruction after syscall
+    mov rax, after_syscall1
+    cmp rcx, rax
+    sete al
+    movzx rax, al
+    mov [r15 + 39*8], rax        ; 1
+    ; r11 = original rflags (with DF still set)
+    mov rax, r11
+    and rax, 0x400
+    mov [r15 + 40*8], rax        ; 0x400
+    ; rflags in the handler have DF masked away by SFMASK
+    pushfq
+    pop rax
+    and rax, 0x400
+    mov [r15 + 41*8], rax        ; 0
+    swapgs
+    mov rcx, r14
+    sysret
+
+.second:
+    ; entered from cpl 3; gs base is the kernel base (swapped on entry)
+    mov rax, gs:[0]
+    mov [r15 + 42*8], rax        ; 0xFEEDFACEF00DF00D
+    ; gs base is now the kernel base: rdmsr IA32_GS_BASE confirms
+    mov ecx, 0xC0000102
+    rdmsr
+    shl rdx, 32
+    or  rax, rdx
+    mov [r15 + 43*8], rax        ; 0x1234000
+    swapgs
+    mov rcx, r14
+    sysret
+
+; ---- #PF handler: demand-paging for 0x40000000, skip for the NX page ----
+pf_handler:
+    mov r8, cr2
+    mov rdx, 0x40000000
+    cmp r8, rdx
+    je .demand
+    ; NX page: store the I/D bit of the error code and resume at a fixed label
+    mov r8, [rsp]                ; error code
+    shr r8, 4
+    and r8, 1
+    mov [r15 + 46*8], r8         ; 1
+    add rsp, 8                   ; pop error code
+    mov r8, after_nx
+    mov [rsp], r8                ; rip <- after_nx
+    iretq
+
+.demand:
+    ; map PDPT[1] -> PD2 @0x5000, PD2[0] -> 2MiB page @phys 0x800000
+    mov dword [abs 0x2008], 0x5007   ; P|RW|US
+    mov dword [abs 0x5000], 0x800087 ; P|RW|US|PS
+    mov dword [abs 0x5004], 0
+    ; error code: not-present (bit 0 clear)
+    mov rax, [rsp]
+    and rax, 1
+    xor rax, 1
+    mov [r15 + 45*8], rax        ; 1
+    add rsp, 8
+    iretq                        ; re-executes the faulting instruction
 
 sub1:
     push rbp
@@ -290,6 +484,12 @@ sub1:
 
 scratch: dq 0
 scratch_ptr: dq scratch
+call_count: dq 0
+cx16_scratch: dq 0, 0
+
+idt_ptr:
+    dw 0xFF                      ; 16 entries - 1
+    dq 0x6000
 
 gdt_ptr:
     dw 0x17                      ; 3 entries - 1

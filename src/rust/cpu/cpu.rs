@@ -1398,14 +1398,17 @@ pub unsafe fn call_interrupt_vector64(
 
     if (interrupt_nr << 4 | 15) as u32 > *idtr_size as u32 {
         dbg_log!("interrupt_nr={:x} idtr_size={:x}", interrupt_nr, *idtr_size);
-        // #GP with the vector number as error code
         if is_software_int {
             trigger_gp(interrupt_nr << 4 | 2);
         }
         else {
-            // exceptions during exception delivery triple-fault in practice; #DF
-            // with a zero error code is the closest useful reaction
-            trigger_df(0);
+            // an exception while delivering a hardware exception means a
+            // triple fault in practice; shut down with a message instead of
+            // recursing
+            panic!(
+                "Triple fault: exception {} during exception delivery",
+                interrupt_nr
+            );
         }
         return;
     }
@@ -1434,7 +1437,12 @@ pub unsafe fn call_interrupt_vector64(
             descriptor.gate_type(),
             descriptor.access_byte()
         );
-        trigger_gp(interrupt_nr << 4 | 2);
+        if is_software_int {
+            trigger_gp(interrupt_nr << 4 | 2);
+        }
+        else {
+            panic!("Triple fault: invalid gate for exception {}", interrupt_nr);
+        }
         return;
     }
 
@@ -1530,23 +1538,28 @@ pub unsafe fn call_interrupt_vector64(
         *segment_is_null.offset(SS as isize) = true;
     }
 
-    let mut p = stack_base.wrapping_sub(frame_size);
+    // Push the frame the way the CPU does: ss, rsp, rflags, cs, rip and
+    // finally the error code, so that (from low to high addresses) the frame
+    // reads error, rip, cs, rflags, rsp, ss.
+    let mut p = stack_base;
     if switch_stack {
+        p = p.wrapping_sub(8);
         return_on_pagefault!(safe_write64(p, old_ss));
-        p += 8;
+        p = p.wrapping_sub(8);
         return_on_pagefault!(safe_write64(p, old_rsp));
-        p += 8;
     }
+    p = p.wrapping_sub(8);
     return_on_pagefault!(safe_write64(p, old_flags as u64));
-    p += 8;
+    p = p.wrapping_sub(8);
     return_on_pagefault!(safe_write64(p, old_cs));
-    p += 8;
+    p = p.wrapping_sub(8);
     return_on_pagefault!(safe_write64(p, old_rip));
     if let Some(ec) = error_code {
-        p += 8;
+        p = p.wrapping_sub(8);
         return_on_pagefault!(safe_write64(p, ec as u64));
     }
-    write_reg64(ESP, stack_base.wrapping_sub(frame_size));
+    dbg_assert!(p == stack_base.wrapping_sub(frame_size));
+    write_reg64(ESP, p);
 
     *sreg.offset(CS as isize) = descriptor.selector() & !3 | *cpl as u16;
     *segment_is_null.offset(CS as isize) = false;
@@ -3964,14 +3977,17 @@ pub unsafe fn get_phys_eip() -> OrPageFault<u32> {
 /// in the error code) when the page is not executable (NX bit, long mode).
 pub fn translate_address_read_code(address: u64) -> OrPageFault<u32> {
     unsafe {
+        let phys = translate_address(address, false, *cpl == 3, false, true)?;
         if *efer & EFER_NXE != 0 && *efer & EFER_LMA != 0 {
+            // the walk above populated the TLB, so the entry now reflects the
+            // NX state of the whole walk
             let entry = tlb_pick_entry(address);
             if entry as i32 & (TLB_VALID | TLB_NOT_EXECUTABLE) == TLB_VALID | TLB_NOT_EXECUTABLE {
                 trigger_pagefault_nx(address);
                 return Err(());
             }
         }
-        translate_address(address, false, *cpl == 3, false, true)
+        Ok(phys)
     }
 }
 
@@ -4157,7 +4173,7 @@ pub unsafe fn trigger_de() {
 
 #[inline(never)]
 pub unsafe fn trigger_ud() {
-    dbg_log!("#ud");
+    dbg_log!("#ud at {:x}", *previous_ip);
     dbg_trace();
     *instruction_pointer = *previous_ip;
     if DEBUG {

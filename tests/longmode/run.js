@@ -71,6 +71,19 @@ const expected = [
     M,                   // 36: cqo
     6n,                  // 37: adc
     0n,                  // 38: sbb with cf
+    1n,                  // 39: syscall: rcx = rip after the syscall
+    0x400n,              // 40: syscall: r11 = original rflags
+    0n,                  // 41: syscall: rflags df bit masked by sfmask
+    0xFEEDFACEF00DF00Dn, // 42: swapgs: gs:[0] after swapgs in the handler
+    0x1234000n,          // 43: swapgs: ia32_gs_base after swapgs
+    0x123456789ABCDEFn,  // 44: demand paging: value after #pf handler mapped the page
+    1n,                  // 45: page fault error code: not-present
+    1n,                  // 46: nx fault: I/D bit in the page fault error code
+    0xAAAA2222BBBB1111n, // 47: cmpxchg16b: rax <- mem on mismatch
+    0n,                  // 48: cmpxchg16b: rdx <- mem+8 on mismatch
+    1n,                  // 49: cmpxchg16b: ZF set on exchange
+    0x5555555555555555n, // 50: cmpxchg16b: mem <- rcx:rbx
+    0xDEADn,             // 51: nx page: mov was skipped by the #PF handler
 ];
 
 const emulator = new V86({
