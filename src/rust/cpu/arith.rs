@@ -1026,7 +1026,7 @@ pub unsafe fn div8(source_operand: u32) {
         return;
     }
     write_reg8(AL, result as i32);
-    write_reg8(AH, (target_operand % source_operand) as i32);
+    write_reg8_legacy_high(AH, (target_operand % source_operand) as i32);
 }
 
 #[no_mangle]
@@ -1042,7 +1042,7 @@ pub unsafe fn idiv8(source_operand: i32) {
         return;
     }
     write_reg8(AL, result);
-    write_reg8(AH, target_operand % source_operand);
+    write_reg8_legacy_high(AH, target_operand % source_operand);
 }
 
 #[no_mangle]

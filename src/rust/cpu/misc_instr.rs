@@ -279,6 +279,35 @@ pub unsafe fn pop32s_ss32() -> OrPageFault<i32> {
     write_reg32(ESP, read_reg32(ESP) + 4);
     Ok(result)
 }
+
+// 64-bit stack operations (long mode): always use rsp, the ss base is 0
+pub unsafe fn get_stack_pointer64(offset: i32) -> i32 {
+    // M1 limitation: linear addresses are truncated to 32 bits
+    (get_seg_ss() as i64 as u64)
+        .wrapping_add(read_reg64(ESP))
+        .wrapping_add(offset as i64 as u64) as u32 as i32
+}
+pub unsafe fn push64(value: u64) -> OrPageFault<()> {
+    let new_sp = read_reg64(ESP).wrapping_sub(8);
+    safe_write64(get_stack_pointer64(-8), value)?;
+    write_reg64(ESP, new_sp);
+    Ok(())
+}
+pub unsafe fn pop64() -> OrPageFault<u64> {
+    let result = safe_read64s(get_stack_pointer64(0))?;
+    write_reg64(ESP, read_reg64(ESP).wrapping_add(8));
+    Ok(result)
+}
+pub unsafe fn jmpcc64(condition: bool, imm32: i32) {
+    if condition {
+        *instruction_pointer = (*instruction_pointer).wrapping_add(imm32)
+    };
+}
+pub unsafe fn cmovcc64(condition: bool, value: u64, r: i32) {
+    if condition {
+        write_reg64(r, value);
+    };
+}
 pub unsafe fn pusha16() {
     let temp = read_reg16(SP);
     // make sure we don't get a pagefault after having

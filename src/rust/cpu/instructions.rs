@@ -472,45 +472,45 @@ pub unsafe fn push32_reg(r: i32) {
     return_on_pagefault!(push32(read_reg32(r)));
 }
 
-pub unsafe fn instr16_50() { push16_reg(AX) }
-pub unsafe fn instr32_50() { push32_reg(EAX) }
-pub unsafe fn instr16_51() { push16_reg(CX) }
-pub unsafe fn instr32_51() { push32_reg(ECX) }
-pub unsafe fn instr16_52() { push16_reg(DX) }
-pub unsafe fn instr32_52() { push32_reg(EDX) }
-pub unsafe fn instr16_53() { push16_reg(BX) }
-pub unsafe fn instr32_53() { push32_reg(EBX) }
-pub unsafe fn instr16_54() { push16_reg(SP) }
-pub unsafe fn instr32_54() { push32_reg(ESP) }
-pub unsafe fn instr16_55() { push16_reg(BP) }
-pub unsafe fn instr32_55() { push32_reg(EBP) }
-pub unsafe fn instr16_56() { push16_reg(SI) }
-pub unsafe fn instr32_56() { push32_reg(ESI) }
-pub unsafe fn instr16_57() { push16_reg(DI) }
-pub unsafe fn instr32_57() { push32_reg(EDI) }
-pub unsafe fn instr16_58() { write_reg16(AX, return_on_pagefault!(pop16())); }
-pub unsafe fn instr32_58() { write_reg32(EAX, return_on_pagefault!(pop32s())); }
-pub unsafe fn instr16_59() { write_reg16(CX, return_on_pagefault!(pop16())); }
-pub unsafe fn instr32_59() { write_reg32(ECX, return_on_pagefault!(pop32s())); }
-pub unsafe fn instr16_5A() { write_reg16(DX, return_on_pagefault!(pop16())); }
-pub unsafe fn instr32_5A() { write_reg32(EDX, return_on_pagefault!(pop32s())); }
-pub unsafe fn instr16_5B() { write_reg16(BX, return_on_pagefault!(pop16())); }
-pub unsafe fn instr32_5B() { write_reg32(EBX, return_on_pagefault!(pop32s())); }
+pub unsafe fn instr16_50() { push16_reg(0 + rex_b()) }
+pub unsafe fn instr32_50() { push32_reg(0 + rex_b()) }
+pub unsafe fn instr16_51() { push16_reg(1 + rex_b()) }
+pub unsafe fn instr32_51() { push32_reg(1 + rex_b()) }
+pub unsafe fn instr16_52() { push16_reg(2 + rex_b()) }
+pub unsafe fn instr32_52() { push32_reg(2 + rex_b()) }
+pub unsafe fn instr16_53() { push16_reg(3 + rex_b()) }
+pub unsafe fn instr32_53() { push32_reg(3 + rex_b()) }
+pub unsafe fn instr16_54() { push16_reg(4 + rex_b()) }
+pub unsafe fn instr32_54() { push32_reg(4 + rex_b()) }
+pub unsafe fn instr16_55() { push16_reg(5 + rex_b()) }
+pub unsafe fn instr32_55() { push32_reg(5 + rex_b()) }
+pub unsafe fn instr16_56() { push16_reg(6 + rex_b()) }
+pub unsafe fn instr32_56() { push32_reg(6 + rex_b()) }
+pub unsafe fn instr16_57() { push16_reg(7 + rex_b()) }
+pub unsafe fn instr32_57() { push32_reg(7 + rex_b()) }
+pub unsafe fn instr16_58() { write_reg16(0 + rex_b(), return_on_pagefault!(pop16())); }
+pub unsafe fn instr32_58() { write_reg32(0 + rex_b(), return_on_pagefault!(pop32s())); }
+pub unsafe fn instr16_59() { write_reg16(1 + rex_b(), return_on_pagefault!(pop16())); }
+pub unsafe fn instr32_59() { write_reg32(1 + rex_b(), return_on_pagefault!(pop32s())); }
+pub unsafe fn instr16_5A() { write_reg16(2 + rex_b(), return_on_pagefault!(pop16())); }
+pub unsafe fn instr32_5A() { write_reg32(2 + rex_b(), return_on_pagefault!(pop32s())); }
+pub unsafe fn instr16_5B() { write_reg16(3 + rex_b(), return_on_pagefault!(pop16())); }
+pub unsafe fn instr32_5B() { write_reg32(3 + rex_b(), return_on_pagefault!(pop32s())); }
 pub unsafe fn instr16_5C() {
-    write_reg16(SP, return_on_pagefault!(safe_read16(get_stack_pointer(0))));
+    write_reg16(4 + rex_b(), return_on_pagefault!(safe_read16(get_stack_pointer(0))));
 }
 pub unsafe fn instr32_5C() {
     write_reg32(
-        ESP,
+        4 + rex_b(),
         return_on_pagefault!(safe_read32s(get_stack_pointer(0))),
     );
 }
-pub unsafe fn instr16_5D() { write_reg16(BP, return_on_pagefault!(pop16())); }
-pub unsafe fn instr32_5D() { write_reg32(EBP, return_on_pagefault!(pop32s())); }
-pub unsafe fn instr16_5E() { write_reg16(SI, return_on_pagefault!(pop16())); }
-pub unsafe fn instr32_5E() { write_reg32(ESI, return_on_pagefault!(pop32s())); }
-pub unsafe fn instr16_5F() { write_reg16(DI, return_on_pagefault!(pop16())); }
-pub unsafe fn instr32_5F() { write_reg32(EDI, return_on_pagefault!(pop32s())); }
+pub unsafe fn instr16_5D() { write_reg16(5 + rex_b(), return_on_pagefault!(pop16())); }
+pub unsafe fn instr32_5D() { write_reg32(5 + rex_b(), return_on_pagefault!(pop32s())); }
+pub unsafe fn instr16_5E() { write_reg16(6 + rex_b(), return_on_pagefault!(pop16())); }
+pub unsafe fn instr32_5E() { write_reg32(6 + rex_b(), return_on_pagefault!(pop32s())); }
+pub unsafe fn instr16_5F() { write_reg16(7 + rex_b(), return_on_pagefault!(pop16())); }
+pub unsafe fn instr32_5F() { write_reg32(7 + rex_b(), return_on_pagefault!(pop32s())); }
 
 #[no_mangle]
 pub unsafe fn instr16_60() { pusha16(); }
@@ -548,6 +548,17 @@ pub unsafe fn arpl(seg: i32, r16: i32) -> i32 {
 
 #[no_mangle]
 pub unsafe fn instr_63_mem(addr: i32, r: i32) {
+    if *is_64 {
+        // movsxd (move with sign extension)
+        let v = return_on_pagefault!(safe_read32s(addr));
+        if rex_w() {
+            write_reg64(r, v as i64 as u64);
+        }
+        else {
+            write_reg32(r, v);
+        }
+        return;
+    }
     if !*protected_mode || vm86_mode() {
         dbg_log!("arpl #ud");
         trigger_ud();
@@ -557,6 +568,17 @@ pub unsafe fn instr_63_mem(addr: i32, r: i32) {
 }
 #[no_mangle]
 pub unsafe fn instr_63_reg(r1: i32, r: i32) {
+    if *is_64 {
+        // movsxd
+        let v = read_reg32(r1);
+        if rex_w() {
+            write_reg64(r, v as i64 as u64);
+        }
+        else {
+            write_reg32(r, v);
+        }
+        return;
+    }
     if !*protected_mode || vm86_mode() {
         dbg_log!("arpl #ud");
         trigger_ud();
@@ -1024,7 +1046,7 @@ pub unsafe fn instr_9B() {
         fwait();
     };
 }
-unsafe fn instr_pushf_popf_check() -> bool { 0 != *flags & FLAG_VM && getiopl() < 3 }
+pub(crate) unsafe fn instr_pushf_popf_check() -> bool { 0 != *flags & FLAG_VM && getiopl() < 3 }
 pub unsafe fn instr16_9C() {
     // pushf
     if instr_pushf_popf_check() {
@@ -1079,13 +1101,13 @@ pub unsafe fn instr32_9D() {
 
 pub unsafe fn instr_9E() {
     // sahf
-    *flags = *flags & !255 | read_reg8(AH);
+    *flags = *flags & !255 | read_reg8_legacy_high(AH);
     *flags = *flags & FLAGS_MASK | FLAGS_DEFAULT;
     *flags_changed &= !255;
 }
 pub unsafe fn instr_9F() {
     // lahf
-    write_reg8(AH, get_eflags());
+    write_reg8_legacy_high(AH, get_eflags());
 }
 
 pub unsafe fn instr_A0(moffs: i32) {
@@ -1181,30 +1203,30 @@ pub unsafe fn instr16_F3AF() { scasw_repz(is_asize_32()); }
 pub unsafe fn instr32_F2AF() { scasd_repnz(is_asize_32()); }
 pub unsafe fn instr32_F3AF() { scasd_repz(is_asize_32()); }
 
-pub unsafe fn instr_B0(imm8: i32) { write_reg8(AL, imm8); }
-pub unsafe fn instr_B1(imm8: i32) { write_reg8(CL, imm8); }
-pub unsafe fn instr_B2(imm8: i32) { write_reg8(DL, imm8); }
-pub unsafe fn instr_B3(imm8: i32) { write_reg8(BL, imm8); }
-pub unsafe fn instr_B4(imm8: i32) { write_reg8(AH, imm8); }
-pub unsafe fn instr_B5(imm8: i32) { write_reg8(CH, imm8); }
-pub unsafe fn instr_B6(imm8: i32) { write_reg8(DH, imm8); }
-pub unsafe fn instr_B7(imm8: i32) { write_reg8(BH, imm8); }
-pub unsafe fn instr16_B8(imm: i32) { write_reg16(AX, imm); }
-pub unsafe fn instr32_B8(imm: i32) { write_reg32(EAX, imm); }
-pub unsafe fn instr16_B9(imm: i32) { write_reg16(CX, imm); }
-pub unsafe fn instr32_B9(imm: i32) { write_reg32(ECX, imm); }
-pub unsafe fn instr16_BA(imm: i32) { write_reg16(DX, imm); }
-pub unsafe fn instr32_BA(imm: i32) { write_reg32(EDX, imm); }
-pub unsafe fn instr16_BB(imm: i32) { write_reg16(BX, imm); }
-pub unsafe fn instr32_BB(imm: i32) { write_reg32(EBX, imm); }
-pub unsafe fn instr16_BC(imm: i32) { write_reg16(SP, imm); }
-pub unsafe fn instr32_BC(imm: i32) { write_reg32(ESP, imm); }
-pub unsafe fn instr16_BD(imm: i32) { write_reg16(BP, imm); }
-pub unsafe fn instr32_BD(imm: i32) { write_reg32(EBP, imm); }
-pub unsafe fn instr16_BE(imm: i32) { write_reg16(SI, imm); }
-pub unsafe fn instr32_BE(imm: i32) { write_reg32(ESI, imm); }
-pub unsafe fn instr16_BF(imm: i32) { write_reg16(DI, imm); }
-pub unsafe fn instr32_BF(imm: i32) { write_reg32(EDI, imm); }
+pub unsafe fn instr_B0(imm8: i32) { write_reg8(0 + rex_b(), imm8); }
+pub unsafe fn instr_B1(imm8: i32) { write_reg8(1 + rex_b(), imm8); }
+pub unsafe fn instr_B2(imm8: i32) { write_reg8(2 + rex_b(), imm8); }
+pub unsafe fn instr_B3(imm8: i32) { write_reg8(3 + rex_b(), imm8); }
+pub unsafe fn instr_B4(imm8: i32) { write_reg8(4 + rex_b(), imm8); }
+pub unsafe fn instr_B5(imm8: i32) { write_reg8(5 + rex_b(), imm8); }
+pub unsafe fn instr_B6(imm8: i32) { write_reg8(6 + rex_b(), imm8); }
+pub unsafe fn instr_B7(imm8: i32) { write_reg8(7 + rex_b(), imm8); }
+pub unsafe fn instr16_B8(imm: i32) { write_reg16(0 + rex_b(), imm); }
+pub unsafe fn instr32_B8(imm: i32) { write_reg32(0 + rex_b(), imm); }
+pub unsafe fn instr16_B9(imm: i32) { write_reg16(1 + rex_b(), imm); }
+pub unsafe fn instr32_B9(imm: i32) { write_reg32(1 + rex_b(), imm); }
+pub unsafe fn instr16_BA(imm: i32) { write_reg16(2 + rex_b(), imm); }
+pub unsafe fn instr32_BA(imm: i32) { write_reg32(2 + rex_b(), imm); }
+pub unsafe fn instr16_BB(imm: i32) { write_reg16(3 + rex_b(), imm); }
+pub unsafe fn instr32_BB(imm: i32) { write_reg32(3 + rex_b(), imm); }
+pub unsafe fn instr16_BC(imm: i32) { write_reg16(4 + rex_b(), imm); }
+pub unsafe fn instr32_BC(imm: i32) { write_reg32(4 + rex_b(), imm); }
+pub unsafe fn instr16_BD(imm: i32) { write_reg16(5 + rex_b(), imm); }
+pub unsafe fn instr32_BD(imm: i32) { write_reg32(5 + rex_b(), imm); }
+pub unsafe fn instr16_BE(imm: i32) { write_reg16(6 + rex_b(), imm); }
+pub unsafe fn instr32_BE(imm: i32) { write_reg32(6 + rex_b(), imm); }
+pub unsafe fn instr16_BF(imm: i32) { write_reg16(7 + rex_b(), imm); }
+pub unsafe fn instr32_BF(imm: i32) { write_reg32(7 + rex_b(), imm); }
 
 pub unsafe fn instr_C0_0_mem(addr: i32, imm: i32) { safe_read_write8(addr, &|x| rol8(x, imm & 31)) }
 pub unsafe fn instr_C0_0_reg(r1: i32, imm: i32) { write_reg8(r1, rol8(read_reg8(r1), imm & 31)); }
@@ -1323,14 +1345,14 @@ pub unsafe fn instr16_C2(imm16: i32) {
     // retn
     let cs = get_seg_cs();
     *instruction_pointer = cs + return_on_pagefault!(pop16());
-    dbg_assert!(*is_32 || get_real_eip() < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || get_real_eip() < 0x10000);
     adjust_stack_reg(imm16);
 }
 pub unsafe fn instr32_C2(imm16: i32) {
     // retn
     let cs = get_seg_cs();
     let ip = return_on_pagefault!(pop32s());
-    dbg_assert!(*is_32 || ip < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || ip < 0x10000);
     *instruction_pointer = cs + ip;
     adjust_stack_reg(imm16);
 }
@@ -1343,7 +1365,7 @@ pub unsafe fn instr32_C3() {
     // retn
     let cs = get_seg_cs();
     let ip = return_on_pagefault!(pop32s());
-    dbg_assert!(*is_32 || ip < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || ip < 0x10000);
     *instruction_pointer = cs + ip;
 }
 
@@ -1408,7 +1430,7 @@ pub unsafe fn instr32_CA(imm16: i32) {
     let ip = return_on_pagefault!(safe_read32s(get_stack_pointer(0)));
     let cs = return_on_pagefault!(safe_read32s(get_stack_pointer(4))) & 0xFFFF;
     far_return(ip, cs, imm16, true);
-    dbg_assert!(*is_32 || get_real_eip() < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || get_real_eip() < 0x10000);
 }
 #[no_mangle]
 pub unsafe fn instr16_CB() {
@@ -1416,7 +1438,7 @@ pub unsafe fn instr16_CB() {
     let ip = return_on_pagefault!(safe_read16(get_stack_pointer(0)));
     let cs = return_on_pagefault!(safe_read16(get_stack_pointer(2)));
     far_return(ip, cs, 0, false);
-    dbg_assert!(*is_32 || get_real_eip() < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || get_real_eip() < 0x10000);
 }
 #[no_mangle]
 pub unsafe fn instr32_CB() {
@@ -1424,7 +1446,7 @@ pub unsafe fn instr32_CB() {
     let ip = return_on_pagefault!(safe_read32s(get_stack_pointer(0)));
     let cs = return_on_pagefault!(safe_read32s(get_stack_pointer(4))) & 0xFFFF;
     far_return(ip, cs, 0, true);
-    dbg_assert!(*is_32 || get_real_eip() < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || get_real_eip() < 0x10000);
 }
 #[no_mangle]
 pub unsafe fn instr_CC() {
@@ -2064,7 +2086,7 @@ pub unsafe fn instr32_E8(imm32s: i32) {
     // call
     return_on_pagefault!(push32(get_real_eip()));
     *instruction_pointer = *instruction_pointer + imm32s;
-    dbg_assert!(*is_32 || get_real_eip() < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || get_real_eip() < 0x10000);
 }
 pub unsafe fn instr16_E9(imm16: i32) {
     // jmp
@@ -2073,7 +2095,7 @@ pub unsafe fn instr16_E9(imm16: i32) {
 pub unsafe fn instr32_E9(imm32s: i32) {
     // jmp
     *instruction_pointer = *instruction_pointer + imm32s;
-    dbg_assert!(*is_32 || get_real_eip() < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || get_real_eip() < 0x10000);
 }
 
 #[no_mangle]
@@ -2090,12 +2112,12 @@ pub unsafe fn instr32_EA(new_ip: i32, cs: i32) {
 pub unsafe fn instr16_EB(imm8: i32) {
     // jmp near
     jmp_rel16(imm8);
-    dbg_assert!(*is_32 || get_real_eip() < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || get_real_eip() < 0x10000);
 }
 pub unsafe fn instr32_EB(imm8: i32) {
     // jmp near
     *instruction_pointer = *instruction_pointer + imm8;
-    dbg_assert!(*is_32 || get_real_eip() < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || get_real_eip() < 0x10000);
 }
 
 #[no_mangle]
@@ -2162,14 +2184,14 @@ pub unsafe fn instr_F1() {
 pub unsafe fn instr_F2() {
     // repnz
     dbg_assert!(*prefixes & prefix::PREFIX_MASK_REP == 0);
-    *prefixes |= prefix::PREFIX_REPNZ;
+    *prefixes = *prefixes & !prefix::PREFIX_MASK_REX | prefix::PREFIX_REPNZ;
     run_prefix_instruction();
     *prefixes = 0;
 }
 pub unsafe fn instr_F3() {
     // repz
     dbg_assert!(*prefixes & prefix::PREFIX_MASK_REP == 0);
-    *prefixes |= prefix::PREFIX_REPZ;
+    *prefixes = *prefixes & !prefix::PREFIX_MASK_REX | prefix::PREFIX_REPZ;
     run_prefix_instruction();
     *prefixes = 0;
 }
@@ -2394,7 +2416,7 @@ pub unsafe fn instr16_FF_2_helper(data: i32) {
     let cs = get_seg_cs();
     return_on_pagefault!(push16(get_real_eip()));
     *instruction_pointer = cs + data;
-    dbg_assert!(*is_32 || get_real_eip() < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || get_real_eip() < 0x10000);
 }
 pub unsafe fn instr16_FF_2_mem(addr: i32) {
     instr16_FF_2_helper(return_on_pagefault!(safe_read16(addr)));
@@ -2416,7 +2438,7 @@ pub unsafe fn instr16_FF_3_mem(addr: i32) {
 pub unsafe fn instr16_FF_4_helper(data: i32) {
     // jmp near
     *instruction_pointer = get_seg_cs() + data;
-    dbg_assert!(*is_32 || get_real_eip() < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || get_real_eip() < 0x10000);
 }
 pub unsafe fn instr16_FF_4_mem(addr: i32) {
     instr16_FF_4_helper(return_on_pagefault!(safe_read16(addr)));
@@ -2451,7 +2473,7 @@ pub unsafe fn instr32_FF_2_helper(data: i32) {
     // call near
     let cs = get_seg_cs();
     return_on_pagefault!(push32(get_real_eip()));
-    dbg_assert!(*is_32 || data < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || data < 0x10000);
     *instruction_pointer = cs + data;
 }
 pub unsafe fn instr32_FF_2_mem(addr: i32) {
@@ -2478,7 +2500,7 @@ pub unsafe fn instr32_FF_3_mem(addr: i32) {
 
 pub unsafe fn instr32_FF_4_helper(data: i32) {
     // jmp near
-    dbg_assert!(*is_32 || data < 0x10000);
+    dbg_assert!(*is_32 || *is_64 || data < 0x10000);
     *instruction_pointer = get_seg_cs() + data;
 }
 pub unsafe fn instr32_FF_4_mem(addr: i32) {

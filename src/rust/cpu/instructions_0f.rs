@@ -4052,21 +4052,125 @@ pub unsafe fn instr16_0FC7_6_mem(_addr: i32) { trigger_ud(); }
 pub unsafe fn instr32_0FC7_6_mem(_addr: i32) { trigger_ud(); }
 
 #[no_mangle]
-pub unsafe fn instr_0FC8() { bswap(EAX); }
+pub unsafe fn instr_0FC8() {
+    if *is_64 {
+        let r = 0 + rex_b();
+        if rex_w() {
+            write_reg64(r, read_reg64(r).swap_bytes());
+        }
+        else {
+            write_reg32(r, read_reg32(r).swap_bytes());
+        }
+    }
+    else {
+        bswap(EAX);
+    }
+}
 #[no_mangle]
-pub unsafe fn instr_0FC9() { bswap(ECX); }
+pub unsafe fn instr_0FC9() {
+    if *is_64 {
+        let r = 1 + rex_b();
+        if rex_w() {
+            write_reg64(r, read_reg64(r).swap_bytes());
+        }
+        else {
+            write_reg32(r, read_reg32(r).swap_bytes());
+        }
+    }
+    else {
+        bswap(ECX);
+    }
+}
 #[no_mangle]
-pub unsafe fn instr_0FCA() { bswap(EDX); }
+pub unsafe fn instr_0FCA() {
+    if *is_64 {
+        let r = 2 + rex_b();
+        if rex_w() {
+            write_reg64(r, read_reg64(r).swap_bytes());
+        }
+        else {
+            write_reg32(r, read_reg32(r).swap_bytes());
+        }
+    }
+    else {
+        bswap(EDX);
+    }
+}
 #[no_mangle]
-pub unsafe fn instr_0FCB() { bswap(EBX); }
+pub unsafe fn instr_0FCB() {
+    if *is_64 {
+        let r = 3 + rex_b();
+        if rex_w() {
+            write_reg64(r, read_reg64(r).swap_bytes());
+        }
+        else {
+            write_reg32(r, read_reg32(r).swap_bytes());
+        }
+    }
+    else {
+        bswap(EBX);
+    }
+}
 #[no_mangle]
-pub unsafe fn instr_0FCC() { bswap(ESP); }
+pub unsafe fn instr_0FCC() {
+    if *is_64 {
+        let r = 4 + rex_b();
+        if rex_w() {
+            write_reg64(r, read_reg64(r).swap_bytes());
+        }
+        else {
+            write_reg32(r, read_reg32(r).swap_bytes());
+        }
+    }
+    else {
+        bswap(ESP);
+    }
+}
 #[no_mangle]
-pub unsafe fn instr_0FCD() { bswap(EBP); }
+pub unsafe fn instr_0FCD() {
+    if *is_64 {
+        let r = 5 + rex_b();
+        if rex_w() {
+            write_reg64(r, read_reg64(r).swap_bytes());
+        }
+        else {
+            write_reg32(r, read_reg32(r).swap_bytes());
+        }
+    }
+    else {
+        bswap(EBP);
+    }
+}
 #[no_mangle]
-pub unsafe fn instr_0FCE() { bswap(ESI); }
+pub unsafe fn instr_0FCE() {
+    if *is_64 {
+        let r = 6 + rex_b();
+        if rex_w() {
+            write_reg64(r, read_reg64(r).swap_bytes());
+        }
+        else {
+            write_reg32(r, read_reg32(r).swap_bytes());
+        }
+    }
+    else {
+        bswap(ESI);
+    }
+}
 #[no_mangle]
-pub unsafe fn instr_0FCF() { bswap(EDI); }
+pub unsafe fn instr_0FCF() {
+    if *is_64 {
+        let r = 7 + rex_b();
+        if rex_w() {
+            write_reg64(r, read_reg64(r).swap_bytes());
+        }
+        else {
+            write_reg32(r, read_reg32(r).swap_bytes());
+        }
+    }
+    else {
+        bswap(EDI);
+    }
+}
 #[no_mangle]
 pub unsafe fn instr_0FD0() { unimplemented_sse(); }
 #[no_mangle]

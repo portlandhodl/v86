@@ -4194,6 +4194,34 @@ pub unsafe fn safe_read_write32(addr: i32, instruction: &dyn Fn(i32) -> i32) {
     }
 }
 
+#[inline(always)]
+pub unsafe fn safe_read_write64(addr: i32, instruction: &dyn Fn(u64) -> u64) {
+    let (phys_addr, can_skip_dirty_page) =
+        return_on_pagefault!(translate_address_write_and_can_skip_dirty(addr));
+    if phys_addr & 0xFFF > 0x1000 - 8 {
+        // crosses a page boundary (cold)
+        let x = return_on_pagefault!(safe_read64s(addr));
+        let value = instruction(x);
+        return_on_pagefault!(safe_write64(addr, value));
+    }
+    else {
+        let x = memory::read64s(phys_addr) as u64;
+        let value = instruction(x);
+        if memory::in_mapped_range(phys_addr) {
+            memory::mmap_write64(phys_addr, value);
+        }
+        else {
+            if !can_skip_dirty_page {
+                jit::jit_dirty_page(Page::page_of(phys_addr));
+            }
+            else {
+                dbg_assert!(!jit::jit_page_has_code(Page::page_of(phys_addr as u32)));
+            }
+            memory::write64_no_mmap_or_dirty_check(phys_addr, value);
+        };
+    }
+}
+
 // REX extension bits of the current instruction's prefixes (64-bit mode only):
 // return 8 when the corresponding bit is set, 0 otherwise
 #[inline]
@@ -4231,13 +4259,25 @@ pub unsafe fn write_reg8(index: i32, value: i32) {
 fn get_reg16_index(index: i32) -> i32 { return index << 2; }
 
 pub unsafe fn read_reg16(index: i32) -> i32 {
-    dbg_assert!(index >= 0 && index < 8);
+    dbg_assert!(index >= 0 && index < 16);
     return *reg16.offset(get_reg16_index(index) as isize) as i32;
 }
 
 pub unsafe fn write_reg16(index: i32, value: i32) {
-    dbg_assert!(index >= 0 && index < 8);
+    dbg_assert!(index >= 0 && index < 16);
     *reg16.offset(get_reg16_index(index) as isize) = value as u16;
+}
+
+// 8-bit access to the legacy high byte registers (AH/CH/DH/BH) by
+// instructions that hardcode them (sahf, div8, ...). Unlike
+// read_reg8/write_reg8 these are NOT remapped by a REX prefix.
+pub unsafe fn read_reg8_legacy_high(index: i32) -> i32 {
+    dbg_assert!(index >= 4 && index < 8);
+    *reg8.offset(((index - 4) * 8 + 1) as isize) as i32
+}
+pub unsafe fn write_reg8_legacy_high(index: i32, value: i32) {
+    dbg_assert!(index >= 4 && index < 8);
+    *reg8.offset(((index - 4) * 8 + 1) as isize) = value as u8;
 }
 
 pub unsafe fn read_reg32(index: i32) -> i32 {
@@ -4425,6 +4465,11 @@ pub unsafe fn set_stack_reg(value: i32) {
 
 pub unsafe fn get_reg_asize(reg: i32) -> i32 {
     dbg_assert!(reg == ECX || reg == ESI || reg == EDI);
+    if *is_64 && *prefixes & prefix::PREFIX_MASK_ADDRSIZE == 0 {
+        // 64-bit address size in long mode
+        // M1 limitation: truncated to 32 bits (callers compare against 0)
+        return read_reg64(reg) as u32 as i32;
+    }
     let r = read_reg32(reg);
     if is_asize_32() {
         return r;
@@ -4445,6 +4490,13 @@ pub unsafe fn set_reg_asize(is_asize_32: bool, reg: i32, value: i32) {
 }
 
 pub unsafe fn decr_ecx_asize(is_asize_32: bool) -> i32 {
+    if *is_64 && *prefixes & prefix::PREFIX_MASK_ADDRSIZE == 0 {
+        // 64-bit address size in long mode: loop/jrcxz use rcx
+        // M1 limitation: result truncated to 32 bits (callers compare against 0)
+        let c = read_reg64(ECX).wrapping_sub(1);
+        write_reg64(ECX, c);
+        return c as u32 as i32;
+    }
     return if is_asize_32 {
         write_reg32(ECX, read_reg32(ECX) - 1);
         read_reg32(ECX)
