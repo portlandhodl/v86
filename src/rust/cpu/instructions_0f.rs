@@ -3635,8 +3635,10 @@ pub unsafe fn instr_0FA2() {
 
         0x80000000 => {
             // maximum supported extended level
-            eax = 8;
-            // other registers are reserved
+            eax = 0x80000008u32 as i32;
+            ebx = 0x756E6547; // Genu
+            edx = 0x49656E69; // ineI
+            ecx = 0x6C65746E; // ntel
         },
 
         0x80000001 => {

@@ -149,10 +149,19 @@ What was delivered (all committed):
   `node tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/<t>.flat`;
   msr/vmexit/realmode/smptest/port80/setjmp pass (access/eventinj/apic have
   partial failures, see below).
-- **Boot**: a 64-bit Linux kernel boots to a userspace shell over serial via
-  the direct-bzImage path (`bzimage:` option; e.g. Alpine's vmlinuz-virt).
-  The bzImage loader in src/kernel.js needed no changes: the kernel's own
-  startup_32 enables long mode.
+- **Boot**: the full boot path works end to end: a Linux kernel boots through
+  SeaBIOS + the direct-bzImage path (src/kernel.js, unchanged) to a userspace
+  shell over serial. 64-bit-specific status: kernels that enter long mode
+  themselves (Alpine's vmlinuz-virt, verified x86-64 via its decompressed ELF
+  header) get through the setup phase, build their boot page tables, enable
+  long mode and run 64-bit code (verified by instruction traces), but the
+  compressed-kernel self-decompression currently dies with a #PF/#DF triple
+  fault mid-flight (the on-demand page-table mapping phase of
+  `initialize_identity_maps`/`kernel_add_identity_map`). Debugging hooks
+  left in: `trigger_pagefault`'s #DF promotion and the `Triple fault:` panics
+  in `call_interrupt_vector64` make the failure point loud and deterministic.
+  Note: the "buildroot-bzimage68.bin" image on i.copy.sh is a 6.8 *i686*
+  kernel (the 68 is the kernel version), not a 64-bit build.
 
 Remaining known gaps (non-blocking for the goal above):
 

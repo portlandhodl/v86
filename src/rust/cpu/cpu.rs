@@ -1070,7 +1070,10 @@ pub unsafe fn call_interrupt_vector(
     if *protected_mode {
         if *is_64 {
             // long mode: 16-byte gates and a 64-bit interrupt frame
+            let was_delivering = in_interrupt_delivery;
+            in_interrupt_delivery = true;
             call_interrupt_vector64(interrupt_nr, is_software_int, error_code);
+            in_interrupt_delivery = was_delivering;
             return;
         }
 
@@ -2688,6 +2691,7 @@ pub unsafe fn do_page_walk(
             let long_mode = *efer & EFER_LMA != 0;
         let pae = cr4 & CR4_PAE != 0;
 
+
         let (page_dir_addr, page_dir_entry) = if long_mode {
             // 4-level paging: PML4 → PDPT → PD (→ PT)
             dbg_assert!(pae, "Long mode requires PAE");
@@ -3048,6 +3052,12 @@ pub unsafe fn exit_jit() {
     call_interrupt_vector(code, false, error_code);
 }
 
+// Set while an exception/interrupt is being delivered; a page fault (or any
+// fault) during delivery is promoted to #DF by call_interrupt_vector, and a
+// fault during #DF delivery shuts the machine down (triple fault).
+pub static mut in_interrupt_delivery: bool = false;
+pub static mut delivering_double_fault: bool = false;
+
 /// Pagefault handling with the jit works as follows:
 /// - If the slow path is taken, it calls safe_{read,write}*_jit
 /// - safe_{read,write}*_jit call translate_address_{read,write}_jit
@@ -3087,6 +3097,20 @@ pub unsafe fn trigger_pagefault(addr: u64, present: bool, write: bool, user: boo
     }
     else {
         *instruction_pointer = *previous_ip;
+        if in_interrupt_delivery {
+            if delivering_double_fault {
+                // a fault while delivering #DF: triple fault, shut down
+                panic!("Triple fault: page fault during #DF delivery, cr2={:x}", addr);
+            }
+            // a fault during exception delivery: #DF (page faults nest at most
+            // one level in real hardware; everything beyond is a double fault)
+            dbg_log!("#DF: page fault during exception delivery, cr2={:x}", addr);
+            delivering_double_fault = true;
+            in_interrupt_delivery = false;
+            call_interrupt_vector(CPU_EXCEPTION_DF, false, Some(0));
+            delivering_double_fault = false;
+            return;
+        }
         call_interrupt_vector(CPU_EXCEPTION_PF, false, Some(error_code));
     }
 }
@@ -3300,18 +3324,14 @@ pub unsafe fn switch_seg(reg: i32, selector_raw: i32) -> bool {
         match return_on_pagefault!(lookup_segment_selector(selector), false) {
             Ok(desc) => desc,
             Err(SelectorNullOrInvalid::IsNull) => {
-                if reg == SS {
-                    dbg_log!("#GP for loading 0 in SS sel={:x}", selector_raw);
-                    trigger_gp(0);
-                    return false;
-                }
-                else {
-                    // es, ds, fs, gs
-                    *sreg.offset(reg as isize) = selector_raw as u16;
-                    *segment_is_null.offset(reg as isize) = true;
-                    update_state_flags();
-                    return true;
-                }
+                // Loading a null selector into SS is permitted on processors
+                // that support Intel 64 (Linux's 32-bit startup relies on
+                // this); the resulting SS is null-but-usable. The stack
+                // size attribute is not changed by a null load.
+                *sreg.offset(reg as isize) = selector_raw as u16;
+                *segment_is_null.offset(reg as isize) = true;
+                update_state_flags();
+                return true;
             },
             Err(SelectorNullOrInvalid::OutsideOfTableLimit) => {
                 dbg_log!(
@@ -3580,8 +3600,10 @@ pub unsafe fn update_efer_lma() {
 }
 
 pub unsafe fn set_cr3(mut cr3: i32) {
-    if false {
-        dbg_log!("cr3 <- {:x}", cr3);
+    if cfg!(debug_assertions) && cr3 > 0x1000000 {
+        let pml4e0 = memory::read64s(cr3 as u32) as u64;
+        let pml4e2 = memory::read64s(cr3 as u32 + 16) as u64;
+        dbg_log!("cr3 <- {:x} pml4[0]={:x} pml4[2]={:x}", cr3, pml4e0, pml4e2);
     }
     if *cr.offset(4) & CR4_PAE != 0 {
         cr3 &= !0b1111;
@@ -4215,7 +4237,7 @@ pub unsafe fn trigger_nm() {
 
 #[inline(never)]
 pub unsafe fn trigger_gp(code: i32) {
-    dbg_log!("#gp");
+    dbg_log!("#gp code={:x} at ip={:x}", code, *previous_ip);
     *instruction_pointer = *previous_ip;
     if DEBUG {
         if js::cpu_exception_hook(CPU_EXCEPTION_GP) {
@@ -5410,6 +5432,19 @@ unsafe fn trigger_pagefault_nx(addr: u64) {
         dbg_trace();
     }
     profiler::stat_increment(stat::PAGE_FAULT);
+    if cfg!(debug_assertions) {
+        let a = canonicalize_address(addr);
+        let pml4e = memory::read64s((*cr.offset(3) as u32 & 0xFFFF_F000) as u32) as u64;
+        let pdpte = memory::read64s(((pml4e & 0xFFFF_F000) + ((a >> 30 & 0x1FF) << 3)) as u32) as u64;
+        let pde = memory::read64s(((pdpte & 0xFFFF_F000) + ((a >> 21 & 0x1FF) << 3)) as u32) as u64;
+        dbg_log!(
+            "pfwalk: cr3={:x} pml4e={:x} pdpte={:x} pde={:x}",
+            *cr.offset(3),
+            pml4e,
+            pdpte,
+            pde
+        );
+    }
     *cr.offset(2) = addr as u32 as i32;
     *cr2_64 = addr;
     tlb_invalidate_page(addr);
