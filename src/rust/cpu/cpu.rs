@@ -6,7 +6,7 @@ use crate::cpu::global_pointers::*;
 use crate::cpu::memory;
 use crate::cpu::misc_instr::{
     adjust_stack_reg, get_stack_pointer, getaf, getcf, getof, getpf, getsf, getzf, pop16, pop32s,
-    push16, push32,
+    pop64, push16, push32, push64,
 };
 use crate::cpu::modrm::{resolve_modrm16, resolve_modrm32, resolve_modrm64};
 use crate::cpu::{apic, ioapic, pic};
@@ -1950,6 +1950,141 @@ pub unsafe fn far_jump(eip: i32, selector: i32, is_call: bool, is_osize_32: bool
 
         update_state_flags();
     }
+}
+
+/// 64-bit far return (retfq): pop rip, cs (and rsp, ss on a privilege change).
+/// rip is the value popped by the caller; the stack has been advanced past it.
+pub unsafe fn far_return64(rip: u64, selector: i32, stack_adjust: u64) {
+    let cs_selector = SegmentSelector::of_u16(selector as u16);
+    let info = match return_on_pagefault!(lookup_segment_selector(cs_selector)) {
+        Ok((desc, _)) => desc,
+        Err(SelectorNullOrInvalid::IsNull) | Err(SelectorNullOrInvalid::OutsideOfTableLimit) => {
+            dbg_log!("far return64: #gp invalid cs: {:x}", selector);
+            trigger_gp(selector & !3);
+            return;
+        },
+    };
+
+    if info.is_system() || !info.is_executable() || !info.is_present() {
+        dbg_log!("far return64: #gp cs is not a present code segment");
+        trigger_gp(selector & !3);
+        return;
+    }
+    if cs_selector.rpl() < *cpl {
+        dbg_log!("far return64: #gp rpl < cpl");
+        trigger_gp(selector & !3);
+        return;
+    }
+    if !info.is_dc() && cs_selector.rpl() != info.dpl() {
+        dbg_log!("far return64: #gp non-conforming cs and rpl != dpl");
+        trigger_gp(selector & !3);
+        return;
+    }
+
+    if cs_selector.rpl() > *cpl {
+        // outer privilege return: pop rsp and ss
+        let new_rsp = return_on_pagefault!(pop64());
+        let new_ss = return_on_pagefault!(pop64()) as u16;
+        let ss_selector = SegmentSelector::of_u16(new_ss);
+        let ss_descriptor = match return_on_pagefault!(lookup_segment_selector(ss_selector)) {
+            Ok((desc, _)) => desc,
+            Err(SelectorNullOrInvalid::IsNull) | Err(SelectorNullOrInvalid::OutsideOfTableLimit) => {
+                dbg_log!("far return64: #gp invalid ss: {:x}", new_ss);
+                trigger_gp(new_ss as i32 & !3);
+                return;
+            },
+        };
+        if ss_descriptor.is_system()
+            || ss_selector.rpl() != cs_selector.rpl()
+            || !ss_descriptor.is_writable()
+            || ss_descriptor.dpl() != cs_selector.rpl()
+            || !ss_descriptor.is_present()
+        {
+            dbg_log!("far return64: #gp/#ss invalid ss descriptor");
+            trigger_gp(new_ss as i32 & !3);
+            return;
+        }
+        // no exceptions below
+        *cpl = cs_selector.rpl();
+        cpl_changed();
+        write_reg64(ESP, new_rsp);
+        if !switch_seg(SS, new_ss as i32) {
+            dbg_assert!(false);
+        }
+    }
+    else {
+        write_reg64(ESP, read_reg64(ESP).wrapping_add(stack_adjust));
+    }
+
+    // no exceptions below
+
+    *sreg.offset(CS as isize) = selector as u16 & !3 | *cpl as u16;
+    *segment_is_null.offset(CS as isize) = false;
+    *segment_limits.offset(CS as isize) = info.effective_limit();
+    *segment_offsets.offset(CS as isize) = if *is_64 { 0 } else { info.base() };
+    *segment_access_bytes.offset(CS as isize) = info.access_byte();
+
+    update_cs_size(info.is_32(), info.is_64());
+
+    *instruction_pointer = rip;
+
+    update_state_flags();
+}
+
+/// 64-bit far call/jmp (m16:64 or m16:32 with 64-bit submode semantics).
+pub unsafe fn far_jump64(rip: u64, selector: i32, is_call: bool) {
+    let cs_selector = SegmentSelector::of_u16(selector as u16);
+    let info = match return_on_pagefault!(lookup_segment_selector(cs_selector)) {
+        Ok((desc, _)) => desc,
+        Err(SelectorNullOrInvalid::IsNull) | Err(SelectorNullOrInvalid::OutsideOfTableLimit) => {
+            dbg_log!("far jump64: #gp invalid cs: {:x}", selector);
+            trigger_gp(selector & !3);
+            return;
+        },
+    };
+
+    if info.is_system() || !info.is_executable() || !info.is_present() {
+        dbg_log!("far jump64: #gp cs is not a present code segment");
+        trigger_gp(selector & !3);
+        return;
+    }
+    if !info.is_64() {
+        dbg_log!("far jump64: #gp cs is not 64-bit in long mode");
+        trigger_gp(selector & !3);
+        return;
+    }
+
+    if info.is_dc() || info.dpl() == *cpl {
+        // intra-privilege
+    }
+    else if !info.is_dc() && info.dpl() < *cpl {
+        // call through a call gate to a more privileged level: not supported
+        dbg_log!("far call64 to outer privilege: unimplemented");
+        trigger_gp(selector & !3);
+        return;
+    }
+    else {
+        dbg_log!("far jump64: #gp dpl > cpl");
+        trigger_gp(selector & !3);
+        return;
+    }
+
+    if is_call {
+        return_on_pagefault!(push64(*sreg.offset(CS as isize) as u64));
+        return_on_pagefault!(push64(*instruction_pointer));
+    }
+
+    *sreg.offset(CS as isize) = selector as u16 & !3 | *cpl as u16;
+    *segment_is_null.offset(CS as isize) = false;
+    *segment_limits.offset(CS as isize) = info.effective_limit();
+    *segment_offsets.offset(CS as isize) = 0;
+    *segment_access_bytes.offset(CS as isize) = info.access_byte();
+
+    update_cs_size(info.is_32(), info.is_64());
+
+    *instruction_pointer = rip;
+
+    update_state_flags();
 }
 
 pub unsafe fn far_return(eip: i32, selector: i32, stack_adjust: i32, is_osize_32: bool) {

@@ -8,6 +8,10 @@ use crate::cpu::cpu::*;
 use crate::cpu::global_pointers::*;
 use crate::cpu::memory;
 use crate::cpu::misc_instr::*;
+use crate::cpu::string::{
+    cmpsq_no_rep, cmpsq_repnz, cmpsq_repz, insd_no_rep, lodsq_no_rep, lodsq_rep, movsq_no_rep,
+    movsq_rep, outsd_no_rep, scasq_no_rep, scasq_repnz, scasq_repz, stosq_no_rep, stosq_rep,
+};
 use crate::cpu::modrm;
 use crate::prefix;
 use crate::regs;
@@ -30,18 +34,18 @@ pub unsafe fn instr64_0F() {
     let opcode = return_on_pagefault!(read_imm8());
     crate::gen::interpreter0f::run(opcode as u32 | 0x200);
 }
-pub unsafe fn instr64_0F00_0_mem(a0: u64) { unimplemented!("instr64_0F00_0_mem") }
-pub unsafe fn instr64_0F00_0_reg(a0: i32) { unimplemented!("instr64_0F00_0_reg") }
-pub unsafe fn instr64_0F00_1_mem(a0: u64) { unimplemented!("instr64_0F00_1_mem") }
-pub unsafe fn instr64_0F00_1_reg(a0: i32) { unimplemented!("instr64_0F00_1_reg") }
-pub unsafe fn instr64_0F00_2_mem(a0: u64) { unimplemented!("instr64_0F00_2_mem") }
-pub unsafe fn instr64_0F00_2_reg(a0: i32) { unimplemented!("instr64_0F00_2_reg") }
-pub unsafe fn instr64_0F00_3_mem(a0: u64) { unimplemented!("instr64_0F00_3_mem") }
-pub unsafe fn instr64_0F00_3_reg(a0: i32) { unimplemented!("instr64_0F00_3_reg") }
-pub unsafe fn instr64_0F00_4_mem(a0: u64) { unimplemented!("instr64_0F00_4_mem") }
-pub unsafe fn instr64_0F00_4_reg(a0: i32) { unimplemented!("instr64_0F00_4_reg") }
-pub unsafe fn instr64_0F00_5_mem(a0: u64) { unimplemented!("instr64_0F00_5_mem") }
-pub unsafe fn instr64_0F00_5_reg(a0: i32) { unimplemented!("instr64_0F00_5_reg") }
+pub unsafe fn instr64_0F00_0_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F00_0_mem(addr) }
+pub unsafe fn instr64_0F00_0_reg(r: i32) { crate::cpu::instructions_0f::instr32_0F00_0_reg(r) }
+pub unsafe fn instr64_0F00_1_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F00_1_mem(addr) }
+pub unsafe fn instr64_0F00_1_reg(r: i32) { crate::cpu::instructions_0f::instr32_0F00_1_reg(r) }
+pub unsafe fn instr64_0F00_2_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F00_2_mem(addr) }
+pub unsafe fn instr64_0F00_2_reg(r: i32) { crate::cpu::instructions_0f::instr32_0F00_2_reg(r) }
+pub unsafe fn instr64_0F00_3_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F00_3_mem(addr) }
+pub unsafe fn instr64_0F00_3_reg(r: i32) { crate::cpu::instructions_0f::instr32_0F00_3_reg(r) }
+pub unsafe fn instr64_0F00_4_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F00_4_mem(addr) }
+pub unsafe fn instr64_0F00_4_reg(r: i32) { crate::cpu::instructions_0f::instr32_0F00_4_reg(r) }
+pub unsafe fn instr64_0F00_5_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F00_5_mem(addr) }
+pub unsafe fn instr64_0F00_5_reg(r: i32) { crate::cpu::instructions_0f::instr32_0F00_5_reg(r) }
 pub unsafe fn instr64_0F01_0_mem(addr: u64) {
     // sgdt: 10-byte pseudo descriptor in 64-bit mode (8-byte offset, 2-byte limit)
     if 0 != *cpl {
@@ -115,10 +119,10 @@ pub unsafe fn instr64_0F01_7_reg(r: i32) {
         trigger_ud();
     }
 }
-pub unsafe fn instr64_0F02_mem(a0: u64, a1: i32) { unimplemented!("instr64_0F02_mem") }
-pub unsafe fn instr64_0F02_reg(a0: i32, a1: i32) { unimplemented!("instr64_0F02_reg") }
-pub unsafe fn instr64_0F03_mem(a0: u64, a1: i32) { unimplemented!("instr64_0F03_mem") }
-pub unsafe fn instr64_0F03_reg(a0: i32, a1: i32) { unimplemented!("instr64_0F03_reg") }
+pub unsafe fn instr64_0F02_mem(addr: u64, r: i32) { write_reg64(r, lar(return_on_pagefault!(safe_read16(addr)), read_reg32(r)) as u32 as u64); }
+pub unsafe fn instr64_0F02_reg(r1: i32, r: i32) { write_reg64(r, lar(read_reg32(r1), read_reg32(r)) as u32 as u64); }
+pub unsafe fn instr64_0F03_mem(addr: u64, r: i32) { write_reg64(r, lsl(return_on_pagefault!(safe_read16(addr)), read_reg32(r)) as u32 as u64); }
+pub unsafe fn instr64_0F03_reg(r1: i32, r: i32) { write_reg64(r, lsl(read_reg32(r1), read_reg32(r)) as u32 as u64); }
 pub unsafe fn instr64_0F40_mem(addr: u64, r: i32) { cmovcc64(test_o(), return_on_pagefault!(safe_read64s(addr)), r); }
 pub unsafe fn instr64_0F40_reg(r1: i32, r: i32) { cmovcc64(test_o(), read_reg64(r1), r); }
 pub unsafe fn instr64_0F41_mem(addr: u64, r: i32) { cmovcc64(!test_o(), return_on_pagefault!(safe_read64s(addr)), r); }
@@ -199,20 +203,41 @@ pub unsafe fn instr64_0FB1_reg(r1: i32, r: i32) {
     let v = cmpxchg64(read_reg64(r1), r);
     write_reg64(r1, v);
 }
-pub unsafe fn instr64_0FB2_mem(a0: u64, a1: i32) { unimplemented!("instr64_0FB2_mem") }
-pub unsafe fn instr64_0FB2_reg(a0: i32, a1: i32) { unimplemented!("instr64_0FB2_reg") }
+pub unsafe fn instr64_0FB2_mem(addr: u64, r: i32) {
+    let new_reg = return_on_pagefault!(safe_read64s(addr));
+    let new_seg = return_on_pagefault!(safe_read16(addr + 8));
+    if !switch_seg(SS, new_seg as i32) {
+        return;
+    }
+    write_reg64(r, new_reg);
+}
+pub unsafe fn instr64_0FB2_reg(r1: i32, r: i32) { trigger_ud(); }
 pub unsafe fn instr64_0FB3_mem(addr: u64, r: i32) { btr_mem(addr, read_reg32(r)); }
 pub unsafe fn instr64_0FB3_reg(r1: i32, r: i32) { write_reg64(r1, btr_reg64(read_reg64(r1), read_reg32(r) & 63)); }
-pub unsafe fn instr64_0FB4_mem(a0: u64, a1: i32) { unimplemented!("instr64_0FB4_mem") }
-pub unsafe fn instr64_0FB4_reg(a0: i32, a1: i32) { unimplemented!("instr64_0FB4_reg") }
-pub unsafe fn instr64_0FB5_mem(a0: u64, a1: i32) { unimplemented!("instr64_0FB5_mem") }
-pub unsafe fn instr64_0FB5_reg(a0: i32, a1: i32) { unimplemented!("instr64_0FB5_reg") }
+pub unsafe fn instr64_0FB4_mem(addr: u64, r: i32) {
+    let new_reg = return_on_pagefault!(safe_read64s(addr));
+    let new_seg = return_on_pagefault!(safe_read16(addr + 8));
+    if !switch_seg(FS, new_seg as i32) {
+        return;
+    }
+    write_reg64(r, new_reg);
+}
+pub unsafe fn instr64_0FB4_reg(a0: i32, a1: i32) { trigger_ud(); }
+pub unsafe fn instr64_0FB5_mem(addr: u64, r: i32) {
+    let new_reg = return_on_pagefault!(safe_read64s(addr));
+    let new_seg = return_on_pagefault!(safe_read16(addr + 8));
+    if !switch_seg(GS, new_seg as i32) {
+        return;
+    }
+    write_reg64(r, new_reg);
+}
+pub unsafe fn instr64_0FB5_reg(a0: i32, a1: i32) { trigger_ud(); }
 pub unsafe fn instr64_0FB6_mem(addr: u64, r: i32) { write_reg64(r, return_on_pagefault!(safe_read8(addr)) as u64); }
 pub unsafe fn instr64_0FB6_reg(r1: i32, r: i32) { write_reg64(r, read_reg8(r1) as u64); }
 pub unsafe fn instr64_0FB7_mem(addr: u64, r: i32) { write_reg64(r, return_on_pagefault!(safe_read16(addr)) as u64); }
 pub unsafe fn instr64_0FB7_reg(r1: i32, r: i32) { write_reg64(r, read_reg16(r1) as u64); }
-pub unsafe fn instr64_0FB8_mem(a0: u64, a1: i32) { unimplemented!("instr64_0FB8_mem") }
-pub unsafe fn instr64_0FB8_reg(a0: i32, a1: i32) { unimplemented!("instr64_0FB8_reg") }
+pub unsafe fn instr64_0FB8_mem(_a0: u64, _a1: i32) { trigger_ud(); }
+pub unsafe fn instr64_0FB8_reg(_a0: i32, _a1: i32) { trigger_ud(); }
 pub unsafe fn instr64_0FBA_4_mem(addr: u64, imm: i32) { bt_mem(addr, imm); }
 pub unsafe fn instr64_0FBA_4_reg(r1: i32, imm: i32) { bt_reg64(read_reg64(r1), imm & 63); }
 pub unsafe fn instr64_0FBA_5_mem(addr: u64, imm: i32) { bts_mem(addr, imm); }
@@ -242,10 +267,38 @@ pub unsafe fn instr64_0FC1_reg(r1: i32, r: i32) {
     write_reg64(r, read_reg64(r1));
     write_reg64(r1, add64(read_reg64(r1), source));
 }
-pub unsafe fn instr64_0FC7_1_mem(a0: u64) { unimplemented!("instr64_0FC7_1_mem") }
-pub unsafe fn instr64_0FC7_1_reg(a0: i32) { unimplemented!("instr64_0FC7_1_reg") }
-pub unsafe fn instr64_0FC7_6_mem(a0: u64) { unimplemented!("instr64_0FC7_6_mem") }
-pub unsafe fn instr64_0FC7_6_reg(a0: i32) { unimplemented!("instr64_0FC7_6_reg") }
+pub unsafe fn instr64_0FC7_1_reg(_r: i32) { trigger_ud(); }
+pub unsafe fn instr64_0FC7_1_mem(addr: u64) {
+    // cmpxchg16b
+    return_on_pagefault!(writable_or_pagefault(addr, 16));
+    let m128 = return_on_pagefault!(safe_read128s(addr));
+    let m_low = m128.u64[0];
+    let m_high = m128.u64[1];
+    if read_reg64(EAX) == m_low && read_reg64(EDX) == m_high {
+        *flags |= FLAG_ZERO;
+        return_on_pagefault!(safe_write128(
+            addr,
+            reg128 {
+                u64: [read_reg64(EBX), read_reg64(ECX)],
+            },
+        ));
+    }
+    else {
+        *flags &= !FLAG_ZERO;
+        write_reg64(EAX, m_low);
+        write_reg64(EDX, m_high);
+    }
+    *flags_changed &= !FLAG_ZERO;
+}
+pub unsafe fn instr64_0FC7_6_reg(r: i32) {
+    // rdrand r64
+    let rand = (js::get_rand_int() as u32 as u64) | (js::get_rand_int() as u32 as u64) << 32;
+    write_reg64(r, rand);
+    *flags &= !FLAGS_ALL;
+    *flags |= 1;
+    *flags_changed = 0;
+}
+pub unsafe fn instr64_0FC7_6_mem(_a0: u64) { trigger_ud(); }
 pub unsafe fn instr64_11_mem(addr: u64, r: i32) { safe_read_write64(addr, &|x| adc64(x, read_reg64(r))) }
 pub unsafe fn instr64_11_reg(r1: i32, r: i32) { write_reg64(r1, adc64(read_reg64(r1), read_reg64(r))); }
 pub unsafe fn instr64_13_mem(addr: u64, r: i32) { write_reg64(r, adc64(read_reg64(r), return_on_pagefault!(safe_read64s(addr)))); }
@@ -280,22 +333,22 @@ pub unsafe fn instr64_39_reg(r1: i32, r: i32) { cmp64(read_reg64(r1), read_reg64
 pub unsafe fn instr64_3B_mem(addr: u64, r: i32) { cmp64(read_reg64(r), return_on_pagefault!(safe_read64s(addr))); }
 pub unsafe fn instr64_3B_reg(r1: i32, r: i32) { cmp64(read_reg64(r), read_reg64(r1)); }
 pub unsafe fn instr64_3D(a0: i32) { cmp64(read_reg64(EAX), a0 as i64 as u64); }
-pub unsafe fn instr64_40() { unimplemented!("instr64_40") }
-pub unsafe fn instr64_41() { unimplemented!("instr64_41") }
-pub unsafe fn instr64_42() { unimplemented!("instr64_42") }
-pub unsafe fn instr64_43() { unimplemented!("instr64_43") }
-pub unsafe fn instr64_44() { unimplemented!("instr64_44") }
-pub unsafe fn instr64_45() { unimplemented!("instr64_45") }
-pub unsafe fn instr64_46() { unimplemented!("instr64_46") }
-pub unsafe fn instr64_47() { unimplemented!("instr64_47") }
-pub unsafe fn instr64_48() { unimplemented!("instr64_48") }
-pub unsafe fn instr64_49() { unimplemented!("instr64_49") }
-pub unsafe fn instr64_4A() { unimplemented!("instr64_4A") }
-pub unsafe fn instr64_4B() { unimplemented!("instr64_4B") }
-pub unsafe fn instr64_4C() { unimplemented!("instr64_4C") }
-pub unsafe fn instr64_4D() { unimplemented!("instr64_4D") }
-pub unsafe fn instr64_4E() { unimplemented!("instr64_4E") }
-pub unsafe fn instr64_4F() { unimplemented!("instr64_4F") }
+pub unsafe fn instr64_40() { trigger_ud(); }
+pub unsafe fn instr64_41() { trigger_ud(); }
+pub unsafe fn instr64_42() { trigger_ud(); }
+pub unsafe fn instr64_43() { trigger_ud(); }
+pub unsafe fn instr64_44() { trigger_ud(); }
+pub unsafe fn instr64_45() { trigger_ud(); }
+pub unsafe fn instr64_46() { trigger_ud(); }
+pub unsafe fn instr64_47() { trigger_ud(); }
+pub unsafe fn instr64_48() { trigger_ud(); }
+pub unsafe fn instr64_49() { trigger_ud(); }
+pub unsafe fn instr64_4A() { trigger_ud(); }
+pub unsafe fn instr64_4B() { trigger_ud(); }
+pub unsafe fn instr64_4C() { trigger_ud(); }
+pub unsafe fn instr64_4D() { trigger_ud(); }
+pub unsafe fn instr64_4E() { trigger_ud(); }
+pub unsafe fn instr64_4F() { trigger_ud(); }
 pub unsafe fn instr64_50() { return_on_pagefault!(push64(read_reg64(0 + rex_b()))); }
 pub unsafe fn instr64_51() { return_on_pagefault!(push64(read_reg64(1 + rex_b()))); }
 pub unsafe fn instr64_52() { return_on_pagefault!(push64(read_reg64(2 + rex_b()))); }
@@ -344,24 +397,24 @@ pub unsafe fn instr64_69_reg(r1: i32, r: i32, imm: i32) { write_reg64(r, imul_re
 pub unsafe fn instr64_6A(a0: i32) { return_on_pagefault!(push64(a0 as i64 as u64)); }
 pub unsafe fn instr64_6B_mem(addr: u64, r: i32, imm: i32) { write_reg64(r, imul_reg64(return_on_pagefault!(safe_read64s(addr)), imm as i64 as u64)); }
 pub unsafe fn instr64_6B_reg(r1: i32, r: i32, imm: i32) { write_reg64(r, imul_reg64(read_reg64(r1), imm as i64 as u64)); }
-pub unsafe fn instr64_6D() { unimplemented!("instr64_6D") }
-pub unsafe fn instr64_6F() { unimplemented!("instr64_6F") }
-pub unsafe fn instr64_70(a0: i32) { unimplemented!("instr64_70") }
-pub unsafe fn instr64_71(a0: i32) { unimplemented!("instr64_71") }
-pub unsafe fn instr64_72(a0: i32) { unimplemented!("instr64_72") }
-pub unsafe fn instr64_73(a0: i32) { unimplemented!("instr64_73") }
-pub unsafe fn instr64_74(a0: i32) { unimplemented!("instr64_74") }
-pub unsafe fn instr64_75(a0: i32) { unimplemented!("instr64_75") }
-pub unsafe fn instr64_76(a0: i32) { unimplemented!("instr64_76") }
-pub unsafe fn instr64_77(a0: i32) { unimplemented!("instr64_77") }
-pub unsafe fn instr64_78(a0: i32) { unimplemented!("instr64_78") }
-pub unsafe fn instr64_79(a0: i32) { unimplemented!("instr64_79") }
-pub unsafe fn instr64_7A(a0: i32) { unimplemented!("instr64_7A") }
-pub unsafe fn instr64_7B(a0: i32) { unimplemented!("instr64_7B") }
-pub unsafe fn instr64_7C(a0: i32) { unimplemented!("instr64_7C") }
-pub unsafe fn instr64_7D(a0: i32) { unimplemented!("instr64_7D") }
-pub unsafe fn instr64_7E(a0: i32) { unimplemented!("instr64_7E") }
-pub unsafe fn instr64_7F(a0: i32) { unimplemented!("instr64_7F") }
+pub unsafe fn instr64_6D() { insd_no_rep(is_asize_32()); }
+pub unsafe fn instr64_6F() { outsd_no_rep(is_asize_32(), segment_prefix(DS)); }
+pub unsafe fn instr64_70(a0: i32) { jmpcc64(test_o(), a0); }
+pub unsafe fn instr64_71(a0: i32) { jmpcc64(!test_o(), a0); }
+pub unsafe fn instr64_72(a0: i32) { jmpcc64(test_b(), a0); }
+pub unsafe fn instr64_73(a0: i32) { jmpcc64(!test_b(), a0); }
+pub unsafe fn instr64_74(a0: i32) { jmpcc64(test_z(), a0); }
+pub unsafe fn instr64_75(a0: i32) { jmpcc64(!test_z(), a0); }
+pub unsafe fn instr64_76(a0: i32) { jmpcc64(test_be(), a0); }
+pub unsafe fn instr64_77(a0: i32) { jmpcc64(!test_be(), a0); }
+pub unsafe fn instr64_78(a0: i32) { jmpcc64(test_s(), a0); }
+pub unsafe fn instr64_79(a0: i32) { jmpcc64(!test_s(), a0); }
+pub unsafe fn instr64_7A(a0: i32) { jmpcc64(test_p(), a0); }
+pub unsafe fn instr64_7B(a0: i32) { jmpcc64(!test_p(), a0); }
+pub unsafe fn instr64_7C(a0: i32) { jmpcc64(test_l(), a0); }
+pub unsafe fn instr64_7D(a0: i32) { jmpcc64(!test_l(), a0); }
+pub unsafe fn instr64_7E(a0: i32) { jmpcc64(test_le(), a0); }
+pub unsafe fn instr64_7F(a0: i32) { jmpcc64(!test_le(), a0); }
 pub unsafe fn instr64_81_0_mem(addr: u64, imm: i32) { safe_read_write64(addr, &|x| add64(x, imm as i64 as u64)) }
 pub unsafe fn instr64_81_0_reg(r1: i32, imm: i32) { write_reg64(r1, add64(read_reg64(r1), imm as i64 as u64)); }
 pub unsafe fn instr64_81_1_mem(addr: u64, imm: i32) { safe_read_write64(addr, &|x| or64(x, imm as i64 as u64)) }
@@ -416,7 +469,7 @@ pub unsafe fn instr64_8D_mem(modrm_byte: i32, r: i32) {
     // note: no trailing immediate, so imm_len is 0
     *prefixes |= prefix::SEG_PREFIX_ZERO;
     if let Ok(addr) = modrm_resolve(modrm_byte, 0) {
-        write_reg64(r, addr as u32 as u64);
+        write_reg64(r, addr);
     }
     *prefixes = 0;
 }
@@ -511,14 +564,22 @@ pub unsafe fn instr64_9D() {
         handle_irqs();
     }
 }
-pub unsafe fn instr64_A1(a0: u64) { unimplemented!("instr64_A1") }
-pub unsafe fn instr64_A3(a0: u64) { unimplemented!("instr64_A3") }
-pub unsafe fn instr64_A5() { unimplemented!("instr64_A5") }
-pub unsafe fn instr64_A7() { unimplemented!("instr64_A7") }
+pub unsafe fn instr64_A1(moffs: u64) {
+    // mov rax, [moffs64]
+    let addr = return_on_pagefault!(get_seg_prefix64(DS)).wrapping_add(moffs);
+    write_reg64(EAX, return_on_pagefault!(safe_read64s(addr)));
+}
+pub unsafe fn instr64_A3(moffs: u64) {
+    // mov [moffs64], rax
+    let addr = return_on_pagefault!(get_seg_prefix64(DS)).wrapping_add(moffs);
+    return_on_pagefault!(safe_write64(addr, read_reg64(EAX)));
+}
+pub unsafe fn instr64_A5() { movsq_no_rep(is_asize_32(), segment_prefix(DS)); }
+pub unsafe fn instr64_A7() { cmpsq_no_rep(is_asize_32(), segment_prefix(DS)); }
 pub unsafe fn instr64_A9(a0: i32) { test64(read_reg64(EAX), a0 as i64 as u64); }
-pub unsafe fn instr64_AB() { unimplemented!("instr64_AB") }
-pub unsafe fn instr64_AD() { unimplemented!("instr64_AD") }
-pub unsafe fn instr64_AF() { unimplemented!("instr64_AF") }
+pub unsafe fn instr64_AB() { stosq_no_rep(is_asize_32()); }
+pub unsafe fn instr64_AD() { lodsq_no_rep(is_asize_32(), segment_prefix(DS)); }
+pub unsafe fn instr64_AF() { scasq_no_rep(is_asize_32()); }
 pub unsafe fn instr64_B8(imm: u64) { write_reg64(0 + rex_b(), imm); }
 pub unsafe fn instr64_B9(imm: u64) { write_reg64(1 + rex_b(), imm); }
 pub unsafe fn instr64_BA(imm: u64) { write_reg64(2 + rex_b(), imm); }
@@ -558,15 +619,40 @@ pub unsafe fn instr64_C5_mem(_a0: u64, _a1: i32) { trigger_ud(); }
 pub unsafe fn instr64_C5_reg(_a0: i32, _a1: i32) { trigger_ud(); }
 pub unsafe fn instr64_C7_0_mem(addr: u64, imm: i32) { return_on_pagefault!(safe_write64(addr, imm as i64 as u64)); }
 pub unsafe fn instr64_C7_0_reg(r1: i32, imm: i32) { write_reg64(r1, imm as i64 as u64); }
-pub unsafe fn instr64_C8(a0: i32, a1: i32) { unimplemented!("instr64_C8") }
+pub unsafe fn instr64_C8(size: i32, nesting: i32) {
+    let nesting = nesting & 31;
+    return_on_pagefault!(push64(read_reg64(EBP)));
+    let frame_temp = read_reg64(ESP);
+    if nesting > 0 {
+        let mut tmp_ebp = frame_temp;
+        for _ in 1..nesting {
+            tmp_ebp = tmp_ebp.wrapping_sub(8);
+            let v = return_on_pagefault!(safe_read64s(tmp_ebp));
+            return_on_pagefault!(push64(v));
+        }
+        return_on_pagefault!(push64(frame_temp));
+    }
+    write_reg64(EBP, frame_temp);
+    write_reg64(ESP, frame_temp.wrapping_sub(size as u64));
+}
 pub unsafe fn instr64_C9() {
     let rbp = read_reg64(EBP);
     write_reg64(ESP, rbp);
     let v = return_on_pagefault!(pop64());
     write_reg64(EBP, v);
 }
-pub unsafe fn instr64_CA(a0: i32) { unimplemented!("instr64_CA") }
-pub unsafe fn instr64_CB() { unimplemented!("instr64_CB") }
+pub unsafe fn instr64_CA(a0: i32) {
+    // retf imm16
+    let rip = return_on_pagefault!(pop64());
+    let cs = return_on_pagefault!(pop64()) as u16;
+    far_return64(rip, cs as i32, a0 as u64);
+}
+pub unsafe fn instr64_CB() {
+    // retf
+    let rip = return_on_pagefault!(pop64());
+    let cs = return_on_pagefault!(pop64()) as u16;
+    far_return64(rip, cs as i32, 0);
+}
 pub unsafe fn instr64_CF() { iret64(); }
 pub unsafe fn instr64_D1_0_mem(addr: u64) { safe_read_write64(addr, &|x| rol64(x, 1)) }
 pub unsafe fn instr64_D1_0_reg(r1: i32) { write_reg64(r1, rol64(read_reg64(r1), 1)); }
@@ -600,38 +686,38 @@ pub unsafe fn instr64_D3_6_mem(addr: u64) { safe_read_write64(addr, &|x| shl64(x
 pub unsafe fn instr64_D3_6_reg(r1: i32) { write_reg64(r1, shl64(read_reg64(r1), read_reg8(ECX) & 63)); }
 pub unsafe fn instr64_D3_7_mem(addr: u64) { safe_read_write64(addr, &|x| sar64(x, read_reg8(ECX) & 63)) }
 pub unsafe fn instr64_D3_7_reg(r1: i32) { write_reg64(r1, sar64(read_reg64(r1), read_reg8(ECX) & 63)); }
-pub unsafe fn instr64_D9_0_mem(a0: u64) { unimplemented!("instr64_D9_0_mem") }
-pub unsafe fn instr64_D9_0_reg(a0: i32) { unimplemented!("instr64_D9_0_reg") }
-pub unsafe fn instr64_D9_1_mem(a0: u64) { unimplemented!("instr64_D9_1_mem") }
-pub unsafe fn instr64_D9_1_reg(a0: i32) { unimplemented!("instr64_D9_1_reg") }
-pub unsafe fn instr64_D9_2_mem(a0: u64) { unimplemented!("instr64_D9_2_mem") }
-pub unsafe fn instr64_D9_2_reg(a0: i32) { unimplemented!("instr64_D9_2_reg") }
-pub unsafe fn instr64_D9_3_mem(a0: u64) { unimplemented!("instr64_D9_3_mem") }
-pub unsafe fn instr64_D9_3_reg(a0: i32) { unimplemented!("instr64_D9_3_reg") }
-pub unsafe fn instr64_D9_4_mem(a0: u64) { unimplemented!("instr64_D9_4_mem") }
-pub unsafe fn instr64_D9_4_reg(a0: i32) { unimplemented!("instr64_D9_4_reg") }
-pub unsafe fn instr64_D9_5_mem(a0: u64) { unimplemented!("instr64_D9_5_mem") }
-pub unsafe fn instr64_D9_5_reg(a0: i32) { unimplemented!("instr64_D9_5_reg") }
-pub unsafe fn instr64_D9_6_mem(a0: u64) { unimplemented!("instr64_D9_6_mem") }
-pub unsafe fn instr64_D9_6_reg(a0: i32) { unimplemented!("instr64_D9_6_reg") }
-pub unsafe fn instr64_D9_7_mem(a0: u64) { unimplemented!("instr64_D9_7_mem") }
-pub unsafe fn instr64_D9_7_reg(a0: i32) { unimplemented!("instr64_D9_7_reg") }
-pub unsafe fn instr64_DD_0_mem(a0: u64) { unimplemented!("instr64_DD_0_mem") }
-pub unsafe fn instr64_DD_0_reg(a0: i32) { unimplemented!("instr64_DD_0_reg") }
-pub unsafe fn instr64_DD_1_mem(a0: u64) { unimplemented!("instr64_DD_1_mem") }
-pub unsafe fn instr64_DD_1_reg(a0: i32) { unimplemented!("instr64_DD_1_reg") }
-pub unsafe fn instr64_DD_2_mem(a0: u64) { unimplemented!("instr64_DD_2_mem") }
-pub unsafe fn instr64_DD_2_reg(a0: i32) { unimplemented!("instr64_DD_2_reg") }
-pub unsafe fn instr64_DD_3_mem(a0: u64) { unimplemented!("instr64_DD_3_mem") }
-pub unsafe fn instr64_DD_3_reg(a0: i32) { unimplemented!("instr64_DD_3_reg") }
-pub unsafe fn instr64_DD_4_mem(a0: u64) { unimplemented!("instr64_DD_4_mem") }
-pub unsafe fn instr64_DD_4_reg(a0: i32) { unimplemented!("instr64_DD_4_reg") }
-pub unsafe fn instr64_DD_5_mem(a0: u64) { unimplemented!("instr64_DD_5_mem") }
-pub unsafe fn instr64_DD_5_reg(a0: i32) { unimplemented!("instr64_DD_5_reg") }
-pub unsafe fn instr64_DD_6_mem(a0: u64) { unimplemented!("instr64_DD_6_mem") }
-pub unsafe fn instr64_DD_6_reg(a0: i32) { unimplemented!("instr64_DD_6_reg") }
-pub unsafe fn instr64_DD_7_mem(a0: u64) { unimplemented!("instr64_DD_7_mem") }
-pub unsafe fn instr64_DD_7_reg(a0: i32) { unimplemented!("instr64_DD_7_reg") }
+pub unsafe fn instr64_D9_0_mem(addr: u64) { crate::cpu::instructions::instr16_D9_0_mem(addr) }
+pub unsafe fn instr64_D9_0_reg(r: i32) { crate::cpu::instructions::instr16_D9_0_reg(r) }
+pub unsafe fn instr64_D9_1_mem(addr: u64) { crate::cpu::instructions::instr16_D9_1_mem(addr) }
+pub unsafe fn instr64_D9_1_reg(r: i32) { crate::cpu::instructions::instr16_D9_1_reg(r) }
+pub unsafe fn instr64_D9_2_mem(addr: u64) { crate::cpu::instructions::instr16_D9_2_mem(addr) }
+pub unsafe fn instr64_D9_2_reg(r: i32) { crate::cpu::instructions::instr16_D9_2_reg(r) }
+pub unsafe fn instr64_D9_3_mem(addr: u64) { crate::cpu::instructions::instr16_D9_3_mem(addr) }
+pub unsafe fn instr64_D9_3_reg(r: i32) { crate::cpu::instructions::instr16_D9_3_reg(r) }
+pub unsafe fn instr64_D9_4_mem(addr: u64) { crate::cpu::instructions::instr16_D9_4_mem(addr) }
+pub unsafe fn instr64_D9_4_reg(r: i32) { crate::cpu::instructions::instr16_D9_4_reg(r) }
+pub unsafe fn instr64_D9_5_mem(addr: u64) { crate::cpu::instructions::instr16_D9_5_mem(addr) }
+pub unsafe fn instr64_D9_5_reg(r: i32) { crate::cpu::instructions::instr16_D9_5_reg(r) }
+pub unsafe fn instr64_D9_6_mem(addr: u64) { crate::cpu::instructions::instr16_D9_6_mem(addr) }
+pub unsafe fn instr64_D9_6_reg(r: i32) { crate::cpu::instructions::instr16_D9_6_reg(r) }
+pub unsafe fn instr64_D9_7_mem(addr: u64) { crate::cpu::instructions::instr16_D9_7_mem(addr) }
+pub unsafe fn instr64_D9_7_reg(r: i32) { crate::cpu::instructions::instr16_D9_7_reg(r) }
+pub unsafe fn instr64_DD_0_mem(addr: u64) { crate::cpu::instructions::instr16_DD_0_mem(addr) }
+pub unsafe fn instr64_DD_0_reg(r: i32) { crate::cpu::instructions::instr16_DD_0_reg(r) }
+pub unsafe fn instr64_DD_1_mem(addr: u64) { crate::cpu::instructions::instr16_DD_1_mem(addr) }
+pub unsafe fn instr64_DD_1_reg(r: i32) { crate::cpu::instructions::instr16_DD_1_reg(r) }
+pub unsafe fn instr64_DD_2_mem(addr: u64) { crate::cpu::instructions::instr16_DD_2_mem(addr) }
+pub unsafe fn instr64_DD_2_reg(r: i32) { crate::cpu::instructions::instr16_DD_2_reg(r) }
+pub unsafe fn instr64_DD_3_mem(addr: u64) { crate::cpu::instructions::instr16_DD_3_mem(addr) }
+pub unsafe fn instr64_DD_3_reg(r: i32) { crate::cpu::instructions::instr16_DD_3_reg(r) }
+pub unsafe fn instr64_DD_4_mem(addr: u64) { crate::cpu::instructions::instr16_DD_4_mem(addr) }
+pub unsafe fn instr64_DD_4_reg(r: i32) { crate::cpu::instructions::instr16_DD_4_reg(r) }
+pub unsafe fn instr64_DD_5_mem(addr: u64) { crate::cpu::instructions::instr16_DD_5_mem(addr) }
+pub unsafe fn instr64_DD_5_reg(r: i32) { crate::cpu::instructions::instr16_DD_5_reg(r) }
+pub unsafe fn instr64_DD_6_mem(addr: u64) { crate::cpu::instructions::instr16_DD_6_mem(addr) }
+pub unsafe fn instr64_DD_6_reg(r: i32) { crate::cpu::instructions::instr16_DD_6_reg(r) }
+pub unsafe fn instr64_DD_7_mem(addr: u64) { crate::cpu::instructions::instr16_DD_7_mem(addr) }
+pub unsafe fn instr64_DD_7_reg(r: i32) { crate::cpu::instructions::instr16_DD_7_reg(r) }
 pub unsafe fn instr64_E0(a0: i32) {
     if is_asize_32() { crate::cpu::misc_instr::loopne32(a0); return; }
     let c = read_reg64(ECX).wrapping_sub(1);
@@ -654,8 +740,8 @@ pub unsafe fn instr64_E3(a0: i32) {
     if is_asize_32() { crate::cpu::misc_instr::jcxz32(a0); return; }
     jmpcc64(read_reg64(ECX) == 0, a0);
 }
-pub unsafe fn instr64_E5(a0: i32) { unimplemented!("instr64_E5") }
-pub unsafe fn instr64_E7(a0: i32) { unimplemented!("instr64_E7") }
+pub unsafe fn instr64_E5(a0: i32) { write_reg32(EAX, io_port_read32(a0)); }
+pub unsafe fn instr64_E7(a0: i32) { io_port_write32(a0, read_reg32(EAX)); }
 pub unsafe fn instr64_E8(a0: i32) {
     return_on_pagefault!(push64(get_real_eip64()));
     *instruction_pointer = (*instruction_pointer).wrapping_add(a0 as i64 as u64);
@@ -664,25 +750,28 @@ pub unsafe fn instr64_E9(a0: i32) {
     *instruction_pointer = (*instruction_pointer).wrapping_add(a0 as i64 as u64);
 }
 pub unsafe fn instr64_EA(_a0: i32, _a1: i32) { trigger_ud(); }
-pub unsafe fn instr64_EB(a0: i32) { unimplemented!("instr64_EB") }
-pub unsafe fn instr64_ED() { unimplemented!("instr64_ED") }
-pub unsafe fn instr64_EF() { unimplemented!("instr64_EF") }
-pub unsafe fn instr64_F26D() { unimplemented!("instr64_F26D") }
-pub unsafe fn instr64_F26F() { unimplemented!("instr64_F26F") }
-pub unsafe fn instr64_F2A5() { unimplemented!("instr64_F2A5") }
-pub unsafe fn instr64_F2A7() { unimplemented!("instr64_F2A7") }
-pub unsafe fn instr64_F2AB() { unimplemented!("instr64_F2AB") }
-pub unsafe fn instr64_F2AD() { unimplemented!("instr64_F2AD") }
-pub unsafe fn instr64_F2AF() { unimplemented!("instr64_F2AF") }
+pub unsafe fn instr64_EB(a0: i32) {
+    // jmp rel8
+    *instruction_pointer = (*instruction_pointer).wrapping_add(a0 as i64 as u64);
+}
+pub unsafe fn instr64_ED() { let port = read_reg16(DX); write_reg32(EAX, io_port_read32(port)); }
+pub unsafe fn instr64_EF() { let port = read_reg16(DX); io_port_write32(port, read_reg32(EAX)); }
+pub unsafe fn instr64_F26D() { insd_no_rep(is_asize_32()); }
+pub unsafe fn instr64_F26F() { outsd_no_rep(is_asize_32(), segment_prefix(DS)); }
+pub unsafe fn instr64_F2A5() { movsq_rep(is_asize_32(), segment_prefix(DS)); }
+pub unsafe fn instr64_F2A7() { cmpsq_repnz(is_asize_32(), segment_prefix(DS)); }
+pub unsafe fn instr64_F2AB() { stosq_rep(is_asize_32()); }
+pub unsafe fn instr64_F2AD() { lodsq_rep(is_asize_32(), segment_prefix(DS)); }
+pub unsafe fn instr64_F2AF() { scasq_repnz(is_asize_32()); }
 pub unsafe fn instr64_F30FB8_mem(addr: u64, r: i32) { write_reg64(r, popcnt64(return_on_pagefault!(safe_read64s(addr)))); }
 pub unsafe fn instr64_F30FB8_reg(r1: i32, r: i32) { write_reg64(r, popcnt64(read_reg64(r1))); }
-pub unsafe fn instr64_F36D() { unimplemented!("instr64_F36D") }
-pub unsafe fn instr64_F36F() { unimplemented!("instr64_F36F") }
-pub unsafe fn instr64_F3A5() { unimplemented!("instr64_F3A5") }
-pub unsafe fn instr64_F3A7() { unimplemented!("instr64_F3A7") }
-pub unsafe fn instr64_F3AB() { unimplemented!("instr64_F3AB") }
-pub unsafe fn instr64_F3AD() { unimplemented!("instr64_F3AD") }
-pub unsafe fn instr64_F3AF() { unimplemented!("instr64_F3AF") }
+pub unsafe fn instr64_F36D() { insd_no_rep(is_asize_32()); }
+pub unsafe fn instr64_F36F() { outsd_no_rep(is_asize_32(), segment_prefix(DS)); }
+pub unsafe fn instr64_F3A5() { movsq_rep(is_asize_32(), segment_prefix(DS)); }
+pub unsafe fn instr64_F3A7() { cmpsq_repz(is_asize_32(), segment_prefix(DS)); }
+pub unsafe fn instr64_F3AB() { stosq_rep(is_asize_32()); }
+pub unsafe fn instr64_F3AD() { lodsq_rep(is_asize_32(), segment_prefix(DS)); }
+pub unsafe fn instr64_F3AF() { scasq_repz(is_asize_32()); }
 pub unsafe fn instr64_F7_0_mem(addr: u64, imm: i32) { test64(return_on_pagefault!(safe_read64s(addr)), imm as i64 as u64); }
 pub unsafe fn instr64_F7_0_reg(r1: i32, imm: i32) { test64(read_reg64(r1), imm as i64 as u64); }
 pub unsafe fn instr64_F7_1_mem(addr: u64, imm: i32) { test64(return_on_pagefault!(safe_read64s(addr)), imm as i64 as u64); }
@@ -725,11 +814,23 @@ pub unsafe fn instr64_FF_2_reg(r1: i32) {
     return_on_pagefault!(push64(get_real_eip64()));
     *instruction_pointer = data;
 }
-pub unsafe fn instr64_FF_3_mem(a0: u64) { unimplemented!("instr64_FF_3_mem") }
-pub unsafe fn instr64_FF_3_reg(a0: i32) { unimplemented!("instr64_FF_3_reg") }
+pub unsafe fn instr64_FF_3_mem(addr: u64) {
+    // call far m16:64
+    let new_rip = return_on_pagefault!(safe_read64s(addr));
+    let new_cs = return_on_pagefault!(safe_read16(addr + 8));
+    return_on_pagefault!(push64(*sreg.offset(CS as isize) as u64));
+    return_on_pagefault!(push64(*instruction_pointer));
+    far_jump64(new_rip, new_cs as i32, false);
+}
+pub unsafe fn instr64_FF_3_reg(_a0: i32) { trigger_ud(); }
 pub unsafe fn instr64_FF_4_mem(addr: u64) { *instruction_pointer = return_on_pagefault!(safe_read64s(addr)); }
 pub unsafe fn instr64_FF_4_reg(r1: i32) { *instruction_pointer = read_reg64(r1); }
-pub unsafe fn instr64_FF_5_mem(a0: u64) { unimplemented!("instr64_FF_5_mem") }
-pub unsafe fn instr64_FF_5_reg(a0: i32) { unimplemented!("instr64_FF_5_reg") }
+pub unsafe fn instr64_FF_5_mem(addr: u64) {
+    // jmp far m16:64
+    let new_rip = return_on_pagefault!(safe_read64s(addr));
+    let new_cs = return_on_pagefault!(safe_read16(addr + 8));
+    far_jump64(new_rip, new_cs as i32, false);
+}
+pub unsafe fn instr64_FF_5_reg(_a0: i32) { trigger_ud(); }
 pub unsafe fn instr64_FF_6_mem(addr: u64) { return_on_pagefault!(push64(return_on_pagefault!(safe_read64s(addr)))); }
 pub unsafe fn instr64_FF_6_reg(r1: i32) { return_on_pagefault!(push64(read_reg64(r1))); }

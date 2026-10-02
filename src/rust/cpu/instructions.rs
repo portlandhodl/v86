@@ -301,7 +301,13 @@ pub unsafe fn instr32_25(imm32: i32) { write_reg32(EAX, and32(read_reg32(EAX), i
 pub unsafe fn instr_26() { segment_prefix_op(ES); }
 
 #[no_mangle]
-pub unsafe fn instr_27() { bcd_daa(); }
+pub unsafe fn instr_27() {
+    if *is_64 {
+        trigger_ud();
+        return;
+    }
+    bcd_daa();
+}
 
 pub unsafe fn instr_28_mem(addr: u64, r: i32) { safe_read_write8(addr, &|x| sub8(x, read_reg8(r))) }
 pub unsafe fn instr_28_reg(r1: i32, r: i32) { write_reg8(r1, sub8(read_reg8(r1), read_reg8(r))); }
@@ -349,7 +355,13 @@ pub unsafe fn instr32_2D(imm32: i32) { write_reg32(EAX, sub32(read_reg32(EAX), i
 pub unsafe fn instr_2E() { segment_prefix_op(CS); }
 
 #[no_mangle]
-pub unsafe fn instr_2F() { bcd_das(); }
+pub unsafe fn instr_2F() {
+    if *is_64 {
+        trigger_ud();
+        return;
+    }
+    bcd_das();
+}
 
 pub unsafe fn instr_30_mem(addr: u64, r: i32) { safe_read_write8(addr, &|x| xor8(x, read_reg8(r))) }
 pub unsafe fn instr_30_reg(r1: i32, r: i32) { write_reg8(r1, xor8(read_reg8(r1), read_reg8(r))); }
@@ -397,7 +409,13 @@ pub unsafe fn instr32_35(imm32: i32) { write_reg32(EAX, xor32(read_reg32(EAX), i
 pub unsafe fn instr_36() { segment_prefix_op(SS); }
 
 #[no_mangle]
-pub unsafe fn instr_37() { bcd_aaa(); }
+pub unsafe fn instr_37() {
+    if *is_64 {
+        trigger_ud();
+        return;
+    }
+    bcd_aaa();
+}
 
 pub unsafe fn instr_38_mem(addr: u64, r: i32) {
     cmp8(return_on_pagefault!(safe_read8(addr)), read_reg8(r));
@@ -430,7 +448,13 @@ pub unsafe fn instr32_3D(imm32: i32) { cmp32(read_reg32(EAX), imm32); }
 pub unsafe fn instr_3E() { segment_prefix_op(DS); }
 
 #[no_mangle]
-pub unsafe fn instr_3F() { bcd_aas(); }
+pub unsafe fn instr_3F() {
+    if *is_64 {
+        trigger_ud();
+        return;
+    }
+    bcd_aas();
+}
 
 pub unsafe fn instr16_40() { write_reg16(AX, inc16(read_reg16(AX))); }
 pub unsafe fn instr32_40() { write_reg32(EAX, inc32(read_reg32(EAX))); }
@@ -1646,7 +1670,11 @@ pub unsafe fn instr_D4(arg: i32) { bcd_aam(arg); }
 pub unsafe fn instr_D5(arg: i32) { bcd_aad(arg); }
 #[no_mangle]
 pub unsafe fn instr_D6() {
-    // salc
+    // salc (invalid in 64-bit mode)
+    if *is_64 {
+        trigger_ud();
+        return;
+    }
     write_reg8(AL, -(getcf() as i32));
 }
 pub unsafe fn instr_D7() {
