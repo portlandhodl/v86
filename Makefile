@@ -315,6 +315,9 @@ nasmtests-force-jit: build/v86-debug.wasm
 	$(NASM_TEST_DIR)/gen_fixtures.js
 	$(NASM_TEST_DIR)/run.js --force-jit
 
+longmode-tests: build/v86-debug.wasm
+	./tests/longmode/run.js
+
 jitpagingtests: build/v86-debug.wasm
 	$(MAKE) -C tests/jit-paging test-jit test-jit-smc
 	./tests/jit-paging/run.js
