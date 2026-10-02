@@ -3260,7 +3260,7 @@ pub unsafe fn run_prefix_instruction() {
 
 pub unsafe fn segment_prefix_op(seg: i32) {
     dbg_assert!(seg <= 5 && seg >= 0);
-    *prefixes = *prefixes & !prefix::PREFIX_MASK_SEGMENT | (seg as u8 + 1);
+    *prefixes = *prefixes & !prefix::PREFIX_MASK_SEGMENT | (seg as u16 + 1);
     run_prefix_instruction();
     *prefixes = 0
 }

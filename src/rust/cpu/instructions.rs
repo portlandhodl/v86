@@ -570,13 +570,13 @@ pub unsafe fn instr_65() { segment_prefix_op(GS); }
 
 pub unsafe fn instr_66() {
     // Operand-size override prefix
-    *prefixes |= prefix::PREFIX_MASK_OPSIZE;
+    *prefixes = *prefixes & !prefix::PREFIX_MASK_REX | prefix::PREFIX_MASK_OPSIZE;
     run_prefix_instruction();
     *prefixes = 0;
 }
 pub unsafe fn instr_67() {
     // Address-size override prefix
-    *prefixes |= prefix::PREFIX_MASK_ADDRSIZE;
+    *prefixes = *prefixes & !prefix::PREFIX_MASK_REX | prefix::PREFIX_MASK_ADDRSIZE;
     run_prefix_instruction();
     *prefixes = 0;
 }
