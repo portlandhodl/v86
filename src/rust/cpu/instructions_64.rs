@@ -42,20 +42,79 @@ pub unsafe fn instr64_0F00_4_mem(a0: u64) { unimplemented!("instr64_0F00_4_mem")
 pub unsafe fn instr64_0F00_4_reg(a0: i32) { unimplemented!("instr64_0F00_4_reg") }
 pub unsafe fn instr64_0F00_5_mem(a0: u64) { unimplemented!("instr64_0F00_5_mem") }
 pub unsafe fn instr64_0F00_5_reg(a0: i32) { unimplemented!("instr64_0F00_5_reg") }
-pub unsafe fn instr64_0F01_0_mem(a0: u64) { unimplemented!("instr64_0F01_0_mem") }
-pub unsafe fn instr64_0F01_0_reg(a0: i32) { unimplemented!("instr64_0F01_0_reg") }
-pub unsafe fn instr64_0F01_1_mem(a0: u64) { unimplemented!("instr64_0F01_1_mem") }
-pub unsafe fn instr64_0F01_1_reg(a0: i32) { unimplemented!("instr64_0F01_1_reg") }
-pub unsafe fn instr64_0F01_2_mem(a0: u64) { unimplemented!("instr64_0F01_2_mem") }
-pub unsafe fn instr64_0F01_2_reg(a0: i32) { unimplemented!("instr64_0F01_2_reg") }
-pub unsafe fn instr64_0F01_3_mem(a0: u64) { unimplemented!("instr64_0F01_3_mem") }
-pub unsafe fn instr64_0F01_3_reg(a0: i32) { unimplemented!("instr64_0F01_3_reg") }
-pub unsafe fn instr64_0F01_4_mem(a0: u64) { unimplemented!("instr64_0F01_4_mem") }
-pub unsafe fn instr64_0F01_4_reg(a0: i32) { unimplemented!("instr64_0F01_4_reg") }
-pub unsafe fn instr64_0F01_6_mem(a0: u64) { unimplemented!("instr64_0F01_6_mem") }
-pub unsafe fn instr64_0F01_6_reg(a0: i32) { unimplemented!("instr64_0F01_6_reg") }
-pub unsafe fn instr64_0F01_7_mem(a0: u64) { unimplemented!("instr64_0F01_7_mem") }
-pub unsafe fn instr64_0F01_7_reg(a0: i32) { unimplemented!("instr64_0F01_7_reg") }
+pub unsafe fn instr64_0F01_0_mem(addr: u64) {
+    // sgdt: 10-byte pseudo descriptor in 64-bit mode (8-byte offset, 2-byte limit)
+    if 0 != *cpl {
+        trigger_gp(0);
+        return;
+    }
+    return_on_pagefault!(safe_write64(addr, *gdtr_offset64));
+    return_on_pagefault!(safe_write16(addr + 8, *gdtr_size));
+}
+pub unsafe fn instr64_0F01_0_reg(_a0: i32) { trigger_ud(); }
+pub unsafe fn instr64_0F01_1_mem(addr: u64) {
+    // sidt
+    if 0 != *cpl {
+        trigger_gp(0);
+        return;
+    }
+    return_on_pagefault!(safe_write64(addr, *idtr_offset64));
+    return_on_pagefault!(safe_write16(addr + 8, *idtr_size));
+}
+pub unsafe fn instr64_0F01_1_reg(_a0: i32) { trigger_ud(); }
+pub unsafe fn instr64_0F01_2_mem(addr: u64) {
+    // lgdt: 10-byte pseudo descriptor in 64-bit mode
+    if 0 != *cpl {
+        trigger_gp(0);
+        return;
+    }
+    let limit = return_on_pagefault!(safe_read16(addr));
+    let offset = return_on_pagefault!(safe_read64s(addr + 2));
+    *gdtr_size = limit;
+    *gdtr_offset = offset as u32 as i32;
+    *gdtr_offset64 = offset;
+}
+pub unsafe fn instr64_0F01_2_reg(_a0: i32) { trigger_ud(); }
+pub unsafe fn instr64_0F01_3_mem(addr: u64) {
+    // lidt
+    if 0 != *cpl {
+        trigger_gp(0);
+        return;
+    }
+    let limit = return_on_pagefault!(safe_read16(addr));
+    let offset = return_on_pagefault!(safe_read64s(addr + 2));
+    *idtr_size = limit;
+    *idtr_offset = offset as u32 as i32;
+    *idtr_offset64 = offset;
+}
+pub unsafe fn instr64_0F01_3_reg(_a0: i32) { trigger_ud(); }
+pub unsafe fn instr64_0F01_4_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F01_4_mem(addr) }
+pub unsafe fn instr64_0F01_4_reg(_a0: i32) { trigger_ud(); }
+pub unsafe fn instr64_0F01_6_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F01_6_mem(addr) }
+pub unsafe fn instr64_0F01_6_reg(_a0: i32) { trigger_ud(); }
+pub unsafe fn instr64_0F01_7_mem(addr: u64) {
+    // invlpg
+    if 0 != *cpl {
+        trigger_gp(0);
+        return;
+    }
+    invlpg(addr);
+}
+pub unsafe fn instr64_0F01_7_reg(r: i32) {
+    if r == 0 {
+        // swapgs (0F 01 F8): exchange gs_base and kernel_gs_base
+        if 0 != *cpl {
+            trigger_gp(0);
+            return;
+        }
+        let base = *gs_base;
+        *gs_base = *kernel_gs_base;
+        *kernel_gs_base = base;
+    }
+    else {
+        trigger_ud();
+    }
+}
 pub unsafe fn instr64_0F02_mem(a0: u64, a1: i32) { unimplemented!("instr64_0F02_mem") }
 pub unsafe fn instr64_0F02_reg(a0: i32, a1: i32) { unimplemented!("instr64_0F02_reg") }
 pub unsafe fn instr64_0F03_mem(a0: u64, a1: i32) { unimplemented!("instr64_0F03_mem") }
@@ -508,7 +567,7 @@ pub unsafe fn instr64_C9() {
 }
 pub unsafe fn instr64_CA(a0: i32) { unimplemented!("instr64_CA") }
 pub unsafe fn instr64_CB() { unimplemented!("instr64_CB") }
-pub unsafe fn instr64_CF() { unimplemented!("instr64_CF") }
+pub unsafe fn instr64_CF() { iret64(); }
 pub unsafe fn instr64_D1_0_mem(addr: u64) { safe_read_write64(addr, &|x| rol64(x, 1)) }
 pub unsafe fn instr64_D1_0_reg(r1: i32) { write_reg64(r1, rol64(read_reg64(r1), 1)); }
 pub unsafe fn instr64_D1_1_mem(addr: u64) { safe_read_write64(addr, &|x| ror64(x, 1)) }

@@ -275,6 +275,7 @@ pub const TLB_NO_USER: i32 = 1 << 2;
 pub const TLB_IN_MAPPED_RANGE: i32 = 1 << 3;
 pub const TLB_GLOBAL: i32 = 1 << 4;
 pub const TLB_HAS_CODE: i32 = 1 << 5;
+pub const TLB_NOT_EXECUTABLE: i32 = 1 << 6;
 pub const IVT_SIZE: u32 = 0x400;
 pub const CPU_EXCEPTION_DE: i32 = 0;
 pub const CPU_EXCEPTION_DB: i32 = 1;
@@ -473,6 +474,32 @@ pub enum SelectorNullOrInvalid {
     OutsideOfTableLimit,
 }
 
+/// 64-bit interrupt/trap gate descriptor (16 bytes in long mode).
+pub struct InterruptDescriptor64 {
+    pub low: u64,
+    pub high: u64,
+}
+
+impl InterruptDescriptor64 {
+    pub fn of_u128(low: u64, high: u64) -> InterruptDescriptor64 {
+        InterruptDescriptor64 { low, high }
+    }
+    pub fn offset(&self) -> u64 {
+        self.low & 0xFFFF | self.low >> 32 & 0xFFFF_0000 | self.high << 32
+    }
+    pub fn selector(&self) -> u16 { (self.low >> 16 & 0xFFFF) as u16 }
+    pub fn ist(&self) -> u8 { (self.low >> 32 & 7) as u8 }
+    pub fn access_byte(&self) -> u8 { (self.low >> 40 & 0xFF) as u8 }
+    pub fn dpl(&self) -> u8 { (self.access_byte() >> 5 & 3) as u8 }
+    pub fn gate_type(&self) -> u8 { self.access_byte() & 0xF }
+    pub fn is_present(&self) -> bool { self.access_byte() & 0x80 == 0x80 }
+    /// interrupt (0xE) or trap (0xF) gate; these are the only valid types in long mode
+    pub fn is_valid_long_mode_gate(&self) -> bool {
+        self.gate_type() & !1 == 0xE
+    }
+    pub fn is_trap_gate(&self) -> bool { self.gate_type() & 1 == 1 }
+}
+
 pub struct SegmentDescriptor {
     pub raw: u64,
 }
@@ -581,8 +608,159 @@ unsafe fn get_tss_ss_esp(dpl: u8) -> OrPageFault<(i32, i32)> {
     })
 }
 
+/// The RSP[dpl] stack pointer from the 64-bit TSS (used for privilege-level
+/// switches when delivering interrupts in long mode).
+unsafe fn get_tss_rsp64(dpl: u8) -> OrPageFault<u64> {
+    let tss_stack_offset = 4u32 + (dpl as u32) << 3;
+    if tss_stack_offset + 7 > *segment_limits.offset(TR as isize) {
+        trigger_ts(0);
+        return Err(());
+    }
+    let addr = translate_address_system_read(
+        (*segment_offsets.offset(TR as isize) + tss_stack_offset as i32) as u32 as u64,
+    )?;
+    Ok(memory::read64s(addr) as u64)
+}
+
+/// The ISTn stack pointer from the 64-bit TSS (ist is 1-7).
+unsafe fn get_tss_ist64(ist: u8) -> OrPageFault<u64> {
+    dbg_assert!(ist >= 1 && ist <= 7);
+    let offset = 0x28u32 + ((ist as u32 - 1) << 3);
+    if offset + 7 > *segment_limits.offset(TR as isize) {
+        trigger_ts(0);
+        return Err(());
+    }
+    let addr = translate_address_system_read(
+        (*segment_offsets.offset(TR as isize) + offset as i32) as u32 as u64,
+    )?;
+    Ok(memory::read64s(addr) as u64)
+}
+
 pub unsafe fn iret16() { iret(true); }
 pub unsafe fn iret32() { iret(false); }
+
+/// 64-bit interrupt return (iretq).
+pub unsafe fn iret64() {
+    dbg_assert!(*is_64);
+
+    let rsp = read_reg64(ESP);
+    let new_rip = return_on_pagefault!(safe_read64s(rsp));
+    let new_cs = return_on_pagefault!(safe_read64s(rsp + 8)) as u16;
+    let new_flags = return_on_pagefault!(safe_read64s(rsp + 16)) as u32 as i32;
+
+    let cs_selector = SegmentSelector::of_u16(new_cs);
+    if cs_selector.is_null() {
+        dbg_log!("#gp iret64: null cs selector");
+        trigger_gp(0);
+        return;
+    }
+
+    let cs_descriptor = match return_on_pagefault!(lookup_segment_selector(cs_selector)) {
+        Ok((desc, _)) => desc,
+        Err(SelectorNullOrInvalid::IsNull) => {
+            trigger_gp(new_cs as i32 & !3);
+            return;
+        },
+        Err(SelectorNullOrInvalid::OutsideOfTableLimit) => {
+            dbg_log!("#gp iret64: cs selector outside of table limit");
+            trigger_gp(new_cs as i32 & !3);
+            return;
+        },
+    };
+
+    if !cs_descriptor.is_executable() || !cs_descriptor.is_present() {
+        dbg_log!("#gp iret64: cs not executable or not present");
+        trigger_gp(new_cs as i32 & !3);
+        return;
+    }
+
+    let new_cpl = cs_selector.rpl();
+    if new_cpl < *cpl {
+        dbg_log!("#gp iret64: rpl < cpl");
+        trigger_gp(new_cs as i32 & !3);
+        return;
+    }
+    if !cs_descriptor.is_dc() && cs_selector.rpl() != cs_descriptor.dpl() {
+        dbg_log!("#gp iret64: non-conforming cs and rpl != dpl");
+        trigger_gp(new_cs as i32 & !3);
+        return;
+    }
+    if cs_descriptor.is_dc() && cs_descriptor.dpl() > cs_selector.rpl() {
+        dbg_log!("#gp iret64: conforming cs and dpl > rpl");
+        trigger_gp(new_cs as i32 & !3);
+        return;
+    }
+
+    if new_cpl > *cpl {
+        // outer privilege return: pop rsp and ss as well
+        let new_rsp = return_on_pagefault!(safe_read64s(rsp + 24));
+        let new_ss = return_on_pagefault!(safe_read64s(rsp + 32)) as u16;
+
+        let ss_selector = SegmentSelector::of_u16(new_ss);
+        if ss_selector.is_null() {
+            // loading a null selector into ss is not allowed on iret
+            dbg_log!("#gp iret64: null ss selector");
+            trigger_gp(0);
+            return;
+        }
+        let ss_descriptor = match return_on_pagefault!(lookup_segment_selector(ss_selector)) {
+            Ok((desc, _)) => desc,
+            Err(SelectorNullOrInvalid::IsNull) | Err(SelectorNullOrInvalid::OutsideOfTableLimit) => {
+                dbg_log!("#gp iret64: invalid ss selector");
+                trigger_gp(new_ss as i32 & !3);
+                return;
+            },
+        };
+
+        if ss_descriptor.is_system()
+            || ss_selector.rpl() != new_cpl
+            || !ss_descriptor.is_writable()
+            || ss_descriptor.dpl() != new_cpl
+        {
+            dbg_log!("#gp iret64: invalid ss descriptor");
+            trigger_gp(new_ss as i32 & !3);
+            return;
+        }
+        if !ss_descriptor.is_present() {
+            dbg_log!("#ss iret64: ss not present");
+            trigger_ss(new_ss as i32 & !3);
+            return;
+        }
+
+        // no exceptions below
+
+        write_reg64(ESP, new_rsp);
+
+        if !switch_seg(SS, new_ss as i32) {
+            dbg_assert!(false);
+        }
+    }
+    else {
+        // same privilege: the three popped values are the whole frame
+        write_reg64(ESP, rsp + 24);
+    }
+
+    // no exceptions below
+
+    update_eflags(new_flags);
+
+    *cpl = new_cpl;
+    cpl_changed();
+
+    *sreg.offset(CS as isize) = new_cs;
+    *segment_is_null.offset(CS as isize) = false;
+    *segment_limits.offset(CS as isize) = cs_descriptor.effective_limit();
+    *segment_offsets.offset(CS as isize) = if *is_64 { 0 } else { cs_descriptor.base() };
+    *segment_access_bytes.offset(CS as isize) = cs_descriptor.access_byte();
+
+    update_cs_size(cs_descriptor.is_32(), cs_descriptor.is_64());
+
+    *instruction_pointer = new_rip;
+
+    update_state_flags();
+
+    handle_irqs();
+}
 
 pub unsafe fn iret(is_16: bool) {
     if vm86_mode() && getiopl() < 3 {
@@ -880,6 +1058,12 @@ pub unsafe fn call_interrupt_vector(
     error_code: Option<i32>,
 ) {
     if *protected_mode {
+        if *is_64 {
+            // long mode: 16-byte gates and a 64-bit interrupt frame
+            call_interrupt_vector64(interrupt_nr, is_software_int, error_code);
+            return;
+        }
+
         if vm86_mode() && *cr.offset(4) & CR4_VME != 0 {
             panic!("Unimplemented: VME");
         }
@@ -898,7 +1082,7 @@ pub unsafe fn call_interrupt_vector(
         }
 
         let descriptor_address = return_on_pagefault!(translate_address_system_read(
-            (*idtr_offset + (interrupt_nr << 3)) as u32 as u64
+            (*idtr_offset64).wrapping_add((interrupt_nr << 3) as u64)
         ));
 
         let descriptor = InterruptDescriptor::of_u64(memory::read64s(descriptor_address) as u64);
@@ -1201,6 +1385,192 @@ pub unsafe fn call_interrupt_vector(
         *instruction_pointer = (get_seg_cs() as u32).wrapping_add(new_ip as u32) as u64;
         update_state_flags();
     }
+}
+
+/// Interrupt/trap delivery in long mode (64-bit submode): 16-byte IDT gates,
+/// a 64-bit interrupt frame and IST stack switches.
+pub unsafe fn call_interrupt_vector64(
+    interrupt_nr: i32,
+    is_software_int: bool,
+    error_code: Option<i32>,
+) {
+    dbg_assert!(*protected_mode && *is_64);
+
+    if (interrupt_nr << 4 | 15) as u32 > *idtr_size as u32 {
+        dbg_log!("interrupt_nr={:x} idtr_size={:x}", interrupt_nr, *idtr_size);
+        // #GP with the vector number as error code
+        if is_software_int {
+            trigger_gp(interrupt_nr << 4 | 2);
+        }
+        else {
+            // exceptions during exception delivery triple-fault in practice; #DF
+            // with a zero error code is the closest useful reaction
+            trigger_df(0);
+        }
+        return;
+    }
+
+    let descriptor_address = return_on_pagefault!(translate_address_system_read(
+        (*idtr_offset64).wrapping_add((interrupt_nr << 4) as u64)
+    ));
+
+    let descriptor = InterruptDescriptor64::of_u128(
+        memory::read64s(descriptor_address) as u64,
+        memory::read64s(descriptor_address + 8) as u64,
+    );
+
+    let offset = descriptor.offset();
+    let selector = descriptor.selector() as i32;
+
+    if is_software_int && descriptor.dpl() < *cpl {
+        dbg_log!("#gp software interrupt ({:x}) and dpl < cpl", interrupt_nr);
+        trigger_gp(interrupt_nr << 4 | 2);
+        return;
+    }
+
+    if !descriptor.is_valid_long_mode_gate() {
+        dbg_log!(
+            "gate type invalid. gate_type=0b{:b} access={:b}",
+            descriptor.gate_type(),
+            descriptor.access_byte()
+        );
+        trigger_gp(interrupt_nr << 4 | 2);
+        return;
+    }
+
+    if !descriptor.is_present() {
+        dbg_log!("#np int descriptor not present, int={}", interrupt_nr);
+        trigger_np(interrupt_nr << 4 | 2);
+        return;
+    }
+
+    let cs_selector = SegmentSelector::of_u16(descriptor.selector());
+    let cs_descriptor = match return_on_pagefault!(lookup_segment_selector(cs_selector)) {
+        Ok((desc, _)) => desc,
+        Err(SelectorNullOrInvalid::IsNull) | Err(SelectorNullOrInvalid::OutsideOfTableLimit) => {
+            dbg_log!("#gp invalid cs selector in gate, sel={:x}", descriptor.selector());
+            trigger_gp(descriptor.selector() as i32 & !3);
+            return;
+        },
+    };
+
+    if !cs_descriptor.is_executable() {
+        dbg_log!("#gp interrupt: cs not executable");
+        trigger_gp(descriptor.selector() as i32 & !3);
+        return;
+    }
+    if !cs_descriptor.is_present() {
+        dbg_log!("#np interrupt: cs not present");
+        trigger_np(descriptor.selector() as i32 & !3);
+        return;
+    }
+    if !cs_descriptor.is_64() {
+        dbg_log!("#gp interrupt: cs is not a 64-bit code segment");
+        trigger_gp(descriptor.selector() as i32 & !3);
+        return;
+    }
+    if !cs_descriptor.is_dc() && cs_descriptor.dpl() < *cpl {
+        // inter-privilege-level interrupt; dpl is the new cpl
+    }
+    else if cs_descriptor.is_dc() || cs_descriptor.dpl() == *cpl {
+        // intra-privilege-level
+    }
+    else {
+        dbg_log!("#gp interrupt: cs dpl={} cpl={}", cs_descriptor.dpl(), *cpl);
+        trigger_gp(descriptor.selector() as i32 & !3);
+        return;
+    }
+
+    let old_flags = get_eflags();
+    let old_rip = *instruction_pointer;
+    let old_cs = *sreg.offset(CS as isize) as u64;
+    let old_ss = *sreg.offset(SS as isize) as u64;
+    let old_rsp = read_reg64(ESP);
+
+    let new_cpl = cs_descriptor.dpl();
+    let switch_stack = !cs_descriptor.is_dc() && new_cpl < *cpl;
+    let ist = descriptor.ist();
+
+    let mut frame_size: u64 = 24; // rip, cs, rflags
+    if switch_stack {
+        frame_size += 16; // ss, rsp
+    }
+    if error_code.is_some() {
+        frame_size += 8;
+    }
+
+    let stack_base: u64 = if switch_stack || ist != 0 {
+        if ist != 0 {
+            return_on_pagefault!(get_tss_ist64(ist))
+        }
+        else {
+            return_on_pagefault!(get_tss_rsp64(new_cpl))
+        }
+    }
+    else {
+        old_rsp
+    };
+
+    // check that the frame fits (linear, ss base is 0 in 64-bit mode)
+    return_on_pagefault!(writable_or_pagefault(
+        stack_base.wrapping_sub(frame_size),
+        frame_size as i32
+    ));
+
+    // no exceptions below
+
+    *cpl = new_cpl;
+    cpl_changed();
+
+    *flags &= !FLAG_VM & !FLAG_RF;
+
+    if switch_stack {
+        // in long mode ss is set to null on an interrupt stack switch
+        *sreg.offset(SS as isize) = 0;
+        *segment_is_null.offset(SS as isize) = true;
+    }
+
+    let mut p = stack_base.wrapping_sub(frame_size);
+    if switch_stack {
+        return_on_pagefault!(safe_write64(p, old_ss));
+        p += 8;
+        return_on_pagefault!(safe_write64(p, old_rsp));
+        p += 8;
+    }
+    return_on_pagefault!(safe_write64(p, old_flags as u64));
+    p += 8;
+    return_on_pagefault!(safe_write64(p, old_cs));
+    p += 8;
+    return_on_pagefault!(safe_write64(p, old_rip));
+    if let Some(ec) = error_code {
+        p += 8;
+        return_on_pagefault!(safe_write64(p, ec as u64));
+    }
+    write_reg64(ESP, stack_base.wrapping_sub(frame_size));
+
+    *sreg.offset(CS as isize) = descriptor.selector() & !3 | *cpl as u16;
+    *segment_is_null.offset(CS as isize) = false;
+    *segment_limits.offset(CS as isize) = cs_descriptor.effective_limit();
+    *segment_offsets.offset(CS as isize) = 0;
+    *segment_access_bytes.offset(CS as isize) = cs_descriptor.access_byte();
+
+    update_cs_size(cs_descriptor.is_32(), cs_descriptor.is_64());
+
+    *instruction_pointer = offset;
+
+    *flags &= !FLAG_NT & !FLAG_RF & !FLAG_TRAP;
+
+    if !descriptor.is_trap_gate() {
+        // clear int flag for interrupt gates
+        *flags &= !FLAG_INTERRUPT;
+    }
+    else {
+        if *flags & FLAG_INTERRUPT != 0 && old_flags & FLAG_INTERRUPT == 0 {
+            handle_irqs();
+        }
+    }
+
+    update_state_flags();
 }
 
 pub unsafe fn far_jump(eip: i32, selector: i32, is_call: bool, is_osize_32: bool) {
@@ -1823,12 +2193,12 @@ pub unsafe fn do_task_switch(selector: i32, error_code: Option<i32>, source: Tas
                     panic!("#TS handler");
                 },
             };
-        safe_write64(tr_descriptor_address as u32 as u64, tr_descriptor.clear_busy().raw).unwrap();
+        safe_write64(tr_descriptor_address as u64, tr_descriptor.clear_busy().raw).unwrap();
     }
 
     if source != TaskSwitchSource::Iret {
         // jump, call and int mark the new task as busy (iret would not)
-        safe_write64(descriptor_address as u32 as u64, descriptor.set_busy().raw).unwrap();
+        safe_write64(descriptor_address as u64, descriptor.set_busy().raw).unwrap();
     }
 
     //let new_tsr_size = descriptor.effective_limit;
@@ -2140,6 +2510,8 @@ pub unsafe fn do_page_walk(
     let mut allow_user = true;
     // accumulated write permission of upper paging levels (long mode only)
     let mut allow_write_upper = true;
+    // accumulated NX permission of upper paging levels (long mode only)
+    let mut allow_fetch = true;
     let page = addr >> 12;
     let high;
 
@@ -2171,6 +2543,7 @@ pub unsafe fn do_page_walk(
             }
             allow_user &= pml4_entry & (PAGE_TABLE_USER_MASK as u64) != 0;
             allow_write_upper &= pml4_entry & (PAGE_TABLE_RW_MASK as u64) != 0;
+            allow_fetch &= pml4_entry & 0x8000_0000_0000_0000u64 == 0;
             if side_effects && pml4_entry & (PAGE_TABLE_ACCESSED_MASK as u64) == 0 {
                 memory::write8(pml4_addr, (pml4_entry | PAGE_TABLE_ACCESSED_MASK as u64) as i32);
             }
@@ -2186,6 +2559,7 @@ pub unsafe fn do_page_walk(
             }
             allow_user &= pdpt_entry & (PAGE_TABLE_USER_MASK as u64) != 0;
             allow_write_upper &= pdpt_entry & (PAGE_TABLE_RW_MASK as u64) != 0;
+            allow_fetch &= pdpt_entry & 0x8000_0000_0000_0000u64 == 0;
             dbg_assert!(
                 pdpt_entry & (PAGE_TABLE_PSE_MASK as u64) == 0,
                 "TODO: 1GB pages in long mode"
@@ -2220,10 +2594,6 @@ pub unsafe fn do_page_walk(
                 page_dir_entry & 0x7FFF_FFFF_0000_0000 == 0,
                 "Unsupported: Page directory entry larger than 32 bits"
             );
-            dbg_assert!(
-                page_dir_entry & 0x8000_0000_0000_0000u64 == 0,
-                "Unsupported: NX bit"
-            );
 
             (page_dir_addr, page_dir_entry)
         }
@@ -2244,6 +2614,7 @@ pub unsafe fn do_page_walk(
         let mut allow_write = page_dir_entry as i32 & PAGE_TABLE_RW_MASK != 0;
         allow_write &= allow_write_upper;
         allow_user &= page_dir_entry as i32 & PAGE_TABLE_USER_MASK != 0;
+        allow_fetch &= page_dir_entry & 0x8000_0000_0000_0000u64 == 0;
 
         if 0 != page_dir_entry as i32 & PAGE_TABLE_PSE_MASK && (long_mode || 0 != cr4 & CR4_PSE) {
             // size bit is set
@@ -2282,10 +2653,6 @@ pub unsafe fn do_page_walk(
                     page_table_entry & 0x7FFF_FFFF_0000_0000 == 0,
                     "Unsupported: Page table entry larger than 32 bits"
                 );
-                dbg_assert!(
-                    page_table_entry & 0x8000_0000_0000_0000u64 == 0,
-                    "Unsupported: NX bit"
-                );
 
                 (page_table_addr, page_table_entry)
             }
@@ -2299,6 +2666,7 @@ pub unsafe fn do_page_walk(
             let present = page_table_entry as i32 & PAGE_TABLE_PRESENT_MASK != 0;
             allow_write &= page_table_entry as i32 & PAGE_TABLE_RW_MASK != 0;
             allow_user &= page_table_entry as i32 & PAGE_TABLE_USER_MASK != 0;
+            allow_fetch &= page_table_entry & 0x8000_0000_0000_0000u64 == 0;
 
             if !present
                 || for_writing && !allow_write && !kernel_write_override
@@ -2356,12 +2724,14 @@ pub unsafe fn do_page_walk(
         // address part)
         true
     };
+    let long_mode_nx = *efer & EFER_LMA != 0 && *efer & EFER_NXE != 0;
     let info_bits = TLB_VALID
         | if for_writing { 0 } else { TLB_READONLY }
         | if allow_user { 0 } else { TLB_NO_USER }
         | if is_in_mapped_range { TLB_IN_MAPPED_RANGE } else { 0 }
         | if global && 0 != cr4 & CR4_PGE { TLB_GLOBAL } else { 0 }
-        | if has_code { TLB_HAS_CODE } else { 0 };
+        | if has_code { TLB_HAS_CODE } else { 0 }
+        | if long_mode_nx && !allow_fetch { TLB_NOT_EXECUTABLE } else { 0 };
 
     if side_effects {
         // bake in the addition with memory::mem8 to save an instruction from the fast path
@@ -2707,17 +3077,17 @@ pub unsafe fn is_asize_32() -> bool {
 
 pub unsafe fn lookup_segment_selector(
     selector: SegmentSelector,
-) -> OrPageFault<Result<(SegmentDescriptor, i32), SelectorNullOrInvalid>> {
+) -> OrPageFault<Result<(SegmentDescriptor, u64), SelectorNullOrInvalid>> {
     if selector.is_null() {
         return Ok(Err(SelectorNullOrInvalid::IsNull));
     }
 
     let (table_offset, table_limit) = if selector.is_gdt() {
-        (*gdtr_offset as u32, *gdtr_size as u32)
+        (*gdtr_offset64, *gdtr_size as u32)
     }
     else {
         (
-            *segment_offsets.offset(LDTR as isize) as u32,
+            *segment_offsets.offset(LDTR as isize) as u32 as u64,
             *segment_limits.offset(LDTR as isize) as u32,
         )
     };
@@ -2733,10 +3103,11 @@ pub unsafe fn lookup_segment_selector(
         return Ok(Err(SelectorNullOrInvalid::OutsideOfTableLimit));
     }
 
-    let descriptor_address = selector.descriptor_offset() as i32 + table_offset as i32;
+    let descriptor_address = (table_offset)
+        .wrapping_add(selector.descriptor_offset() as u32 as u64);
 
     let descriptor = SegmentDescriptor::of_u64(memory::read64s(translate_address_system_read(
-        descriptor_address as u32 as u64,
+        descriptor_address,
     )?) as u64);
 
     Ok(Ok((descriptor, descriptor_address)))
@@ -2854,7 +3225,7 @@ pub unsafe fn switch_seg(reg: i32, selector_raw: i32) -> bool {
         descriptor = descriptor.set_accessed();
 
         memory::write8(
-            translate_address_system_write((descriptor_address + 5) as u32 as u64).unwrap(),
+            translate_address_system_write(descriptor_address.wrapping_add(5)).unwrap(),
             descriptor.access_byte() as i32,
         );
     }
@@ -2922,7 +3293,7 @@ pub unsafe fn load_tr(selector: i32) {
 
     // Mark task as busy
     memory::write8(
-        translate_address_system_write((descriptor_address + 5) as u32 as u64).unwrap(),
+        translate_address_system_write(descriptor_address.wrapping_add(5)).unwrap(),
         descriptor.set_busy().access_byte() as i32,
     );
 }
@@ -3446,12 +3817,27 @@ pub unsafe fn cycle_internal() {
 pub unsafe fn get_phys_eip() -> OrPageFault<u32> {
     let eip = *instruction_pointer;
     if 0 != eip & !0xFFF ^ *last_virt_eip64 as u64 {
-        *eip_phys64 = (translate_address_read(eip)? as u64) ^ eip;
+        *eip_phys64 = (translate_address_read_code(eip)? as u64) ^ eip;
         *last_virt_eip64 = (eip & !0xFFF) as i64
     }
     let phys_addr = (*eip_phys64 ^ eip) as u32;
     dbg_assert!(!memory::in_mapped_range(phys_addr));
     return Ok(phys_addr);
+}
+
+/// Like translate_address_read, but additionally faults (with the I/D bit set
+/// in the error code) when the page is not executable (NX bit, long mode).
+pub fn translate_address_read_code(address: u64) -> OrPageFault<u32> {
+    unsafe {
+        if *efer & EFER_NXE != 0 && *efer & EFER_LMA != 0 {
+            let entry = tlb_pick_entry(address);
+            if entry as i32 & (TLB_VALID | TLB_NOT_EXECUTABLE) == TLB_VALID | TLB_NOT_EXECUTABLE {
+                trigger_pagefault_nx(address);
+                return Err(());
+            }
+        }
+        translate_address(address, false, *cpl == 3, false, true)
+    }
 }
 
 unsafe fn jit_run_interpreted(mut phys_addr: u32) {
@@ -4850,6 +5236,48 @@ pub unsafe fn trigger_ss(code: i32) {
     call_interrupt_vector(CPU_EXCEPTION_SS, false, Some(code));
 }
 
+/// Page fault caused by an instruction fetch from an NX page.
+unsafe fn trigger_pagefault_nx(addr: u64) {
+    if config::LOG_PAGE_FAULTS {
+        dbg_log!("page fault nx eip={:x} cr2={:x}", *previous_ip, addr);
+        dbg_trace();
+    }
+    profiler::stat_increment(stat::PAGE_FAULT);
+    *cr.offset(2) = addr as u32 as i32;
+    *cr2_64 = addr;
+    tlb_invalidate_page(addr);
+    // user<<2 | write<<1 | present | instruction fetch
+    let error_code = ((*cpl == 3) as i32) << 2 | 1 | 1 << 4;
+    *instruction_pointer = *previous_ip;
+    call_interrupt_vector(CPU_EXCEPTION_PF, false, Some(error_code));
+}
+
+#[inline(never)]
+pub unsafe fn trigger_ts(code: i32) {
+    dbg_log!("#ts");
+    *instruction_pointer = *previous_ip;
+    if DEBUG {
+        if js::cpu_exception_hook(CPU_EXCEPTION_TS) {
+            return;
+        }
+    }
+    call_interrupt_vector(CPU_EXCEPTION_TS, false, Some(code));
+}
+
+/// #DF (double fault). Always delivered with a zero error code; the IDT gate
+/// for #DF must not itself fault (a second double fault while delivering #DF
+/// shuts the processor down, which we model as a panic).
+pub unsafe fn trigger_df(code: i32) {
+    dbg_log!("#df");
+    *instruction_pointer = *previous_ip;
+    if DEBUG {
+        if js::cpu_exception_hook(CPU_EXCEPTION_DF) {
+            return;
+        }
+    }
+    call_interrupt_vector(CPU_EXCEPTION_DF, false, Some(code));
+}
+
 #[no_mangle]
 pub unsafe fn store_current_tsc() { *current_tsc = read_tsc(); }
 
@@ -4997,9 +5425,11 @@ pub unsafe fn reset_cpu() {
     // http://www.sandpile.org/x86/initial.htm
     *idtr_size = 0;
     *idtr_offset = 0;
+    *idtr_offset64 = 0;
 
     *gdtr_size = 0;
     *gdtr_offset = 0;
+    *gdtr_offset64 = 0;
 
     *cr = 1 << 30 | 1 << 29 | 1 << 4;
     *cr.offset(2) = 0;

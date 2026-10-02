@@ -201,6 +201,7 @@ unsafe fn sgdt(addr: u64, mask: i32) {
     return_on_pagefault!(writable_or_pagefault(addr, 6));
     safe_write16(addr, *gdtr_size).unwrap();
     safe_write32(addr + 2, *gdtr_offset & mask).unwrap();
+    dbg_assert!(*gdtr_offset64 <= u32::MAX as u64);
 }
 #[no_mangle]
 pub unsafe fn instr16_0F01_0_mem(addr: u64) { sgdt(addr, 0xFFFFFF) }
@@ -216,6 +217,7 @@ unsafe fn sidt(addr: u64, mask: i32) {
     return_on_pagefault!(writable_or_pagefault(addr, 6));
     safe_write16(addr, *idtr_size).unwrap();
     safe_write32(addr + 2, *idtr_offset & mask).unwrap();
+    dbg_assert!(*idtr_offset64 <= u32::MAX as u64);
 }
 #[no_mangle]
 pub unsafe fn instr16_0F01_1_mem(addr: u64) { sidt(addr, 0xFFFFFF) }
@@ -236,6 +238,7 @@ unsafe fn lgdt(addr: u64, mask: i32) {
     let offset = return_on_pagefault!(safe_read32s(addr + 2));
     *gdtr_size = size;
     *gdtr_offset = offset & mask;
+    *gdtr_offset64 = (offset & mask) as u64;
 }
 #[no_mangle]
 pub unsafe fn instr16_0F01_2_mem(addr: u64) { lgdt(addr, 0xFFFFFF); }
@@ -256,6 +259,7 @@ unsafe fn lidt(addr: u64, mask: i32) {
     let offset = return_on_pagefault!(safe_read32s(addr + 2));
     *idtr_size = size;
     *idtr_offset = offset & mask;
+    *idtr_offset64 = (offset & mask) as u64;
 }
 #[no_mangle]
 pub unsafe fn instr16_0F01_3_mem(addr: u64) { lidt(addr, 0xFFFFFF); }
@@ -412,7 +416,47 @@ pub unsafe fn instr32_0F03_reg(r1: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_0F04() { undefined_instruction(); }
 #[no_mangle]
-pub unsafe fn instr_0F05() { undefined_instruction(); }
+pub unsafe fn instr_0F05() {
+    // syscall (long mode only, enabled by EFER.SCE)
+    if !*is_64 || *efer & EFER_SCE == 0 {
+        dbg_log!("syscall #ud");
+        trigger_ud();
+        return;
+    }
+
+    let cs_selector = (*star >> 32 & 0xFFFC) as u16;
+
+    // rcx = rip of the instruction after syscall, r11 = rflags
+    let return_rip = *instruction_pointer;
+    let return_rflags = get_eflags();
+
+    // cs/ss from ia32_star; the segment descriptors are set up directly (the
+    // kernel reloads them anyway)
+    *sreg.offset(CS as isize) = cs_selector & !3;
+    *segment_is_null.offset(CS as isize) = false;
+    *segment_limits.offset(CS as isize) = -1i32 as u32;
+    *segment_offsets.offset(CS as isize) = 0;
+    *segment_access_bytes.offset(CS as isize) = 0x80 | (0 << 5) | 0x10 | 0x08 | 0x02; // P dpl0 S E RW
+    *sreg.offset(SS as isize) = (cs_selector + 8) & !3;
+    *segment_is_null.offset(SS as isize) = false;
+    *segment_limits.offset(SS as isize) = -1i32 as u32;
+    *segment_offsets.offset(SS as isize) = 0;
+    *segment_access_bytes.offset(SS as isize) = 0x80 | (0 << 5) | 0x10 | 0x02; // P dpl0 S RW
+    *stack_size_32 = true;
+
+    *cpl = 0;
+    cpl_changed();
+    update_cs_size(false, true);
+    update_state_flags();
+
+    // rflags are masked with ia32_sfmask; rf and vm are always cleared
+    update_eflags((return_rflags & !*sfmask as i32 & !FLAG_RF & !FLAG_VM) | FLAGS_DEFAULT & 2);
+
+    write_reg64(ECX, return_rip);
+    write_reg64(11, return_rflags as u64);
+
+    *instruction_pointer = *lstar;
+}
 #[no_mangle]
 pub unsafe fn instr_0F06() {
     // clts
@@ -428,7 +472,42 @@ pub unsafe fn instr_0F06() {
     };
 }
 #[no_mangle]
-pub unsafe fn instr_0F07() { undefined_instruction(); }
+pub unsafe fn instr_0F07() {
+    // sysret (64-bit variant)
+    if !*is_64 || 0 != *cpl {
+        dbg_log!("sysret #ud/#gp");
+        trigger_gp(0);
+        return;
+    }
+
+    let cs_selector = (*star >> 48) as u16;
+
+    // the return rip and rflags were saved by the kernel in rcx/r11
+    let return_rip = read_reg64(ECX);
+    let return_rflags = read_reg64(11) as u32 as i32;
+
+    // cs/ss for cpl 3
+    *sreg.offset(CS as isize) = (cs_selector + 16) & !3 | 3;
+    *segment_is_null.offset(CS as isize) = false;
+    *segment_limits.offset(CS as isize) = -1i32 as u32;
+    *segment_offsets.offset(CS as isize) = 0;
+    *segment_access_bytes.offset(CS as isize) = 0x80 | (3 << 5) | 0x10 | 0x08 | 0x02; // P dpl3 S E RW
+    *sreg.offset(SS as isize) = cs_selector & !3 | 3;
+    *segment_is_null.offset(SS as isize) = false;
+    *segment_limits.offset(SS as isize) = -1i32 as u32;
+    *segment_offsets.offset(SS as isize) = 0;
+    *segment_access_bytes.offset(SS as isize) = 0x80 | (3 << 5) | 0x10 | 0x02; // P dpl3 S RW
+    *stack_size_32 = true;
+
+    *cpl = 3;
+    cpl_changed();
+    update_cs_size(false, true);
+    update_state_flags();
+
+    update_eflags(return_rflags & !FLAG_RF & !FLAG_VM);
+
+    *instruction_pointer = return_rip;
+}
 #[no_mangle]
 pub unsafe fn instr_0F08() {
     // invd
@@ -3393,7 +3472,8 @@ pub unsafe fn instr_0FA2() {
 
         0x80000001 => {
             // extended feature bits
-            edx = 1 << 29; // long mode
+            edx = 1 << 11 | 1 << 20 | 1 << 29; // syscall, nx, long mode
+            ecx = 1 << 0; // lahf/sahf in 64-bit mode
         },
 
         0x80000008 => {

@@ -107,6 +107,11 @@ pub const eip_phys64: *mut u64 = 376 as *mut u64;
 // for 32-bit paths and JS)
 pub const cr2_64: *mut u64 = 384 as *mut u64;
 
+// gdtr/idtr base as full 64-bit linear addresses (the i32 slots at 568/576 keep
+// low-32 mirrors for JS)
+pub const idtr_offset64: *mut u64 = 392 as *mut u64;
+pub const gdtr_offset64: *mut u64 = 400 as *mut u64;
+
 pub fn get_reg32_offset(r: u32) -> u32 {
     dbg_assert!(r < 16);
     (unsafe { reg32.offset((r * 2) as isize) }) as u32
