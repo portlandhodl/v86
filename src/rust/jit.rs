@@ -1106,19 +1106,22 @@ pub fn codegen_finalize_finished(
     };
 
     for i in 0..unsafe { cpu::valid_tlb_entries_count } {
-        let page = unsafe { cpu::valid_tlb_entries[i as usize] };
-        let entry = unsafe { cpu::tlb_data[page as usize] };
+        let page = unsafe { cpu::valid_tlb_entries[i as usize] } as u64;
+        let entry = unsafe { cpu::tlb_pick_entry(page << 12) };
         if 0 != entry {
             let tlb_physical_page = Page::of_u32(
-                (entry as u32 >> 12 ^ page as u32) - (unsafe { memory::mem8 } as u32 >> 12),
+                ((entry >> 12 ^ page) as u32).wrapping_sub(unsafe { memory::mem8 } as u32 >> 12),
             );
             if let Some(info) = pages.get(&tlb_physical_page) {
-                set_tlb_code(
-                    Page::of_u32(page as u32),
-                    wasm_table_index,
-                    &info.entry_points,
-                    state_flags,
-                );
+                // pages above 4 GiB never have jitted code
+                if page < 0x10_0000 {
+                    set_tlb_code(
+                        Page::of_u32(page as u32),
+                        wasm_table_index,
+                        &info.entry_points,
+                        state_flags,
+                    );
+                }
             }
         }
     }
@@ -2285,23 +2288,28 @@ fn jit_dirty_page_ctx(ctx: &mut JitState, page: Page) {
             }
 
             for i in 0..unsafe { cpu::valid_tlb_entries_count } {
-                let page = unsafe { cpu::valid_tlb_entries[i as usize] };
-                let entry = unsafe { cpu::tlb_data[page as usize] };
+                let page = unsafe { cpu::valid_tlb_entries[i as usize] } as u64;
+                // pages at or above 4 GiB never have jitted code
+                if page >= 0x10_0000 {
+                    continue;
+                }
+                let page = page as usize;
+                let entry = unsafe { cpu::tlb_data[page] };
                 if 0 != entry {
                     let tlb_physical_page = Page::of_u32(
                         (entry as u32 >> 12 ^ page as u32) - (unsafe { memory::mem8 } as u32 >> 12),
                     );
-                    match unsafe { cpu::tlb_code[page as usize] } {
+                    match unsafe { cpu::tlb_code[page] } {
                         None => {},
                         Some(c) => unsafe {
                             let w = c.as_ref().wasm_table_index;
                             if wasm_table_index == w {
                                 drop(Box::from_raw(c.as_ptr()));
-                                cpu::tlb_code[page as usize] = None;
+                                cpu::tlb_code[page] = None;
                                 if !ctx.entry_points.contains_key(&tlb_physical_page)
                                     && !ctx.pages.contains_key(&tlb_physical_page)
                                 {
-                                    cpu::tlb_data[page as usize] &= !cpu::TLB_HAS_CODE;
+                                    cpu::tlb_data[page] &= !cpu::TLB_HAS_CODE;
                                 }
                             }
                         },

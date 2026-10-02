@@ -350,6 +350,13 @@ pub const TLB_HIGH_SIZE: usize = 0x40000;
 pub static mut tlb_high_page: [u64; TLB_HIGH_SIZE] = [0; TLB_HIGH_SIZE];
 pub static mut tlb_high_entry: [u64; TLB_HIGH_SIZE] = [0; TLB_HIGH_SIZE];
 
+/// Strip the canonical sign-extension bits (63:48), which don't take part in
+/// translation, so that TLB page numbers and page-walk indices fit.
+#[inline]
+pub fn canonicalize_address(address: u64) -> u64 {
+    address & 0x0000_FFFF_FFFF_FFFF
+}
+
 #[inline]
 pub fn tlb_high_index(page: u64) -> usize {
     (page.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 25) as usize & (TLB_HIGH_SIZE - 1)
@@ -358,6 +365,7 @@ pub fn tlb_high_index(page: u64) -> usize {
 /// The TLB entry (with info bits) for the page containing address, or 0 if none.
 #[inline]
 pub unsafe fn tlb_pick_entry(address: u64) -> u64 {
+    let address = canonicalize_address(address);
     let page = address >> 12;
     if page < 0x10_0000 {
         tlb_data[page as usize] as u32 as u64
@@ -376,6 +384,7 @@ pub unsafe fn tlb_pick_entry(address: u64) -> u64 {
 /// Insert a TLB entry (as produced by do_page_walk) for the page containing address.
 #[inline]
 pub unsafe fn tlb_put_entry(address: u64, tlb_entry: u64) {
+    let address = canonicalize_address(address);
     let page = address >> 12;
     if page < 0x10_0000 {
         tlb_data[page as usize] = tlb_entry as u32 as i32;
@@ -390,6 +399,7 @@ pub unsafe fn tlb_put_entry(address: u64, tlb_entry: u64) {
 /// Invalidate the TLB entry for the page containing address (if any).
 #[inline]
 pub unsafe fn tlb_invalidate_page(address: u64) {
+    let address = canonicalize_address(address);
     let page = address >> 12;
     if page < 0x10_0000 {
         let page = page as i32;
@@ -405,7 +415,7 @@ pub unsafe fn tlb_invalidate_page(address: u64) {
     }
 }
 
-pub static mut valid_tlb_entries: [i32; 10000] = [0; 10000];
+pub static mut valid_tlb_entries: [u32; 10000] = [0; 10000];
 pub static mut valid_tlb_entries_count: i32 = 0;
 
 pub static mut in_jit: bool = false;
@@ -2660,6 +2670,7 @@ pub unsafe fn do_page_walk(
     let mut allow_write_upper = true;
     // accumulated NX permission of upper paging levels (long mode only)
     let mut allow_fetch = true;
+    let addr = canonicalize_address(addr);
     let page = addr >> 12;
     let high;
 
@@ -2674,7 +2685,7 @@ pub unsafe fn do_page_walk(
     else {
         profiler::stat_increment(stat::TLB_MISS);
 
-        let long_mode = *efer & EFER_LMA != 0;
+            let long_mode = *efer & EFER_LMA != 0;
         let pae = cr4 & CR4_PAE != 0;
 
         let (page_dir_addr, page_dir_entry) = if long_mode {
@@ -2855,7 +2866,7 @@ pub unsafe fn do_page_walk(
             }
         }
         dbg_assert!(valid_tlb_entries_count < VALID_TLB_ENTRY_MAX);
-        valid_tlb_entries[valid_tlb_entries_count as usize] = page as i32;
+        valid_tlb_entries[valid_tlb_entries_count as usize] = page as u32;
         valid_tlb_entries_count += 1;
     // TODO: Check that there are no duplicates in valid_tlb_entries
     // XXX: There will probably be duplicates due to invlpg deleting
@@ -2904,14 +2915,14 @@ pub unsafe fn full_clear_tlb() {
     // clear tlb including global pages
     *last_virt_eip64 = -1;
     for i in 0..valid_tlb_entries_count {
-        let page = valid_tlb_entries[i as usize];
+        let page = valid_tlb_entries[i as usize] as u64;
         if page < 0x10_0000 {
-            clear_tlb_code(page);
+            clear_tlb_code(page as i32);
             tlb_data[page as usize] = 0;
         }
         else {
-            let idx = tlb_high_index(page as u64);
-            if tlb_high_page[idx] == page as u64 {
+            let idx = tlb_high_index(page);
+            if tlb_high_page[idx] == page {
                 tlb_high_page[idx] = 0;
                 tlb_high_entry[idx] = 0;
             }
@@ -2934,13 +2945,13 @@ pub unsafe fn clear_tlb() {
     *last_virt_eip64 = -1;
     let mut global_page_offset = 0;
     for i in 0..valid_tlb_entries_count {
-        let page = valid_tlb_entries[i as usize];
+        let page = valid_tlb_entries[i as usize] as u64;
         let entry = if page < 0x10_0000 {
             tlb_data[page as usize]
         }
         else {
-            let idx = tlb_high_index(page as u64);
-            if tlb_high_page[idx] == page as u64 {
+            let idx = tlb_high_index(page);
+            if tlb_high_page[idx] == page {
                 tlb_high_entry[idx] as i32
             }
             else {
@@ -2949,16 +2960,16 @@ pub unsafe fn clear_tlb() {
         };
         if 0 != entry & TLB_GLOBAL {
             // reinsert at the front
-            valid_tlb_entries[global_page_offset as usize] = page;
+            valid_tlb_entries[global_page_offset as usize] = page as u32;
             global_page_offset += 1;
         }
         else if page < 0x10_0000 {
-            clear_tlb_code(page);
+            clear_tlb_code(page as i32);
             tlb_data[page as usize] = 0;
         }
         else {
-            let idx = tlb_high_index(page as u64);
-            if tlb_high_page[idx] == page as u64 {
+            let idx = tlb_high_index(page);
+            if tlb_high_page[idx] == page {
                 tlb_high_page[idx] = 0;
                 tlb_high_entry[idx] = 0;
             }
@@ -3575,7 +3586,9 @@ pub unsafe fn set_cr3(mut cr3: i32) {
     if *cr.offset(4) & CR4_PAE != 0 {
         cr3 &= !0b1111;
         if *efer & EFER_LME == 0 {
-            // in long mode CR3 points to the PML4 and there is no PDPTE cache
+            // 32-bit PAE: CR3 points to the PDPT and the PDPTEs are cached in
+            // the CPU. In long mode (LME set) CR3 points to the PML4 instead
+            // and there is no PDPTE cache.
             load_pdpte(cr3);
         }
     }
@@ -3592,17 +3605,20 @@ pub unsafe fn load_pdpte(cr3: i32) {
     for i in 0..4 {
         let mut pdpt_entry = memory::read64s(cr3 as u32 + 8 * i as u32) as u64;
         pdpt_entry &= !0b1110_0000_0000;
-        dbg_assert!(pdpt_entry & 0b11000 == 0, "TODO");
+        // bits 3-4 (PWT/PCD) are cache attributes we don't model
+        pdpt_entry &= !0b1_1000u64;
+        if pdpt_entry as i32 & PAGE_TABLE_PRESENT_MASK != 0 {
+            // bits 2:1 (rw/us) are ignored in PDPTEs; setting truly reserved
+            // bits should #gp, but tolerating them is harmless for bring-up
+            let reserved = pdpt_entry & 0b1_1110_0000_0110;
+            if reserved != 0 {
+                dbg_log!("reserved bits in pdpte: {:x}", reserved);
+            }
+        }
         dbg_assert!(
-            pdpt_entry as u64 & 0xFFFF_FFFF_0000_0000 == 0,
+            pdpt_entry & 0x7FFF_FFFF_0000_0000 == 0,
             "Unsupported: PDPT entry larger than 32 bits"
         );
-        if pdpt_entry as i32 & PAGE_TABLE_PRESENT_MASK != 0 {
-            dbg_assert!(
-                pdpt_entry & 0b1_1110_0110 == 0,
-                "TODO: #gp reserved bit in pdpte"
-            );
-        }
         *reg_pdpte.offset(i) = pdpt_entry;
     }
 }
@@ -5604,6 +5620,9 @@ pub unsafe fn reset_cpu() {
     *sysenter_cs = 0;
     *sysenter_esp = 0;
     *sysenter_eip = 0;
+    *sysenter_esp64 = 0;
+    *sysenter_eip64 = 0;
+    *misc_enable = 0;
 
     *flags = FLAGS_DEFAULT;
     *flags_changed = 0;

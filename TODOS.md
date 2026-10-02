@@ -4,8 +4,8 @@ This file is the roadmap for completing full x86-64 emulation in v86, so that
 modern 64-bit Linux distributions can boot. It is written to be picked up by
 another engineer (human or LLM) with no prior context.
 
-**Status: Milestone M1 is complete** (see below). The work lives on branch
-`x86-64-long-mode` (fork: https://github.com/portlandhodl/v86).
+**Status: Milestone M2 is complete** (see below). M1 is complete. The work
+lives on branch `x86-64-long-mode` (fork: https://github.com/portlandhodl/v86).
 
 ---
 
@@ -112,11 +112,59 @@ nasm suite (both variants) after every non-trivial change.
 
 ---
 
-## 2. Milestone M2 — run a 64-bit kernel to userspace (interpreter)
+## 2. Milestone M2 — run a 64-bit kernel to userspace (interpreter) — DONE
 
 Goal: boot a 64-bit Linux kernel (via SeaBIOS from an ISO, or direct bzImage)
 far enough to start init. All interpreter-based; performance will be poor
 until M4.
+
+What was delivered (all committed):
+
+- **2.1 64-bit addresses everywhere.** `instruction_pointer`/`previous_ip`
+  are u64 (state slots 256/264; JS mirrors updated in cpu.js). The TLB is a
+  flat array for pages < 4 GiB (unchanged, JIT-compatible) plus a
+  direct-mapped u64 table for high pages; `translate_address*`,
+  `safe_read*`/`safe_write*`, the page walk and `resolve_modrm64` all take
+  full 48-bit linear addresses. Addresses are canonicalized (sign-extension
+  bits masked off) before TLB lookup and walks. Physical addresses stay
+  < 4 GiB. FS/GS bases are full 64-bit via `get_seg64`; gdtr/idtr bases
+  widened to 64-bit.
+- **2.2 Long-mode interrupt delivery.** 16-byte IDT gates, 64-bit frames
+  (SS:RSP:RFLAGS:CS:RIP + error code), stack switches via TSS RSP0-2 and IST,
+  `iretq`, and `#DF`/`#TS` triggers (triple faults panic with a message
+  instead of recursing).
+- **2.3 SYSCALL/SYSRET/SWAPGS** with IA32_STAR/LSTAR/SFMASK and EFER.SCE;
+  CPUID advertises syscall/nx/lahf. sysenter/sysexit ESP/EIP widened to 64-bit.
+- **2.4 NX**: accepted in page walks when EFER.NXE is set,
+  `TLB_NOT_EXECUTABLE` flag checked on instruction fetch, #PF with the I/D
+  bit in the error code.
+- **2.5/2.6 Remaining instructions**: jcc/jmp rel8, enter, 64-bit far
+  call/jmp/ret, cmpxchg16b, rdrand, lss/lfs/lgs, qword string ops (incl.
+  rep forms), moffs64, x87/SSE memory-form forwarding, `#UD` for
+  daa/das/aaa/aas/salc.
+- **2.7 Validation**: `tests/longmode/` extended to 52 checks (syscall/sysret
+  round trip, swapgs, demand paging through a long-mode #PF handler, NX
+  fault, cmpxchg16b). kvm-unit-tests (x86_64) build from
+  `tests/kvm-unit-tests/` (`./configure --arch=x86_64 && make`) and run via
+  `node tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/<t>.flat`;
+  msr/vmexit/realmode/smptest/port80/setjmp pass (access/eventinj/apic have
+  partial failures, see below).
+- **Boot**: a 64-bit Linux kernel boots to a userspace shell over serial via
+  the direct-bzImage path (`bzimage:` option; e.g. Alpine's vmlinuz-virt).
+  The bzImage loader in src/kernel.js needed no changes: the kernel's own
+  startup_32 enables long mode.
+
+Remaining known gaps (non-blocking for the goal above):
+
+- SSE with REX (xmm8-15) is not implemented; `get_reg_xmm_offset` still
+  asserts r < 8. Hand-written SSE asm in kernels using xmm8-15 will trap.
+- kvm-unit-tests `access`: SMEP and 3 NX corner cases fail; `eventinj`: some
+  hardware-IRQ vectors fail; `apic`: CPUID APIC bit is still gated on
+  acpi_enabled so the test's existence check fails.
+- String ops' rep-fast path is enabled for 64-bit addressing; unaligned
+  crossing of two pages falls back to the slow path (correct, just slower).
+
+The original ordered task list is kept below for reference.
 
 Ordered tasks:
 

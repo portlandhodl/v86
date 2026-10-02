@@ -34,18 +34,18 @@ pub unsafe fn instr64_0F() {
     let opcode = return_on_pagefault!(read_imm8());
     crate::gen::interpreter0f::run(opcode as u32 | 0x200);
 }
-pub unsafe fn instr64_0F00_0_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F00_0_mem(addr) }
-pub unsafe fn instr64_0F00_0_reg(r: i32) { crate::cpu::instructions_0f::instr32_0F00_0_reg(r) }
-pub unsafe fn instr64_0F00_1_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F00_1_mem(addr) }
-pub unsafe fn instr64_0F00_1_reg(r: i32) { crate::cpu::instructions_0f::instr32_0F00_1_reg(r) }
-pub unsafe fn instr64_0F00_2_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F00_2_mem(addr) }
-pub unsafe fn instr64_0F00_2_reg(r: i32) { crate::cpu::instructions_0f::instr32_0F00_2_reg(r) }
-pub unsafe fn instr64_0F00_3_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F00_3_mem(addr) }
-pub unsafe fn instr64_0F00_3_reg(r: i32) { crate::cpu::instructions_0f::instr32_0F00_3_reg(r) }
-pub unsafe fn instr64_0F00_4_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F00_4_mem(addr) }
-pub unsafe fn instr64_0F00_4_reg(r: i32) { crate::cpu::instructions_0f::instr32_0F00_4_reg(r) }
-pub unsafe fn instr64_0F00_5_mem(addr: u64) { crate::cpu::instructions_0f::instr32_0F00_5_mem(addr) }
-pub unsafe fn instr64_0F00_5_reg(r: i32) { crate::cpu::instructions_0f::instr32_0F00_5_reg(r) }
+pub unsafe fn instr64_0F00_0_mem(addr: u64) { crate::cpu::instructions_0f::instr16_0F00_0_mem(addr) }
+pub unsafe fn instr64_0F00_0_reg(r: i32) { crate::cpu::instructions_0f::instr16_0F00_0_reg(r) }
+pub unsafe fn instr64_0F00_1_mem(addr: u64) { crate::cpu::instructions_0f::instr16_0F00_1_mem(addr) }
+pub unsafe fn instr64_0F00_1_reg(r: i32) { crate::cpu::instructions_0f::instr16_0F00_1_reg(r) }
+pub unsafe fn instr64_0F00_2_mem(addr: u64) { crate::cpu::instructions_0f::instr16_0F00_2_mem(addr) }
+pub unsafe fn instr64_0F00_2_reg(r: i32) { crate::cpu::instructions_0f::instr16_0F00_2_reg(r) }
+pub unsafe fn instr64_0F00_3_mem(addr: u64) { crate::cpu::instructions_0f::instr16_0F00_3_mem(addr) }
+pub unsafe fn instr64_0F00_3_reg(r: i32) { crate::cpu::instructions_0f::instr16_0F00_3_reg(r) }
+pub unsafe fn instr64_0F00_4_mem(addr: u64) { crate::cpu::instructions_0f::instr16_0F00_4_mem(addr) }
+pub unsafe fn instr64_0F00_4_reg(r: i32) { crate::cpu::instructions_0f::instr16_0F00_4_reg(r) }
+pub unsafe fn instr64_0F00_5_mem(addr: u64) { crate::cpu::instructions_0f::instr16_0F00_5_mem(addr) }
+pub unsafe fn instr64_0F00_5_reg(r: i32) { crate::cpu::instructions_0f::instr16_0F00_5_reg(r) }
 pub unsafe fn instr64_0F01_0_mem(addr: u64) {
     // sgdt: 10-byte pseudo descriptor in 64-bit mode (8-byte offset, 2-byte limit)
     if 0 != *cpl {

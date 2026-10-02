@@ -81,6 +81,9 @@ pub unsafe fn instr16_0F00_1_mem(addr: u64) {
 pub unsafe fn instr32_0F00_1_mem(addr: u64) {
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_1_mem(addr);
+    }
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F00_1_mem(addr);
     } instr16_0F00_1_mem(addr) }
 #[no_mangle]
 pub unsafe fn instr16_0F00_1_reg(r: i32) {
@@ -119,6 +122,9 @@ pub unsafe fn instr16_0F00_2_mem(addr: u64) {
 pub unsafe fn instr32_0F00_2_mem(addr: u64) {
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_2_mem(addr);
+    }
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F00_2_mem(addr);
     } instr16_0F00_2_mem(addr) }
 #[no_mangle]
 pub unsafe fn instr16_0F00_2_reg(r: i32) {
@@ -134,6 +140,9 @@ pub unsafe fn instr16_0F00_2_reg(r: i32) {
 }
 #[no_mangle]
 pub unsafe fn instr32_0F00_2_reg(r: i32) {
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F00_2_reg(r);
+    }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_2_reg(r);
     } instr16_0F00_2_reg(r) }
@@ -155,6 +164,9 @@ pub unsafe fn instr16_0F00_3_mem(addr: u64) {
 pub unsafe fn instr32_0F00_3_mem(addr: u64) {
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_3_mem(addr);
+    }
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F00_3_mem(addr);
     } instr16_0F00_3_mem(addr); }
 #[no_mangle]
 pub unsafe fn instr16_0F00_3_reg(r: i32) {
@@ -172,6 +184,9 @@ pub unsafe fn instr16_0F00_3_reg(r: i32) {
 pub unsafe fn instr32_0F00_3_reg(r: i32) {
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_3_reg(r);
+    }
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F00_3_reg(r);
     } instr16_0F00_3_reg(r) }
 
 #[no_mangle]
@@ -185,6 +200,9 @@ pub unsafe fn instr16_0F00_4_mem(addr: u64) {
 }
 #[no_mangle]
 pub unsafe fn instr32_0F00_4_mem(addr: u64) {
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F00_4_mem(addr);
+    }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_4_mem(addr);
     } instr16_0F00_4_mem(addr) }
@@ -201,6 +219,9 @@ pub unsafe fn instr16_0F00_4_reg(r: i32) {
 pub unsafe fn instr32_0F00_4_reg(r: i32) {
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_4_reg(r);
+    }
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F00_4_reg(r);
     } instr16_0F00_4_reg(r) }
 #[no_mangle]
 pub unsafe fn instr16_0F00_5_mem(addr: u64) {
@@ -213,6 +234,9 @@ pub unsafe fn instr16_0F00_5_mem(addr: u64) {
 }
 #[no_mangle]
 pub unsafe fn instr32_0F00_5_mem(addr: u64) {
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F00_5_mem(addr);
+    }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_5_mem(addr);
     } instr16_0F00_5_mem(addr) }
@@ -229,12 +253,18 @@ pub unsafe fn instr16_0F00_5_reg(r: i32) {
 pub unsafe fn instr32_0F00_5_reg(r: i32) {
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_5_reg(r);
+    }
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F00_5_reg(r);
     } instr16_0F00_5_reg(r) }
 
 #[no_mangle]
 pub unsafe fn instr16_0F01_0_reg(_r: i32) { trigger_ud(); }
 #[no_mangle]
 pub unsafe fn instr32_0F01_0_reg(_r: i32) {
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_0_reg(_r);
+    }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_0_reg(_r);
     } trigger_ud(); }
@@ -251,12 +281,18 @@ pub unsafe fn instr16_0F01_0_mem(addr: u64) { sgdt(addr, 0xFFFFFF) }
 pub unsafe fn instr32_0F01_0_mem(addr: u64) {
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_0_mem(addr);
+    }
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_0_mem(addr);
     } sgdt(addr, -1) }
 
 #[no_mangle]
 pub unsafe fn instr16_0F01_1_reg(_r: i32) { trigger_ud(); }
 #[no_mangle]
 pub unsafe fn instr32_0F01_1_reg(_r: i32) {
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_1_reg(_r);
+    }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_1_reg(_r);
     } trigger_ud(); }
@@ -273,12 +309,18 @@ pub unsafe fn instr16_0F01_1_mem(addr: u64) { sidt(addr, 0xFFFFFF) }
 pub unsafe fn instr32_0F01_1_mem(addr: u64) {
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_1_mem(addr);
+    }
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_1_mem(addr);
     } sidt(addr, -1) }
 
 #[no_mangle]
 pub unsafe fn instr16_0F01_2_reg(_r: i32) { trigger_ud(); }
 #[no_mangle]
 pub unsafe fn instr32_0F01_2_reg(_r: i32) {
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_2_reg(_r);
+    }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_2_reg(_r);
     } trigger_ud(); }
@@ -300,12 +342,18 @@ pub unsafe fn instr16_0F01_2_mem(addr: u64) { lgdt(addr, 0xFFFFFF); }
 pub unsafe fn instr32_0F01_2_mem(addr: u64) {
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_2_mem(addr);
+    }
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_2_mem(addr);
     } lgdt(addr, -1); }
 
 #[no_mangle]
 pub unsafe fn instr16_0F01_3_reg(_r: i32) { trigger_ud(); }
 #[no_mangle]
 pub unsafe fn instr32_0F01_3_reg(_r: i32) {
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_3_reg(_r);
+    }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_3_reg(_r);
     } trigger_ud(); }
@@ -327,6 +375,9 @@ pub unsafe fn instr16_0F01_3_mem(addr: u64) { lidt(addr, 0xFFFFFF); }
 pub unsafe fn instr32_0F01_3_mem(addr: u64) {
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_3_mem(addr);
+    }
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_3_mem(addr);
     } lidt(addr, -1); }
 
 #[no_mangle]
@@ -336,6 +387,9 @@ pub unsafe fn instr16_0F01_4_reg(r: i32) {
 }
 #[no_mangle]
 pub unsafe fn instr32_0F01_4_reg(r: i32) {
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_4_reg(r);
+    }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_4_reg(r);
     } write_reg32(r, *cr); }
@@ -372,6 +426,9 @@ pub unsafe fn instr16_0F01_6_reg(r: i32) {
 pub unsafe fn instr32_0F01_6_reg(r: i32) {
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_6_reg(r);
+    }
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_6_reg(r);
     } instr16_0F01_6_reg(r); }
 #[no_mangle]
 pub unsafe fn instr16_0F01_6_mem(addr: u64) {
@@ -385,12 +442,18 @@ pub unsafe fn instr16_0F01_6_mem(addr: u64) {
 pub unsafe fn instr32_0F01_6_mem(addr: u64) {
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_6_mem(addr);
+    }
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_6_mem(addr);
     } instr16_0F01_6_mem(addr) }
 
 #[no_mangle]
 pub unsafe fn instr16_0F01_7_reg(_r: i32) { trigger_ud(); }
 #[no_mangle]
 pub unsafe fn instr32_0F01_7_reg(_r: i32) {
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_7_reg(_r);
+    }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_7_reg(_r);
     } trigger_ud(); }
@@ -406,6 +469,9 @@ pub unsafe fn instr16_0F01_7_mem(addr: u64) {
 }
 #[no_mangle]
 pub unsafe fn instr32_0F01_7_mem(addr: u64) {
+    if *is_64 {
+        return crate::cpu::instructions_64::instr64_0F01_7_mem(addr);
+    }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_7_mem(addr);
     } instr16_0F01_7_mem(addr) }
@@ -1364,8 +1430,16 @@ pub unsafe fn instr_0F30() {
 
     match index {
         IA32_SYSENTER_CS => *sysenter_cs = low & 0xFFFF,
-        IA32_SYSENTER_EIP => *sysenter_eip = low,
-        IA32_SYSENTER_ESP => *sysenter_esp = low,
+        IA32_SYSENTER_EIP => {
+            let value = (high as u32 as u64) << 32 | low as u32 as u64;
+            *sysenter_eip = value as u32 as i32;
+            *sysenter_eip64 = value;
+        },
+        IA32_SYSENTER_ESP => {
+            let value = (high as u32 as u64) << 32 | low as u32 as u64;
+            *sysenter_esp = value as u32 as i32;
+            *sysenter_esp64 = value;
+        },
         IA32_FEAT_CTL => {}, // linux 5.x
         MSR_TEST_CTRL => {}, // linux 5.x
         IA32_APIC_BASE => {
@@ -1389,7 +1463,7 @@ pub unsafe fn instr_0F30() {
             // Linux 4, see: https://patchwork.kernel.org/patch/9528279/
         },
         IA32_MISC_ENABLE => {
-            // Enable Misc. Processor Features
+            *misc_enable = (high as u32 as u64) << 32 | low as u32 as u64;
         },
         IA32_MCG_CAP => {}, // netbsd
         IA32_KERNEL_GS_BASE => {
@@ -1410,16 +1484,16 @@ pub unsafe fn instr_0F30() {
         IA32_CSTAR => *cstar = (high as u32 as u64) << 32 | low as u32 as u64,
         IA32_SFMASK => *sfmask = (high as u32 as u64) << 32 | low as u32 as u64,
         IA32_FS_BASE => {
+            // full 64-bit bases are supported in long mode; segment_offsets
+            // keeps the low half for compatibility-mode use
             let value = (high as u32 as u64) << 32 | low as u32 as u64;
-            dbg_assert!(high == 0 || high == -1, "Non-32-bit fs base not supported");
             *fs_base = value;
-            *segment_offsets.offset(FS as isize) = value as i32;
+            *segment_offsets.offset(FS as isize) = value as u32 as i32;
         },
         IA32_GS_BASE => {
             let value = (high as u32 as u64) << 32 | low as u32 as u64;
-            dbg_assert!(high == 0 || high == -1, "Non-32-bit gs base not supported");
             *gs_base = value;
-            *segment_offsets.offset(GS as isize) = value as i32;
+            *segment_offsets.offset(GS as isize) = value as u32 as i32;
         },
         IA32_PERFEVTSEL0 | IA32_PERFEVTSEL1 => {}, // linux/9legacy
         IA32_PMC0 | IA32_PMC1 => {},               // linux
@@ -1480,8 +1554,14 @@ pub unsafe fn instr_0F32() {
 
     match index {
         IA32_SYSENTER_CS => low = *sysenter_cs,
-        IA32_SYSENTER_EIP => low = *sysenter_eip,
-        IA32_SYSENTER_ESP => low = *sysenter_esp,
+        IA32_SYSENTER_EIP => {
+            low = *sysenter_eip64 as i32;
+            high = (*sysenter_eip64 >> 32) as i32;
+        },
+        IA32_SYSENTER_ESP => {
+            low = *sysenter_esp64 as i32;
+            high = (*sysenter_esp64 >> 32) as i32;
+        },
         IA32_TIME_STAMP_COUNTER => {
             let tsc = read_tsc();
             low = tsc as i32;
@@ -1502,8 +1582,8 @@ pub unsafe fn instr_0F32() {
         MSR_PLATFORM_INFO => low = 1 << 8,
         MISC_FEATURE_ENABLES => {},
         IA32_MISC_ENABLE => {
-            // Enable Misc. Processor Features
-            low = 1 << 0; // fast string
+            low = *misc_enable as i32;
+            high = (*misc_enable >> 32) as i32;
         },
         IA32_RTIT_CTL => {}, // linux4
         MSR_SMI_COUNT => {},

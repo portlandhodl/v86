@@ -112,6 +112,14 @@ pub const cr2_64: *mut u64 = 384 as *mut u64;
 pub const idtr_offset64: *mut u64 = 392 as *mut u64;
 pub const gdtr_offset64: *mut u64 = 400 as *mut u64;
 
+// sysenter esp/eip as full 64-bit values (the i32 slots at 640/644 keep
+// low-half mirrors for 32-bit paths)
+pub const sysenter_esp64: *mut u64 = 408 as *mut u64;
+pub const sysenter_eip64: *mut u64 = 416 as *mut u64;
+
+// ia32_misc_enable (value retained, semantics not modelled)
+pub const misc_enable: *mut u64 = 424 as *mut u64;
+
 pub fn get_reg32_offset(r: u32) -> u32 {
     dbg_assert!(r < 16);
     (unsafe { reg32.offset((r * 2) as isize) }) as u32
