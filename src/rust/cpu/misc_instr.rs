@@ -7,6 +7,11 @@ use crate::paging::OrPageFault;
 
 pub unsafe fn getcf() -> bool {
     if 0 != *flags_changed & 1 {
+        if *last_op_size == OPSIZE_64 {
+            let sub_mask = (*flags_changed >> 31) as i64 as u64;
+            // sub: last_op1 < last_result; add: last_result < last_op1
+            return (*last_result_64 ^ sub_mask) < (*last_op1_64 ^ sub_mask);
+        }
         let m = (2 << *last_op_size) - 1;
         dbg_assert!((*last_op1 as u32) <= m);
         dbg_assert!((*last_result as u32) <= m);
@@ -24,8 +29,9 @@ pub unsafe fn getcf() -> bool {
 #[no_mangle]
 pub unsafe fn getpf() -> bool {
     if 0 != *flags_changed & FLAG_PARITY {
+        let result = if *last_op_size == OPSIZE_64 { *last_result_64 as i32 } else { *last_result };
         // inverted lookup table
-        return 0 != 0x9669 << 2 >> ((*last_result ^ *last_result >> 4) & 15) & FLAG_PARITY;
+        return 0 != 0x9669 << 2 >> ((result ^ result >> 4) & 15) & FLAG_PARITY;
     }
     else {
         return 0 != *flags & FLAG_PARITY;
@@ -33,6 +39,15 @@ pub unsafe fn getpf() -> bool {
 }
 pub unsafe fn getaf() -> bool {
     if 0 != *flags_changed & FLAG_ADJUST {
+        if *last_op_size == OPSIZE_64 {
+            let last_op2 = if *flags_changed & FLAG_SUB != 0 {
+                (*last_op1_64).wrapping_sub(*last_result_64)
+            }
+            else {
+                (*last_result_64).wrapping_sub(*last_op1_64)
+            };
+            return 0 != (*last_op1_64 ^ last_op2 ^ *last_result_64) & (FLAG_ADJUST as u64);
+        }
         let is_sub = *flags_changed & FLAG_SUB != 0;
         let last_op2 = (*last_result - *last_op1) * if is_sub { -1 } else { 1 };
         return 0 != (*last_op1 ^ last_op2 ^ *last_result) & FLAG_ADJUST;
@@ -43,6 +58,9 @@ pub unsafe fn getaf() -> bool {
 }
 pub unsafe fn getzf() -> bool {
     if 0 != *flags_changed & FLAG_ZERO {
+        if *last_op_size == OPSIZE_64 {
+            return 0 != (!*last_result_64 & (*last_result_64).wrapping_sub(1)) >> 63 & 1;
+        }
         return 0 != (!*last_result & *last_result - 1) >> *last_op_size & 1;
     }
     else {
@@ -51,6 +69,9 @@ pub unsafe fn getzf() -> bool {
 }
 pub unsafe fn getsf() -> bool {
     if 0 != *flags_changed & FLAG_SIGN {
+        if *last_op_size == OPSIZE_64 {
+            return 0 != *last_result_64 >> 63 & 1;
+        }
         return 0 != *last_result >> *last_op_size & 1;
     }
     else {
@@ -59,6 +80,12 @@ pub unsafe fn getsf() -> bool {
 }
 pub unsafe fn getof() -> bool {
     if 0 != *flags_changed & FLAG_OVERFLOW {
+        if *last_op_size == OPSIZE_64 {
+            let is_sub = ((*flags_changed as u32) >> 31) as u64;
+            let b_xor_1_if_sub = (*last_result_64).wrapping_sub(*last_op1_64).wrapping_sub(is_sub);
+            return 0
+                != ((*last_op1_64 ^ *last_result_64) & (b_xor_1_if_sub ^ *last_result_64)) >> 63 & 1;
+        }
         let is_sub = (*flags_changed as u32) >> 31;
 
         // add: (a ^ result) & (b ^ result)

@@ -80,6 +80,10 @@ pub const pat: *mut u64 = 1288 as *mut u64;
 
 pub const is_64: *mut bool = 272 as *mut bool;
 
+// lazy flag operands for 64-bit operations (last_op_size == OPSIZE_64)
+pub const last_op1_64: *mut u64 = 280 as *mut u64;
+pub const last_result_64: *mut u64 = 288 as *mut u64;
+
 pub fn get_reg32_offset(r: u32) -> u32 {
     dbg_assert!(r < 16);
     (unsafe { reg32.offset((r * 2) as isize) }) as u32

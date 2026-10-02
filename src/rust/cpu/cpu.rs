@@ -121,6 +121,7 @@ pub const FLAGS_ALL: i32 =
 pub const OPSIZE_8: i32 = 7;
 pub const OPSIZE_16: i32 = 15;
 pub const OPSIZE_32: i32 = 31;
+pub const OPSIZE_64: i32 = 63;
 
 pub const EAX: i32 = 0;
 pub const ECX: i32 = 1;
