@@ -1,13 +1,13 @@
 use crate::cpu::cpu::*;
 use crate::cpu::global_pointers::mxcsr;
 
-pub unsafe fn mov_r_m64(addr: i32, r: i32) {
+pub unsafe fn mov_r_m64(addr: u64, r: i32) {
     // mov* m64, mm
     let data = read_mmx64s(r);
     return_on_pagefault!(safe_write64(addr, data));
     transition_fpu_to_mmx();
 }
-pub unsafe fn movl_r128_m64(addr: i32, r: i32) {
+pub unsafe fn movl_r128_m64(addr: u64, r: i32) {
     // mov* m64, xmm
     let data = read_xmm64s(r);
     return_on_pagefault!(safe_write64(addr, data));
@@ -17,7 +17,7 @@ pub unsafe fn mov_r_r128(r1: i32, r2: i32) {
     let data = read_xmm128s(r2);
     write_xmm_reg128(r1, data);
 }
-pub unsafe fn mov_r_m128(addr: i32, r: i32) {
+pub unsafe fn mov_r_m128(addr: u64, r: i32) {
     // mov* m128, xmm
     let data = read_xmm128s(r);
     return_on_pagefault!(safe_write128(addr, data));
@@ -26,7 +26,7 @@ pub unsafe fn mov_rm_r128(source: reg128, r: i32) {
     // mov* xmm, xmm/m128
     write_xmm_reg128(r, source);
 }
-pub unsafe fn movh_r128_m64(addr: i32, r: i32) {
+pub unsafe fn movh_r128_m64(addr: u64, r: i32) {
     // movhp* m64, xmm
     let data = read_xmm128s(r);
     return_on_pagefault!(safe_write64(addr, data.u64[1]));

@@ -23,8 +23,6 @@ pub const segment_access_bytes: *mut u8 = 512 as *mut u8; // TODO: reorder below
 pub const apic_enabled: *mut bool = 548 as *mut bool;
 pub const acpi_enabled: *mut bool = 552 as *mut bool;
 
-pub const instruction_pointer: *mut i32 = 556 as *mut i32;
-pub const previous_ip: *mut i32 = 560 as *mut i32;
 pub const idtr_size: *mut i32 = 564 as *mut i32;
 pub const idtr_offset: *mut i32 = 568 as *mut i32;
 pub const gdtr_size: *mut i32 = 572 as *mut i32;
@@ -93,6 +91,21 @@ pub const sfmask: *mut u64 = 328 as *mut u64;
 pub const fs_base: *mut u64 = 336 as *mut u64;
 pub const gs_base: *mut u64 = 344 as *mut u64;
 pub const kernel_gs_base: *mut u64 = 352 as *mut u64;
+
+// 64-bit instruction pointer / previous ip (moved off the old i32 slots at
+// 556/560 so that full 48-bit linear addresses fit; the JS side in cpu.js has
+// matching views)
+pub const instruction_pointer: *mut u64 = 256 as *mut u64;
+pub const previous_ip: *mut u64 = 264 as *mut u64;
+
+// per-page cache of the physical address of the current instruction page
+// (see get_phys_eip); 64-bit variants of the i32 slots at 620/624
+pub const last_virt_eip64: *mut i64 = 368 as *mut i64;
+pub const eip_phys64: *mut u64 = 376 as *mut u64;
+
+// cr2 with the full 64-bit fault address (the i32 cr[2] keeps a low-32 mirror
+// for 32-bit paths and JS)
+pub const cr2_64: *mut u64 = 384 as *mut u64;
 
 pub fn get_reg32_offset(r: u32) -> u32 {
     dbg_assert!(r < 16);

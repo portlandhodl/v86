@@ -55,6 +55,10 @@ enum FunctionType {
     FN3_I32_I64_I32,
     FN3_I32_I64_I32_RET,
     FN4_I32_I64_I64_I32_RET,
+
+    FN1_I64,
+    FN2_I64_I64,
+    FN3_I32_I32_I64,
     // When adding at the end, update LAST below
 }
 
@@ -64,7 +68,7 @@ impl FunctionType {
         unsafe { transmute(x) }
     }
     pub fn to_u8(self: FunctionType) -> u8 { self as u8 }
-    pub const LAST: FunctionType = FunctionType::FN4_I32_I64_I64_I32_RET;
+    pub const LAST: FunctionType = FunctionType::FN3_I32_I32_I64;
 }
 
 pub const WASM_MODULE_ARGUMENT_COUNT: u8 = 1;
@@ -272,6 +276,27 @@ impl WasmBuilder {
                     self.output.push(op::TYPE_FUNC);
                     self.output.push(1);
                     self.output.push(op::TYPE_I32);
+                    self.output.push(0);
+                },
+                FunctionType::FN1_I64 => {
+                    self.output.push(op::TYPE_FUNC);
+                    self.output.push(1);
+                    self.output.push(op::TYPE_I64);
+                    self.output.push(0);
+                },
+                FunctionType::FN2_I64_I64 => {
+                    self.output.push(op::TYPE_FUNC);
+                    self.output.push(2);
+                    self.output.push(op::TYPE_I64);
+                    self.output.push(op::TYPE_I64);
+                    self.output.push(0);
+                },
+                FunctionType::FN3_I32_I32_I64 => {
+                    self.output.push(op::TYPE_FUNC);
+                    self.output.push(3);
+                    self.output.push(op::TYPE_I32);
+                    self.output.push(op::TYPE_I32);
+                    self.output.push(op::TYPE_I64);
                     self.output.push(0);
                 },
                 FunctionType::FN2 => {
@@ -943,6 +968,9 @@ impl WasmBuilder {
     pub fn call_fn0_ret(&mut self, name: &str) { self.call_fn(name, FunctionType::FN0_RET) }
     pub fn call_fn0_ret_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN0_RET_I64) }
     pub fn call_fn1(&mut self, name: &str) { self.call_fn(name, FunctionType::FN1) }
+    pub fn call_fn1_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN1_I64) }
+    pub fn call_fn2_i64_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN2_I64_I64) }
+    pub fn call_fn3_i32_i32_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN3_I32_I32_I64) }
     pub fn call_fn1_ret(&mut self, name: &str) { self.call_fn(name, FunctionType::FN1_RET) }
     pub fn call_fn1_ret_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN1_RET_I64) }
     pub fn call_fn1_f32_ret(&mut self, name: &str) { self.call_fn(name, FunctionType::FN1_F32_RET) }

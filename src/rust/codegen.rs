@@ -462,12 +462,15 @@ pub fn gen_fn2_const(builder: &mut WasmBuilder, name: &str, arg0: u32, arg1: u32
 // helper functions for gen/generate_jit.js
 pub fn gen_modrm_fn0(builder: &mut WasmBuilder, name: &str) {
     // generates: fn( _ )
-    builder.call_fn1(name);
+    // the first argument is the (64-bit) linear address computed by modrm_resolve
+    builder.extend_unsigned_i32_to_i64();
+    builder.call_fn1_i64(name);
 }
 pub fn gen_modrm_fn1(builder: &mut WasmBuilder, name: &str, arg0: u32) {
     // generates: fn( _, arg0 )
+    builder.extend_unsigned_i32_to_i64();
     builder.const_i32(arg0 as i32);
-    builder.call_fn2(name);
+    builder.call_fn2_i64_i32(name);
 }
 
 pub fn gen_modrm_resolve(ctx: &mut JitContext, modrm_byte: ModrmByte) {

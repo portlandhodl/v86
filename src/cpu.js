@@ -115,8 +115,8 @@ export function CPU(bus, wm, stop_idling)
      */
     this.in_hlt = view(Uint8Array, memory, 616, 1);
 
-    this.last_virt_eip = view(Int32Array, memory, 620, 1);
-    this.eip_phys = view(Int32Array, memory, 624, 1);
+    this.last_virt_eip = view(Int32Array, memory, 368, 2); // 64 bit (lo, hi)
+    this.eip_phys = view(Int32Array, memory, 376, 2); // 64 bit (lo, hi)
 
 
     this.sysenter_cs = view(Int32Array, memory, 636, 1);
@@ -147,8 +147,8 @@ export function CPU(bus, wm, stop_idling)
     /** @type {!Object} */
     this.devices = {};
 
-    this.instruction_pointer = view(Int32Array, memory, 556, 1);
-    this.previous_ip = view(Int32Array, memory, 560, 1);
+    this.instruction_pointer = view(Int32Array, memory, 256, 2); // 64 bit (lo, hi)
+    this.previous_ip = view(Int32Array, memory, 264, 2); // 64 bit (lo, hi)
 
     // configured by guest
     this.apic_enabled = view(Uint8Array, memory, 548, 1);
@@ -495,8 +495,8 @@ CPU.prototype.get_state = function()
 
     state[16] = this.stack_size_32[0];
     state[17] = this.in_hlt[0];
-    state[18] = this.last_virt_eip[0];
-    state[19] = this.eip_phys[0];
+    state[18] = [this.last_virt_eip[0], this.last_virt_eip[1]];
+    state[19] = [this.eip_phys[0], this.eip_phys[1]];
 
     state[22] = this.sysenter_cs[0];
     state[23] = this.sysenter_eip[0];
@@ -508,8 +508,8 @@ CPU.prototype.get_state = function()
 
     state[30] = this.last_op_size[0];
 
-    state[37] = this.instruction_pointer[0];
-    state[38] = this.previous_ip[0];
+    state[37] = [this.instruction_pointer[0], this.instruction_pointer[1]];
+    state[38] = [this.previous_ip[0], this.previous_ip[1]];
     // low halves of r0-r7 (kept for compatibility with older state images)
     state[39] = new Int32Array(8);
     // high halves of r0-r7
@@ -699,8 +699,10 @@ CPU.prototype.set_state = function(state)
     this.stack_size_32[0] = state[16];
 
     this.in_hlt[0] = state[17];
-    this.last_virt_eip[0] = state[18];
-    this.eip_phys[0] = state[19];
+    this.last_virt_eip[0] = state[18] ? state[18][0] : -1;
+    this.last_virt_eip[1] = state[18] ? state[18][1] : -1;
+    this.eip_phys[0] = state[19] ? state[19][0] : 0;
+    this.eip_phys[1] = state[19] ? state[19][1] : 0;
 
     this.sysenter_cs[0] = state[22];
     this.sysenter_eip[0] = state[23];
@@ -713,8 +715,10 @@ CPU.prototype.set_state = function(state)
 
     this.last_op_size[0] = state[30];
 
-    this.instruction_pointer[0] = state[37];
-    this.previous_ip[0] = state[38];
+    this.instruction_pointer[0] = state[37] ? state[37][0] : 0;
+    this.instruction_pointer[1] = state[37] ? state[37][1] : 0;
+    this.previous_ip[0] = state[38] ? state[38][0] : 0;
+    this.previous_ip[1] = state[38] ? state[38][1] : 0;
     for(let i = 0; i < 8; i++)
     {
         this.reg32s[i << 1] = state[39][i];

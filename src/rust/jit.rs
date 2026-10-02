@@ -444,7 +444,7 @@ fn jit_find_basic_blocks(
         if is_near_end_of_page(virt_target as u32) {
             return None;
         }
-        let phys_target = match cpu::translate_address_read_no_side_effects(virt_target) {
+        let phys_target = match cpu::translate_address_read_no_side_effects(virt_target as u32 as u64) {
             Err(()) => {
                 dbg_log!("Not analysing {:x} (page not mapped)", virt_target);
                 return None;
@@ -531,7 +531,7 @@ fn jit_find_basic_blocks(
     }
 
     while let Some(to_visit) = to_visit_stack.pop() {
-        let phys_addr = match cpu::translate_address_read_no_side_effects(to_visit) {
+        let phys_addr = match cpu::translate_address_read_no_side_effects(to_visit as u32 as u64) {
             Err(()) => {
                 dbg_log!("Not analysing {:x} (page not mapped)", to_visit);
                 continue;
@@ -827,8 +827,8 @@ pub fn jit_force_generate_unsafe(virt_addr: i32) {
         "cannot force compile near end of page"
     );
     jit_increase_hotness_and_maybe_compile(
-        virt_addr,
-        cpu::translate_address_read(virt_addr).unwrap(),
+        virt_addr as u32 as u64,
+        cpu::translate_address_read(virt_addr as u32 as u64).unwrap(),
         cpu::get_seg_cs() as u32,
         cpu::get_state_flags(),
         JIT_THRESHOLD,
@@ -839,7 +839,7 @@ pub fn jit_force_generate_unsafe(virt_addr: i32) {
 #[inline(never)]
 fn jit_analyze_and_generate(
     ctx: &mut JitState,
-    virt_entry_point: i32,
+    virt_entry_point: u64,
     phys_entry_point: u32,
     cs_offset: u32,
     state_flags: CachedStateFlags,
@@ -2153,7 +2153,7 @@ fn jit_generate_basic_block(ctx: &mut JitContext, block: &BasicBlock) {
 }
 
 pub fn jit_increase_hotness_and_maybe_compile(
-    virt_address: i32,
+    virt_address: u64,
     phys_address: u32,
     cs_offset: u32,
     state_flags: CachedStateFlags,

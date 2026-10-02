@@ -1393,30 +1393,30 @@ pub unsafe fn btr_reg(bit_base: i32, bit_offset: i32) -> i32 {
     return bit_base & !(1 << bit_offset);
 }
 
-pub unsafe fn bt_mem(virt_addr: i32, mut bit_offset: i32) {
-    let bit_base = return_on_pagefault!(safe_read8(virt_addr + (bit_offset >> 3)));
+pub unsafe fn bt_mem(virt_addr: u64, mut bit_offset: i32) {
+    let bit_base = return_on_pagefault!(safe_read8(virt_addr + (bit_offset >> 3) as u64));
     bit_offset &= 7;
     *flags = *flags & !1 | bit_base >> bit_offset & 1;
     *flags_changed &= !1;
 }
-pub unsafe fn btc_mem(virt_addr: i32, mut bit_offset: i32) {
-    let phys_addr = return_on_pagefault!(translate_address_write(virt_addr + (bit_offset >> 3)));
+pub unsafe fn btc_mem(virt_addr: u64, mut bit_offset: i32) {
+    let phys_addr = return_on_pagefault!(translate_address_write(virt_addr + (bit_offset >> 3) as u64));
     let bit_base = memory::read8(phys_addr);
     bit_offset &= 7;
     *flags = *flags & !1 | bit_base >> bit_offset & 1;
     *flags_changed &= !1;
     memory::write8(phys_addr, bit_base ^ 1 << bit_offset);
 }
-pub unsafe fn btr_mem(virt_addr: i32, mut bit_offset: i32) {
-    let phys_addr = return_on_pagefault!(translate_address_write(virt_addr + (bit_offset >> 3)));
+pub unsafe fn btr_mem(virt_addr: u64, mut bit_offset: i32) {
+    let phys_addr = return_on_pagefault!(translate_address_write(virt_addr + (bit_offset >> 3) as u64));
     let bit_base = memory::read8(phys_addr);
     bit_offset &= 7;
     *flags = *flags & !1 | bit_base >> bit_offset & 1;
     *flags_changed &= !1;
     memory::write8(phys_addr, bit_base & !(1 << bit_offset));
 }
-pub unsafe fn bts_mem(virt_addr: i32, mut bit_offset: i32) {
-    let phys_addr = return_on_pagefault!(translate_address_write(virt_addr + (bit_offset >> 3)));
+pub unsafe fn bts_mem(virt_addr: u64, mut bit_offset: i32) {
+    let phys_addr = return_on_pagefault!(translate_address_write(virt_addr + (bit_offset >> 3) as u64));
     let bit_base = memory::read8(phys_addr);
     bit_offset &= 7;
     *flags = *flags & !1 | bit_base >> bit_offset & 1;
