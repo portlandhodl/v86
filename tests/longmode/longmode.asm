@@ -490,6 +490,12 @@ after_nx:
     mov rbx, [abs 0x3FE00000]
     mov [r15 + 69*8], rbx                     ; 0x123456789ABCDEF again
 
+    ; cpuid 0x80000008: eax[7:0] = physical bits, eax[15:8] = linear bits
+    mov eax, 0x80000008
+    cpuid
+    and eax, 0xFFFF
+    mov [r15 + 70*8], rax                     ; 0x3020 (48 linear, 32 physical)
+
     ; set DF before the syscall: r11 must carry it, rflags must lose it
     pushfq
     or  qword [rsp], 0x400

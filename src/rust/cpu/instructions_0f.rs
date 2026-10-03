@@ -1505,7 +1505,12 @@ pub unsafe fn instr_0F30() {
                 || address == APIC_MEM_ADDRESS as i32,
                 "Changing APIC address not supported"
             );
-            dbg_assert!(low & IA32_APIC_BASE_EXTD == 0, "x2apic not supported");
+            if low & IA32_APIC_BASE_EXTD != 0 {
+                // x2APIC is not advertised in CPUID, so enabling it #GPs (as on real hardware)
+                dbg_log!("wrmsr: x2apic enable attempted, #GP");
+                trigger_gp(0);
+                return;
+            }
             *apic_enabled = low & IA32_APIC_BASE_EN == IA32_APIC_BASE_EN
         },
         IA32_TIME_STAMP_COUNTER => set_tsc(low as u32, high as u32),
@@ -3755,8 +3760,12 @@ pub unsafe fn instr_0FA2() {
         },
 
         0x80000008 => {
-            // address sizes: 48-bit virtual, 40-bit physical
-            eax = 48 | 40 << 8;
+            // address sizes: eax[7:0] = physical, eax[15:8] = linear.
+            // Physical is 32 bits, matching the page walk, which treats entry
+            // bits 32..51 as reserved (PAE_ENTRY_RSVD). Linux derives
+            // x86_virt_bits from the linear width; getting it wrong makes
+            // copy_from_kernel_nofault reject every kernel address.
+            eax = 32 | 48 << 8;
         },
 
         0x40000000 => {

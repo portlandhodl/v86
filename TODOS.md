@@ -4,7 +4,9 @@ This file is the roadmap for completing full x86-64 emulation in v86, so that
 modern 64-bit Linux distributions can boot. It is written to be picked up by
 another engineer (human or LLM) with no prior context.
 
-**Status: M2 is complete, including the previously-open gaps (SSE/REX,
+**Status: Alpine 3.19 x86_64 boots from its ISO to a root shell over
+serial (interpreter only, ~3 min; see the 2026-10-03 update in §2).
+M2 is complete, including the previously-open gaps (SSE/REX,
 SMEP/NX corner cases in `access`, `eventinj`, `apic`, and the kernel
 self-decompression triple fault — all fixed; see §2 "Remaining known gaps"
 for details). M1 is complete. The work
@@ -258,11 +260,25 @@ Remaining known gaps (non-blocking for the goal above):
   kernel runs the full early-init path (fault handling, retpoline/alterns,
   page table, NMI/int3 selftests, IPC) and hands over to the Alpine
   initramfs recovery shell on ttyS0, matching QEMU on the same image.
-  Remaining for a full userspace boot: the *first* ring-3 transition
-  faults when an (already-userland-waiting) #PF is delivered onto the
-  per-cpu entry stack (cr2 = stack_base - 0x30), i.e. the frame-push of a
-  nested fault under the kernel's PTI-ish vmmaps needs another differential
-  pass against QEMU.
+  (An earlier note here about the first ring-3 transition faulting is
+  obsolete: userspace runs.)
+
+  **2026-10-03 update — a full distro boots to a root login.** With the
+  Alpine 3.19 ISO attached as `cdrom` and the direct-bzImage path
+  (`modules=loop,squashfs,sd-mod,usb-storage console=ttyS0 nokaslr`,
+  512 MiB), the initramfs mounts the boot media, installs the base
+  packages, switch_roots into OpenRC, mounts modloop and reaches
+  `localhost login:` on ttyS0 after about 3 minutes; `root` logs in and
+  commands run (interpreter only). The last blocker was a CPUID bug:
+  leaf 0x80000008 had its fields swapped (it reported 48 physical /
+  40 linear bits). Linux takes `x86_virt_bits` from eax[15:8], so with 40
+  every kernel address failed the canonical check in
+  `copy_from_kernel_nofault_allowed`. Symptoms: `/proc/mounts` showed
+  mount points as `xxx` (d_path's `prepend_copy` fallback), df/stat/
+  switch_root failed in the initramfs, modloop didn't mount, and login
+  printed "Login incorrect". It now reports 32 physical bits (matching the
+  page walk, which treats PTE bits 32..51 as reserved) and 48 linear bits;
+  longmode test 70 covers it.
 - ISO/SeaBIOS path currently idles at the ISOLINUX `boot:` prompt (v86 accepts
   no keyboard input in this headless runner; direct-bzImage is the default
   bring-up vehicle).
@@ -372,9 +388,9 @@ Run `grep -n unimplemented src/rust/cpu/instructions_64.rs`. Notable groups:
   64-bit code segment, and set EFER.LMA itself).
 - `src/elf.js` is 32-bit only (`console.assert(header.class === 1)`) — add
   ELF64 parsing.
-- Devices: APIC + IOAPIC exist (Rust). x2APIC is currently hard-rejected
-  (`dbg_assert` in the IA32_APIC_BASE WRMSR handler) — tolerate-and-ignore if
-  the kernel probes it, or implement properly. No HPET: Linux falls back to
+- Devices: APIC + IOAPIC exist (Rust). x2APIC is not advertised; setting
+  IA32_APIC_BASE.EXTD raises #GP, as on hardware without x2APIC (implement
+  properly only if a kernel needs it). No HPET: Linux falls back to
   PIT/ACPI-PM timer, fine. Virtio is legacy-transitional PCI; modern
   64-bit-only kernels may want non-transitional virtio-pci — check
   `src/virtio.js` device ids if disks/nics don't show up.

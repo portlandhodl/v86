@@ -102,6 +102,7 @@ const expected = [
     0x123456789ABCDEFn,  // 67: freshly-mapped 4K page reads phys 0x800000 content
     0x0BADC0DEABAD1234n, // 68: cr3 reload flushes stale translation to phys 0x900000
     0x123456789ABCDEFn,  // 69: invlpg picks up the rewritten PTE
+    0x3020n,             // 70: cpuid 0x80000008 address sizes (48 linear, 32 physical)
 ];
 
 const emulator = new V86({
