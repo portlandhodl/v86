@@ -89,12 +89,78 @@ pub fn gen_relative_jump(builder: &mut WasmBuilder, n: i32) {
     }
 }
 
+// 64-bit variants of the instruction pointer helpers above. In 64-bit mode the instruction
+// pointer is a full 64-bit value: the low 12 bits can still be patched through its low half,
+// but any arithmetic that may carry into the page number must be done on all 64 bits.
+
+pub fn gen_get_eip64(builder: &mut WasmBuilder) {
+    builder.load_fixed_i64(global_pointers::instruction_pointer as u32);
+}
+
+/// instruction_pointer = (instruction_pointer & ~0xFFF | low_bits) + n
+pub fn gen_set_eip_low_bits_and_jump_rel(ctx: &mut JitContext, low_bits: i32, n: i32) {
+    if !ctx.cpu.is_64() {
+        return gen_set_eip_low_bits_and_jump_rel32(ctx.builder, low_bits, n);
+    }
+    dbg_assert!(low_bits & !0xFFF == 0);
+    let builder = &mut ctx.builder;
+    builder.const_i32(global_pointers::instruction_pointer as i32);
+    gen_get_eip64(builder);
+    builder.const_i64(!0xFFF);
+    builder.and_i64();
+    builder.const_i64(low_bits as i64 + n as i64);
+    builder.add_i64();
+    builder.store_aligned_i64(0);
+}
+
+/// instruction_pointer += n
+pub fn gen_relative_jump_ctx(ctx: &mut JitContext, n: i32) {
+    if !ctx.cpu.is_64() {
+        return gen_relative_jump(ctx.builder, n);
+    }
+    if n != 0 {
+        let builder = &mut ctx.builder;
+        builder.const_i32(global_pointers::instruction_pointer as i32);
+        gen_get_eip64(builder);
+        builder.const_i64(n as i64);
+        builder.add_i64();
+        builder.store_aligned_i64(0);
+    }
+}
+
+/// previous_ip = instruction_pointer & ~0xFFF | low_bits
+pub fn gen_set_previous_eip_offset_from_eip_with_low_bits_ctx(
+    ctx: &mut JitContext,
+    low_bits: i32,
+) {
+    if !ctx.cpu.is_64() {
+        return gen_set_previous_eip_offset_from_eip_with_low_bits(ctx.builder, low_bits);
+    }
+    dbg_assert!(low_bits & !0xFFF == 0);
+    let builder = &mut ctx.builder;
+    builder.const_i32(global_pointers::previous_ip as i32);
+    gen_get_eip64(builder);
+    builder.const_i64(!0xFFF);
+    builder.and_i64();
+    builder.const_i64(low_bits as i64);
+    builder.or_i64();
+    builder.store_aligned_i64(0);
+}
+
 pub fn gen_page_switch_check(
     ctx: &mut JitContext,
     next_block_addr: u32,
     last_instruction_addr: u32,
 ) {
     // After switching a page while in jitted code, check if the page mapping still holds
+
+    if ctx.cpu.is_64() {
+        // the tlb lookup for 64-bit addresses isn't inlined (yet)
+        ctx.builder.const_i32(next_block_addr as i32);
+        ctx.builder.call_fn1_ret("jit_page_switch_check64");
+        ctx.builder.br_if(ctx.exit_label);
+        return;
+    }
 
     gen_get_eip(ctx.builder);
     let address_local = ctx.builder.set_new_local();
@@ -2588,6 +2654,9 @@ pub fn gen_condition_fn_negated(ctx: &mut JitContext, condition: u8) {
 }
 
 pub fn gen_condition_fn(ctx: &mut JitContext, condition: u8) {
+    if ctx.cpu.is_64() {
+        return crate::jit64::gen_condition_fn(ctx, condition);
+    }
     if condition & 0xF0 == 0x00 || condition & 0xF0 == 0x70 || condition & 0xF0 == 0x80 {
         match condition & 0xF {
             0x0 => {
@@ -2667,6 +2736,10 @@ pub fn gen_condition_fn(ctx: &mut JitContext, condition: u8) {
 }
 
 pub fn gen_move_registers_from_locals_to_memory(ctx: &mut JitContext) {
+    if ctx.cpu.is_64() {
+        // the 64-bit jit keeps registers in memory
+        return;
+    }
     if cfg!(feature = "profiler") {
         let instruction = memory::read32s(ctx.start_of_current_instruction) as u32;
         opstats::gen_opstat_unguarded_register(ctx.builder, instruction);
@@ -2680,6 +2753,10 @@ pub fn gen_move_registers_from_locals_to_memory(ctx: &mut JitContext) {
     }
 }
 pub fn gen_move_registers_from_memory_to_locals(ctx: &mut JitContext) {
+    if ctx.cpu.is_64() {
+        // the 64-bit jit keeps registers in memory
+        return;
+    }
     if cfg!(feature = "profiler") {
         let instruction = memory::read32s(ctx.start_of_current_instruction) as u32;
         opstats::gen_opstat_unguarded_register(ctx.builder, instruction);

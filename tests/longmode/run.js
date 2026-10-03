@@ -114,6 +114,15 @@ const emulator = new V86({
     disable_jit: +process.env.DISABLE_JIT,
 });
 
+// JIT_THRESHOLD=<n>: compile code after n executed instructions instead of the default
+// (a low value exercises the jit on all of the test's code)
+if(process.env.JIT_THRESHOLD)
+{
+    emulator.bus.register("emulator-started", () => {
+        emulator.v86.cpu.wm.exports["set_jit_config"](5, +process.env.JIT_THRESHOLD);
+    });
+}
+
 const timeout = setTimeout(() => {
     throw new Error("Timeout waiting for longmode test to finish");
 }, 60 * 1000);

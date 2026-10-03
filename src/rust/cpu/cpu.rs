@@ -357,6 +357,46 @@ pub static mut tlb_code: [Option<ptr::NonNull<Code>>; 0x100000] = [None; 0x10000
 pub const TLB_HIGH_SIZE: usize = 0x40000;
 pub static mut tlb_high_page: [u64; TLB_HIGH_SIZE] = [0; TLB_HIGH_SIZE];
 pub static mut tlb_high_entry: [u64; TLB_HIGH_SIZE] = [0; TLB_HIGH_SIZE];
+// jitted code for the page in tlb_high_page[idx] (the counterpart of tlb_code
+// for pages at or above 4 GiB); dropped whenever the slot is evicted
+pub static mut tlb_code_high: [Option<ptr::NonNull<Code>>; TLB_HIGH_SIZE] = [None; TLB_HIGH_SIZE];
+
+/// Remove the high TLB entry at idx, including its jitted code
+#[inline]
+pub unsafe fn tlb_high_evict(idx: usize) {
+    tlb_high_page[idx] = 0;
+    tlb_high_entry[idx] = 0;
+    if let Some(c) = tlb_code_high[idx].take() {
+        drop(Box::from_raw(c.as_ptr()));
+    }
+}
+
+/// The jitted-code slot for a virtual page: pages below 4 GiB always have one,
+/// higher pages only while they are in the TLB
+#[inline]
+pub unsafe fn tlb_code_slot(page: u64) -> Option<&'static mut Option<ptr::NonNull<Code>>> {
+    if page < 0x10_0000 {
+        Some(&mut *ptr::addr_of_mut!(tlb_code[page as usize]))
+    }
+    else {
+        let idx = tlb_high_index(page);
+        if tlb_high_page[idx] == page {
+            Some(&mut *ptr::addr_of_mut!(tlb_code_high[idx]))
+        }
+        else {
+            None
+        }
+    }
+}
+
+/// The jitted code for a virtual page, if any
+#[inline]
+pub unsafe fn tlb_code_get(page: u64) -> Option<ptr::NonNull<Code>> {
+    match tlb_code_slot(page) {
+        Some(slot) => *slot,
+        None => None,
+    }
+}
 
 /// Strip the canonical sign-extension bits (63:48), which don't take part in
 /// translation, so that TLB page numbers and page-walk indices fit.
@@ -399,6 +439,9 @@ pub unsafe fn tlb_put_entry(address: u64, tlb_entry: u64) {
     }
     else {
         let idx = tlb_high_index(page);
+        if tlb_high_page[idx] != page {
+            tlb_high_evict(idx);
+        }
         tlb_high_page[idx] = page;
         tlb_high_entry[idx] = tlb_entry;
     }
@@ -410,15 +453,13 @@ pub unsafe fn tlb_invalidate_page(address: u64) {
     let address = canonicalize_address(address);
     let page = address >> 12;
     if page < 0x10_0000 {
-        let page = page as i32;
         clear_tlb_code(page);
         tlb_data[page as usize] = 0;
     }
     else {
         let idx = tlb_high_index(page);
         if tlb_high_page[idx] == page {
-            tlb_high_page[idx] = 0;
-            tlb_high_entry[idx] = 0;
+            tlb_high_evict(idx);
         }
     }
 }
@@ -1091,6 +1132,8 @@ pub unsafe fn call_interrupt_vector(
     is_software_int: bool,
     error_code: Option<i32>,
 ) {
+    // compiled 64-bit code that called into the interpreter must not continue
+    crate::jit64::JIT64_EXIT = true;
     if *protected_mode {
         if *is_64 {
             // long mode: 16-byte gates and a 64-bit interrupt frame
@@ -2996,9 +3039,7 @@ pub unsafe fn do_page_walk(
         dbg_assert!(high & 0xFFF == 0);
         tlb_put_entry(addr, tlb_entry);
 
-        if page < 0x10_0000 {
-            jit::update_tlb_code(Page::page_of(addr as u32), Page::page_of(high));
-        }
+        jit::update_tlb_code(page, Page::page_of(high));
     }
 
     Ok((high + memory::mem8 as u32) as u64 ^ (page << 12) | info_bits as u64)
@@ -3012,14 +3053,13 @@ pub unsafe fn full_clear_tlb() {
     for i in 0..valid_tlb_entries_count {
         let page = valid_tlb_entries[i as usize] as u64;
         if page < 0x10_0000 {
-            clear_tlb_code(page as i32);
+            clear_tlb_code(page);
             tlb_data[page as usize] = 0;
         }
         else {
             let idx = tlb_high_index(page);
             if tlb_high_page[idx] == page {
-                tlb_high_page[idx] = 0;
-                tlb_high_entry[idx] = 0;
+                tlb_high_evict(idx);
             }
         }
     }
@@ -3059,14 +3099,13 @@ pub unsafe fn clear_tlb() {
             global_page_offset += 1;
         }
         else if page < 0x10_0000 {
-            clear_tlb_code(page as i32);
+            clear_tlb_code(page);
             tlb_data[page as usize] = 0;
         }
         else {
             let idx = tlb_high_index(page);
             if tlb_high_page[idx] == page {
-                tlb_high_page[idx] = 0;
-                tlb_high_entry[idx] = 0;
+                tlb_high_evict(idx);
             }
         }
     }
@@ -3251,9 +3290,8 @@ pub fn tlb_set_has_code(physical_page: Page, has_code: bool) {
                         if has_code { entry | TLB_HAS_CODE as u64 } else { entry & !(TLB_HAS_CODE as u64) },
                     )
                 }
-                // pages at or above 4 GiB never have jitted code (tlb_code covers the low 4 GiB)
-                if !has_code && page < 0x10_0000 {
-                    clear_tlb_code(page as i32);
+                if !has_code {
+                    clear_tlb_code(page);
                 }
             }
         }
@@ -3979,9 +4017,8 @@ pub unsafe fn cycle_internal() {
     let initial_eip = *instruction_pointer;
     let initial_state_flags = *state_flags;
 
-    // only pages below 4 GiB can have jitted code
-    if initial_eip >> 12 < 0x10_0000 {
-        match tlb_code[(initial_eip >> 12) as usize] {
+    {
+        match tlb_code_get(canonicalize_address(initial_eip) >> 12) {
             None => {},
             Some(c) => {
                 let c = c.as_ref();
@@ -4086,8 +4123,8 @@ pub unsafe fn cycle_internal() {
         *previous_ip = initial_eip;
         let phys_addr = return_on_pagefault!(get_phys_eip());
 
-        if initial_eip >> 12 < 0x10_0000 {
-            match tlb_code[(initial_eip >> 12) as usize] {
+        {
+            match tlb_code_get(canonicalize_address(initial_eip) >> 12) {
                 None => {},
                 Some(c) => {
                     let c = c.as_ref();
@@ -5316,10 +5353,15 @@ pub unsafe fn task_switch_test_mmx_jit(eip_offset_in_page: i32) {
 }
 
 pub unsafe fn read_moffs() -> OrPageFault<u64> {
-    // In 64-bit mode the moffs immediate is always 8 bytes; otherwise 2 or 4
-    // bytes, depending on the address size attribute
+    // In 64-bit mode the moffs immediate is 8 bytes (4 with 0x67); otherwise 2
+    // or 4 bytes, depending on the address size attribute
     if *is_64 {
-        read_imm64s()
+        if is_asize_32() {
+            Ok(read_imm32s()? as u32 as u64)
+        }
+        else {
+            read_imm64s()
+        }
     }
     else if is_asize_32() {
         Ok(read_imm32s()? as u32 as u64)
@@ -5501,12 +5543,13 @@ pub unsafe fn get_opstats_buffer(
 #[cfg(not(feature = "profiler"))]
 pub unsafe fn get_opstats_buffer() -> f64 { 0.0 }
 
-pub fn clear_tlb_code(page: i32) {
+pub fn clear_tlb_code(page: u64) {
     unsafe {
-        if let Some(c) = tlb_code[page as usize] {
-            drop(Box::from_raw(c.as_ptr()));
+        if let Some(slot) = tlb_code_slot(page) {
+            if let Some(c) = slot.take() {
+                drop(Box::from_raw(c.as_ptr()));
+            }
         }
-        tlb_code[page as usize] = None;
     }
 }
 
