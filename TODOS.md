@@ -4,8 +4,11 @@ This file is the roadmap for completing full x86-64 emulation in v86, so that
 modern 64-bit Linux distributions can boot. It is written to be picked up by
 another engineer (human or LLM) with no prior context.
 
-**Status: Milestone M2 is complete** (see below). M1 is complete. The work
-lives on branch `x86-64-long-mode` (fork: https://github.com/portlandhodl/v86).
+**Status: M2 is complete, including the previously-open gaps (SSE/REX,
+SMEP/NX corner cases in `access`, `eventinj`, `apic`, and the kernel
+self-decompression triple fault — all fixed; see §2 "Remaining known gaps"
+for details). M1 is complete. The work
+lives on branch `x86-64-long-mode` (fork: https://github.com/portlandhodl/v86).**
 
 ---
 
@@ -165,13 +168,68 @@ What was delivered (all committed):
 
 Remaining known gaps (non-blocking for the goal above):
 
-- SSE with REX (xmm8-15) is not implemented; `get_reg_xmm_offset` still
-  asserts r < 8. Hand-written SSE asm in kernels using xmm8-15 will trap.
-- kvm-unit-tests `access`: SMEP and 3 NX corner cases fail; `eventinj`: some
-  hardware-IRQ vectors fail; `apic`: CPUID APIC bit is still gated on
-  acpi_enabled so the test's existence check fails.
-- String ops' rep-fast path is enabled for 64-bit addressing; unaligned
-  crossing of two pages falls back to the slow path (correct, just slower).
+- ~~SSE with REX (xmm8-15)~~ — done: 16-entry xmm register file (xmm8-15 at a
+  new state area via `reg_xmm_high`, r≥8 routed by `reg_xmm_ptr`), the REX.W
+  forms of `movd`/`movq`/`cvtsi2ss/sd`/`cvtt*2si`/`movmsk*` GPR<->XMM moves,
+  and fxsave/fxrstor covering all 16 registers in 64-bit mode (64-bit FIP/FDP
+  format). Longmode tests 52-58 cover it; the runner's kvm-unit-tests
+  `run.mjs` memory was raised to 256 MiB (the access test's scratch page-table
+  pool is 33..120 MiB — it needs the room).
+- ~~kvm-unit-tests `access`~~ — 3,538,949/0: SMEP is advertised (CPUID.7.EBX.7)
+  and enforced (supervisor fetch of a user page faults with I/D in PFEC),
+  reserved-bit faults on physical-address bits ≥ 32 in PAE/longmode entries
+  (PAE_ENTRY_RSVD) and on the NX bit while EFER.NXE=0 (delivered before
+  permission faults, without touching A/D bits on entries), 2 MiB PDE bits
+  13..20 fault likewise, and PFEC now carries the I/D bit on fetch faults when
+  EFER.NXE or CR4.SMEP is enabled. Writing CR4.SMEP now also flushes the TLB
+  (fetch permissions change), and the xmm-MXCSR/etc state image format got a
+  new slot (index 97) for xmm8-15.
+- ~~kvm-unit-tests `eventinj`~~ — 13/13: pass. The local APIC no longer
+  depends on ACPI (read32/write32/acknowledge gated on the *enable* state,
+  not on `acpi_enabled`), and NMI delivery exists (raise_nmi latches
+  nmi_pending, delivers at the next instruction boundary unless nmi_blocked —
+  both cleared by iret and reset). Two latent long-mode bugs were fixed on the
+  way: `get_tss_rsp64` computed `(4 + dpl) << 3` instead of `4 + (dpl << 3)`
+  (read rsp0 from the wrong offset — stack switches used address 0), and
+  `iret64` switched SS while cpl still held the old value, taking a spurious
+  interrupt-gate #GP (switch_seg's dpl/rpl checks); iret64 now sets cpl before
+  switching SS, matching iret32's order. Exception-delivery escalation was also
+  refined to Intel's classes: PF during delivery of a benign exception (e.g.
+  #DE on a fresh stack page) is delivered as PF (it restarts after iret), and
+  only PF during PF delivery escalates to #DF — both covered by eventinj.
+- ~~kvm-unit-tests `apic`~~ — 12/12 (+1 TSC-deadline skip): CPUID.1.EDX[9] now
+  mirrors IA32_APIC_BASE.EN (Intel semantics), IA32_APIC_BASE reads the real
+  base+BSP+EN regardless of ACPI, apic_enabled defaults on at reset
+  (0xFEE00900 like a BSP), and the APIC timer is polled independently of ACPI
+  (`run_hardware_timers` decoupled; apic's own timer still gates on
+  apic_enabled).
+- ~~String ops' rep-fast path is enabled for 64-bit addressing; unaligned
+  crossing of two pages falls back to the slow path (correct, just slower).~~
+- Kernel self-decompression triple fault — two independent CPU bugs were
+  found and fixed while reproducing it (Alpine vmlinuz-virt, direct and
+  SeaBIOS/ISO paths both repro):
+  - `resolve_modrm64` dropped the SIB index register when its raw 3-bit field
+    was 4 and REX.X was set (r12 *is* indexable — that encodes e.g.
+    `lea eax, [rcx + r12]`); this silently produced 0 and corrupted
+    `__startup_64`'s identity-map writes (pmd entries landed at index 0
+    instead of physaddr>>21). Same slip fixed in `resolve_sib` and
+    `resolve_modrm32*` (0x67-addressing in long mode). Covered by longmode
+    tests 59/60.
+  - The MSR addresses for IA32_GS_BASE and IA32_KERNEL_GS_BASE were swapped
+    (0xC0000101 ↔ 0xC0000102), so the kernel's percpu GS base never landed.
+    Covered by longmode tests 61/62.
+  The decompressor now runs end-to-end and hands off into the uncompressed
+  64-bit kernel (verified by instruction traces past `secondary_startup_64`'s
+  CR3 switch).
+  Remaining: the kernel later halts at `native_halt` with IF=0 having never
+  produced serial output (no 0x3F8 writes observed) — silent, so the next
+  failure is in the initcalls between the GS-base fix and console_init;
+  this is where to continue the 64-bit boot bring-up (differential tracing
+  against QEMU `-kernel vmlinuz-virt -append "console=ttyS0 nokaslr"` boots
+  to a shell).
+- ISO/SeaBIOS path currently idles at the ISOLINUX `boot:` prompt (v86 accepts
+  no keyboard input in this headless runner; direct-bzImage is the default
+  bring-up vehicle).
 
 The original ordered task list is kept below for reference.
 

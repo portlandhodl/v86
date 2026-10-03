@@ -201,6 +201,8 @@ export function CPU(bus, wm, stop_idling)
     this.fpu_dp_selector[0] = 0;
 
     this.reg_xmm32s = view(Int32Array, memory, 832, 8 * 4);
+    // xmm8-15 (only addressable in 64-bit mode via REX)
+    this.reg_xmm32s_high = view(Int32Array, memory, 1408, 8 * 4);
 
     this.mxcsr = view(Int32Array, memory, 824, 1);
 
@@ -570,6 +572,7 @@ CPU.prototype.get_state = function()
     state[64] = this.tss_size_32[0];
 
     state[66] = this.reg_xmm32s;
+    state[97] = this.reg_xmm32s_high;
 
     state[67] = this.fpu_st;
     state[68] = this.fpu_stack_empty[0];
@@ -791,6 +794,7 @@ CPU.prototype.set_state = function(state)
     this.tss_size_32[0] = state[64];
 
     this.reg_xmm32s.set(state[66]);
+    state[97] && this.reg_xmm32s_high.set(state[97]);
 
     this.fpu_st.set(state[67]);
     this.fpu_stack_empty[0] = state[68];
@@ -1967,8 +1971,9 @@ CPU.prototype.run_hardware_timers = function(acpi_enabled, now)
     if(acpi_enabled)
     {
         acpi_time = this.devices.acpi.timer(now);
-        apic_time = this.apic_timer(now);
     }
+    // the local APIC exists independently of ACPI
+    apic_time = this.apic_timer(now);
 
     return Math.min(pit_time, rtc_time, acpi_time, apic_time);
 };

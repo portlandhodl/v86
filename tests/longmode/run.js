@@ -84,6 +84,17 @@ const expected = [
     1n,                  // 49: cmpxchg16b: ZF set on exchange
     0x5555555555555555n, // 50: cmpxchg16b: mem <- rcx:rbx
     0xDEADn,             // 51: nx page: mov was skipped by the #PF handler
+    0xDEC0DE1122334455n, // 52: movq xmm8 <-> r64
+    0xDEC0FFFF2233FFFFn, // 53: movdqa/por with xmm9-11
+    0xDEC0DE1122334455n, // 54: movdqu store/load low qword
+    0x0000FFFF0000FFFFn, // 55: psrldq after movdqu load
+    0x123456789ABCn,     // 56: cvtsi2sd/cvttsd2si with r64
+    0xFFFFFFFFFFFE1DC0n, // 57: cvtsi2ss/cvttss2si with r64 (-123456)
+    0xAAAA5555CCCC3333n, // 58: fxsave/fxrstor round trip with xmm14
+    0x10n,               // 59: SIB lea with r12 index via REX.X
+    0xFACEn,             // 60: r12 as SIB base via REX.B
+    0xA5A5DEADn,         // 61: IA32_GS_BASE write/read-back
+    0x1234000n,          // 62: IA32_KERNEL_GS_BASE untouched by the GS write
 ];
 
 const emulator = new V86({

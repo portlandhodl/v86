@@ -432,7 +432,9 @@ pub unsafe fn setcc_mem(condition: bool, addr: u64) {
 
 pub unsafe fn fxsave(addr: u64) {
     dbg_assert!(addr & 0xF == 0, "TODO: #gp");
-    return_on_pagefault!(writable_or_pagefault(addr, 288));
+    // 64-bit mode: XMM0-15 are saved (416 bytes); otherwise only XMM0-7 (288)
+    let xmm_count: u64 = if *is_64 { 16 } else { 8 };
+    return_on_pagefault!(writable_or_pagefault(addr, 160 + 16 * xmm_count as i32));
 
     safe_write16(addr + 0, (*fpu_control_word).into()).unwrap();
     safe_write16(addr + 2, fpu_load_status_word().into()).unwrap();
@@ -454,13 +456,14 @@ pub unsafe fn fxsave(addr: u64) {
     // If the OSFXSR bit in control register CR4 is not set, the FXSAVE
     // instruction may not save these registers. This behavior is
     // implementation dependent.
-    for i in 0..8 {
-        safe_write128(addr + 160 + (i << 4), *reg_xmm.offset(i as isize)).unwrap();
+    for i in 0..xmm_count {
+        safe_write128(addr + 160 + (i << 4), *reg_xmm_ptr(i as i32)).unwrap();
     }
 }
 pub unsafe fn fxrstor(addr: u64) {
     dbg_assert!(addr & 0xF == 0, "TODO: #gp");
-    return_on_pagefault!(readable_or_pagefault(addr, 288));
+    let xmm_count: u64 = if *is_64 { 16 } else { 8 };
+    return_on_pagefault!(readable_or_pagefault(addr, 160 + 16 * xmm_count as i32));
 
     let new_mxcsr = safe_read32s(addr + 24).unwrap();
 
@@ -486,8 +489,8 @@ pub unsafe fn fxrstor(addr: u64) {
         *fpu_st.offset(reg_index as isize) = fpu_load_m80(addr + 32 + ((i << 4) as u64)).unwrap();
     }
 
-    for i in 0..8 {
-        *reg_xmm.offset(i as isize) = safe_read128s(addr + 160 + ((i << 4) as u64)).unwrap();
+    for i in 0..xmm_count {
+        *reg_xmm_ptr(i as i32) = safe_read128s(addr + 160 + ((i << 4) as u64)).unwrap();
     }
 }
 

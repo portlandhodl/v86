@@ -339,6 +339,53 @@ pub unsafe fn sse_convert_f64_to_i32(x: f64) -> i32 {
     };
 }
 
+// 64-bit destination variants of the above (cvttsd2si r64 etc. in long mode);
+// the "integer indefinite" value on failure is i64::MIN
+#[no_mangle]
+pub unsafe fn sse_convert_with_truncation_f32_to_i64(x: f32) -> i64 {
+    let x = x.trunc();
+    if x >= -9223372036854775808.0 && x < 9223372036854775808.0 {
+        return x as i64;
+    }
+    else {
+        // TODO: Signal
+        return i64::MIN;
+    };
+}
+#[no_mangle]
+pub unsafe fn sse_convert_f32_to_i64(x: f32) -> i64 {
+    let x = sse_integer_round(x as f64);
+    if x >= -9223372036854775808.0 && x < 9223372036854775808.0 {
+        return x as i64;
+    }
+    else {
+        // TODO: Signal
+        return i64::MIN;
+    };
+}
+#[no_mangle]
+pub unsafe fn sse_convert_with_truncation_f64_to_i64(x: f64) -> i64 {
+    let x = x.trunc();
+    if x >= -9223372036854775808.0 && x < 9223372036854775808.0 {
+        return x as i64;
+    }
+    else {
+        // TODO: Signal
+        return i64::MIN;
+    };
+}
+#[no_mangle]
+pub unsafe fn sse_convert_f64_to_i64(x: f64) -> i64 {
+    let x = sse_integer_round(x);
+    if x >= -9223372036854775808.0 && x < 9223372036854775808.0 {
+        return x as i64;
+    }
+    else {
+        // TODO: Signal
+        return i64::MIN;
+    };
+}
+
 pub unsafe fn sse_integer_round(f: f64) -> f64 {
     // see fpu_integer_round
     let rc = *mxcsr >> MXCSR_RC_SHIFT & 3;

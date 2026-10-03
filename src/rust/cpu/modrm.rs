@@ -77,12 +77,25 @@ unsafe fn resolve_sib(with_imm: bool) -> OrPageFault<u64> {
     let m = sib_byte >> 3 & 7;
     let base;
     let seg;
-    if r == 4 {
-        base = read_reg32(ESP);
+    // REX glue in long mode with 0x67 addressing: r12/r13 become ordinary
+    // bases, r12 a valid index
+    if r == ESP {
+        // ESP (no REX.B) or r12 (with REX.B)
+        base = read_reg32(ESP | rex_b());
         seg = SS
     }
-    else if r == 5 {
-        if with_imm {
+    else if r == EBP {
+        let r_ext = EBP | rex_b();
+        if r_ext != EBP {
+            // r13 + optional SIB-slot disp32
+            if !with_imm {
+                base = read_reg32(r_ext).wrapping_add(read_imm32s()?);
+            } else {
+                base = read_reg32(r_ext);
+            }
+            seg = SS;
+        }
+        else if with_imm {
             base = read_reg32(EBP);
             seg = SS
         }
@@ -92,16 +105,16 @@ unsafe fn resolve_sib(with_imm: bool) -> OrPageFault<u64> {
         }
     }
     else {
-        base = read_reg32(r);
+        base = read_reg32(r | rex_b());
         seg = DS
     }
     let offset;
-    if m == 4 {
+    if m == 4 && rex_x() == 0 {
         offset = 0
     }
     else {
         let s = sib_byte >> 6 & 3;
-        offset = read_reg32(m) << s
+        offset = read_reg32(m | rex_x()) << s
     }
     Ok((get_seg_prefix(seg)?).wrapping_add(base).wrapping_add(offset) as u32 as u64)
 }
@@ -121,30 +134,31 @@ pub unsafe fn resolve_modrm64(modrm_byte: i32, imm_len: i32) -> OrPageFault<u64>
         let index_field = sib_byte >> 3 & 7;
         let scale = sib_byte >> 6 & 3;
 
-        let index_value = if index_field == 4 {
-            // no index (rsp/r12 cannot be an index)
+        // field 100 means "no index" only without REX.X; with REX.X set, the
+        // extended index is r12, which is indexable
+        let index = index_field | rex_x();
+        let index_value = if index_field == 4 && rex_x() == 0 {
             0
         }
         else {
-            read_reg64(index_field | rex_x()) << scale
+            read_reg64(index) << scale
         };
 
         let base;
         let seg;
-        if base_field == 5 && modrm_byte < 64 {
+        let base_r = base_field | rex_b();
+        if base_r == 13 && modrm_byte < 64 {
             // disp32 with no base register; with REX.B this is r13 + disp32
-            let disp32 = read_imm32s()? as i64 as u64;
-            if rex_b() != 0 {
-                base = read_reg64(13).wrapping_add(disp32);
-                seg = SS;
-            }
-            else {
-                base = disp32;
-                seg = DS;
-            }
+            base = read_reg64(13).wrapping_add(read_imm32s()? as i64 as u64);
+
+            seg = SS;
+        }
+        else if base_field == 5 && modrm_byte < 64 {
+            base = read_imm32s()? as i64 as u64;
+            seg = DS;
         }
         else {
-            base = read_reg64(base_field | rex_b());
+            base = read_reg64(base_r);
             seg = if base_field == 4 || base_field == 5 { SS } else { DS };
         }
 
@@ -187,30 +201,36 @@ pub unsafe fn resolve_modrm64(modrm_byte: i32, imm_len: i32) -> OrPageFault<u64>
 
 pub unsafe fn resolve_modrm32(modrm_byte: i32) -> OrPageFault<u64> {
     match modrm_byte & !0o070 {
-        0o000 => Ok(get_seg_prefix_ds((read_reg32(EAX)) as u32 as u64)?),
-        0o100 => Ok(get_seg_prefix_ds((read_reg32(EAX) + read_imm8s()?) as u32 as u64)?),
-        0o200 => Ok(get_seg_prefix_ds((read_reg32(EAX) + read_imm32s()?) as u32 as u64)?),
-        0o001 => Ok(get_seg_prefix_ds((read_reg32(ECX)) as u32 as u64)?),
-        0o101 => Ok(get_seg_prefix_ds((read_reg32(ECX) + read_imm8s()?) as u32 as u64)?),
-        0o201 => Ok(get_seg_prefix_ds((read_reg32(ECX) + read_imm32s()?) as u32 as u64)?),
-        0o002 => Ok(get_seg_prefix_ds((read_reg32(EDX)) as u32 as u64)?),
-        0o102 => Ok(get_seg_prefix_ds((read_reg32(EDX) + read_imm8s()?) as u32 as u64)?),
-        0o202 => Ok(get_seg_prefix_ds((read_reg32(EDX) + read_imm32s()?) as u32 as u64)?),
-        0o003 => Ok(get_seg_prefix_ds((read_reg32(EBX)) as u32 as u64)?),
-        0o103 => Ok(get_seg_prefix_ds((read_reg32(EBX) + read_imm8s()?) as u32 as u64)?),
-        0o203 => Ok(get_seg_prefix_ds((read_reg32(EBX) + read_imm32s()?) as u32 as u64)?),
+        0o000 => Ok(get_seg_prefix_ds((read_reg32(EAX | rex_b())) as u32 as u64)?),
+        0o100 => Ok(get_seg_prefix_ds((read_reg32(EAX | rex_b()) + read_imm8s()?) as u32 as u64)?),
+        0o200 => Ok(get_seg_prefix_ds((read_reg32(EAX | rex_b()) + read_imm32s()?) as u32 as u64)?),
+        0o001 => Ok(get_seg_prefix_ds((read_reg32(ECX | rex_b())) as u32 as u64)?),
+        0o101 => Ok(get_seg_prefix_ds((read_reg32(ECX | rex_b()) + read_imm8s()?) as u32 as u64)?),
+        0o201 => Ok(get_seg_prefix_ds((read_reg32(ECX | rex_b()) + read_imm32s()?) as u32 as u64)?),
+        0o002 => Ok(get_seg_prefix_ds((read_reg32(EDX | rex_b())) as u32 as u64)?),
+        0o102 => Ok(get_seg_prefix_ds((read_reg32(EDX | rex_b()) + read_imm8s()?) as u32 as u64)?),
+        0o202 => Ok(get_seg_prefix_ds((read_reg32(EDX | rex_b()) + read_imm32s()?) as u32 as u64)?),
+        0o003 => Ok(get_seg_prefix_ds((read_reg32(EBX | rex_b())) as u32 as u64)?),
+        0o103 => Ok(get_seg_prefix_ds((read_reg32(EBX | rex_b()) + read_imm8s()?) as u32 as u64)?),
+        0o203 => Ok(get_seg_prefix_ds((read_reg32(EBX | rex_b()) + read_imm32s()?) as u32 as u64)?),
         0o004 => resolve_sib(false),
         0o104 => Ok((resolve_sib(true)? as i32 + read_imm8s()?) as u32 as u64),
         0o204 => Ok((resolve_sib(true)? as i32 + read_imm32s()?) as u32 as u64),
-        0o005 => Ok(get_seg_prefix_ds((read_imm32s()?) as u32 as u64)?),
-        0o105 => Ok(get_seg_prefix_ss((read_reg32(EBP) + read_imm8s()?) as u32 as u64)?),
-        0o205 => Ok(get_seg_prefix_ss((read_reg32(EBP) + read_imm32s()?) as u32 as u64)?),
-        0o006 => Ok(get_seg_prefix_ds((read_reg32(ESI)) as u32 as u64)?),
-        0o106 => Ok(get_seg_prefix_ds((read_reg32(ESI) + read_imm8s()?) as u32 as u64)?),
-        0o206 => Ok(get_seg_prefix_ds((read_reg32(ESI) + read_imm32s()?) as u32 as u64)?),
-        0o007 => Ok(get_seg_prefix_ds((read_reg32(EDI)) as u32 as u64)?),
-        0o107 => Ok(get_seg_prefix_ds((read_reg32(EDI) + read_imm8s()?) as u32 as u64)?),
-        0o207 => Ok(get_seg_prefix_ds((read_reg32(EDI) + read_imm32s()?) as u32 as u64)?),
+        0o005 => Ok(if rex_b() != 0 {
+            get_seg_prefix_ss(
+                ((read_reg32(13) as u32).wrapping_add(read_imm32s()? as u32)) as u64,
+            )?
+        } else {
+            get_seg_prefix_ds((read_imm32s()?) as u32 as u64)?
+        }),
+        0o105 => Ok(get_seg_prefix_ss((read_reg32(EBP | rex_b()) + read_imm8s()?) as u32 as u64)?),
+        0o205 => Ok(get_seg_prefix_ss((read_reg32(EBP | rex_b()) + read_imm32s()?) as u32 as u64)?),
+        0o006 => Ok(get_seg_prefix_ds((read_reg32(ESI | rex_b())) as u32 as u64)?),
+        0o106 => Ok(get_seg_prefix_ds((read_reg32(ESI | rex_b()) + read_imm8s()?) as u32 as u64)?),
+        0o206 => Ok(get_seg_prefix_ds((read_reg32(ESI | rex_b()) + read_imm32s()?) as u32 as u64)?),
+        0o007 => Ok(get_seg_prefix_ds((read_reg32(EDI | rex_b())) as u32 as u64)?),
+        0o107 => Ok(get_seg_prefix_ds((read_reg32(EDI | rex_b()) + read_imm8s()?) as u32 as u64)?),
+        0o207 => Ok(get_seg_prefix_ds((read_reg32(EDI | rex_b()) + read_imm32s()?) as u32 as u64)?),
         _ => {
             dbg_assert!(false);
             std::hint::unreachable_unchecked()

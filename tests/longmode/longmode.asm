@@ -61,6 +61,8 @@ zero_gdt:
 
     mov eax, cr4
     or  eax, 1 << 5              ; CR4.PAE
+    or  eax, 1 << 9              ; CR4.OSFXSR (SSE state)
+    or  eax, 1 << 10             ; CR4.OSXMMEXCPT
     mov cr4, eax
 
     mov ecx, 0xC0000080          ; IA32_EFER
@@ -338,6 +340,52 @@ after_nx:
     add rsp, 8                         ; discard the fake return address
     mov [r15 + 51*8], rax              ; 0xDEAD
 
+    ; ======== test 52: movq xmm8 <-> r64 (REX.W+R, REX.W+B) ========
+    mov rax, 0xDEC0DE1122334455
+    movq xmm8, rax
+    xor rbx, rbx
+    movq rbx, xmm8
+    mov [r15 + 52*8], rbx            ; 0xDEC0DE1122334455
+
+    ; ======== test 53: movdqa xmm10, xmm9 + por xmm10, xmm11 (high regs) ========
+    movq xmm9, rax
+    mov rcx, 0x0000FFFF0000FFFF
+    movq xmm11, rcx
+    movdqa xmm10, xmm9
+    por xmm10, xmm11                 ; xmm10 = 0xDEC0FFFF2233FFFF
+    movq rbx, xmm10
+    mov [r15 + 53*8], rbx
+
+    ; ======== test 54/55: movdqu to/from memory, psrldq ========
+    movq xmm12, rax
+    movdqu [rel fx_area], xmm12      ; low qword = 0xDEC0DE1122334455
+    mov [rel fx_area + 8], rcx       ; high qword = 0x0000FFFF0000FFFF
+    movdqu xmm14, [rel fx_area]
+    movq rbx, xmm14
+    mov [r15 + 54*8], rbx            ; 0xDEC0DE1122334455
+    psrldq xmm14, 8
+    movq rbx, xmm14
+    mov [r15 + 55*8], rbx            ; 0x0000FFFF0000FFFF
+
+    ; ======== test 56/57: cvtsi2sd/cvtsi2ss with r64 + cvt back ========
+    mov rbx, 0x123456789ABC
+    cvtsi2sd xmm15, rbx              ; F2 REX.W 0F 2A
+    cvttsd2si rdx, xmm15             ; F2 REX.W 0F 2C
+    mov [r15 + 56*8], rdx            ; 0x123456789ABC
+    mov rbx, -123456
+    cvtsi2ss xmm15, rbx              ; F3 REX.W 0F 2A
+    cvttss2si rdx, xmm15             ; F3 REX.W 0F 2C
+    mov [r15 + 57*8], rdx            ; -123456
+
+    ; ======== test 58: fxsave/fxrstor round trip saves xmm8-15 ========
+    mov rax, 0xAAAA5555CCCC3333
+    movq xmm14, rax
+    fxsave [rel fx_area]
+    pxor xmm14, xmm14                ; clobber
+    fxrstor [rel fx_area]
+    movq rbx, xmm14
+    mov [r15 + 58*8], rbx            ; 0xAAAA5555CCCC3333
+
     ; ======== test 39-43: syscall/sysret round trip + swapgs ========
     ; set up IA32_STAR: kernel cs 0x08, user cs 0x18
     xor eax, eax
@@ -355,7 +403,7 @@ after_nx:
     xor edx, edx
     wrmsr
     ; kernel gs base for swapgs
-    mov ecx, 0xC0000101          ; IA32_KERNEL_GS_BASE
+    mov ecx, 0xC0000102          ; IA32_KERNEL_GS_BASE
     mov eax, 0x1234000
     xor edx, edx
     wrmsr
@@ -366,6 +414,36 @@ after_nx:
     mov ecx, 0xC0000080          ; IA32_EFER
     rdmsr
     or  eax, 1                   ; SCE
+    wrmsr
+
+    ; ======== test 59/60: SIB with REX.X index r12 (lea), r12 base ========
+    ; `lea eax, [rcx + r12*2]` encodes SIB.index=4 with REX.X — r12 IS a valid
+    ; index register (field 100 means "no index" only without REX.X)
+    mov r12, 8
+    xor ecx, ecx
+    lea eax, [rcx + r12*2]           ; 0 + 8*2
+    mov [r15 + 59*8], rax            ; 0x10
+    ; r12 as SIB base via REX.B (base field 4 = rsp/r12)
+    mov qword [abs 0x92000], 0xFACE
+    mov r12, 0x92000 - 4
+    mov rax, [r12 + 4]               ; reads [0x92000], SIB base=r12
+    mov [r15 + 60*8], rax            ; 0xFACE
+
+    ; ======== test 61/62: FS/GS/KERNEL_GS MSR addressing sanity ========
+    mov ecx, 0xC0000101              ; IA32_GS_BASE
+    mov rax, 0xA5A5DEAD
+    xor edx, edx
+    wrmsr
+    rdmsr
+    mov [r15 + 61*8], rax            ; 0xA5A5DEAD (read back of gs base)
+    ; kernel gs base still holds its marker (separate MSR!):
+    mov ecx, 0xC0000102              ; IA32_KERNEL_GS_BASE
+    rdmsr
+    mov [r15 + 62*8], rax            ; 0x1234000
+    ; restore the user gs base (the swapgs test expects it swapped in/out)
+    mov ecx, 0xC0000101              ; IA32_GS_BASE
+    mov eax, 0x1234000               ; (same marker as the kernel gs base here)
+    xor edx, edx
     wrmsr
 
     ; set DF before the syscall: r11 must carry it, rflags must lose it
@@ -437,7 +515,7 @@ syscall_handler:
     mov rax, gs:[0]
     mov [r15 + 42*8], rax        ; 0xFEEDFACEF00DF00D
     ; gs base is now the kernel base: rdmsr IA32_GS_BASE confirms
-    mov ecx, 0xC0000102
+    mov ecx, 0xC0000101           ; IA32_GS_BASE
     rdmsr
     shl rdx, 32
     or  rax, rdx
@@ -486,6 +564,9 @@ scratch: dq 0
 scratch_ptr: dq scratch
 call_count: dq 0
 cx16_scratch: dq 0, 0
+
+align 16
+fx_area: times 64 dq 0             ; 512-byte fxsave area (16-byte aligned)
 
 idt_ptr:
     dw 0xFF                      ; 16 entries - 1

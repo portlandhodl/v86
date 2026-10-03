@@ -1042,7 +1042,9 @@ pub unsafe fn instr_0F22(r: i32, creg: i32) {
                 return;
             }
             else {
-                if 0 != (*cr.offset(4) ^ data) & (CR4_PGE | CR4_PSE | CR4_PAE) {
+                // Hardware flushes the TLB when PGE/PSE/PAE/PKE/SMEP/SMAP
+                // change; our permission model differences land in the TLB
+                if 0 != (*cr.offset(4) ^ data) & (CR4_PGE | CR4_PSE | CR4_PAE | CR4_SMEP) {
                     full_clear_tlb();
                 }
                 if data & CR4_PAE != 0
@@ -1174,9 +1176,26 @@ pub unsafe fn instr_F20F2A(source: i32, r: i32) {
     // This cast can't fail
     write_xmm_f64(r, source as f64);
 }
-pub unsafe fn instr_F20F2A_reg(r1: i32, r2: i32) { instr_F20F2A(read_reg32(r1), r2); }
+pub unsafe fn instr_F20F2A_reg(r1: i32, r2: i32) {
+    if rex_w() {
+        // cvtsi2sd xmm, r64
+        write_xmm_f64(r2, read_reg64(r1) as i64 as f64);
+    }
+    else {
+        instr_F20F2A(read_reg32(r1), r2);
+    }
+}
 pub unsafe fn instr_F20F2A_mem(addr: u64, r: i32) {
-    instr_F20F2A(return_on_pagefault!(safe_read32s(addr)), r);
+    if rex_w() {
+        instr_F20F2A_64(return_on_pagefault!(safe_read64s(addr)) as i64, r);
+    }
+    else {
+        instr_F20F2A(return_on_pagefault!(safe_read32s(addr)), r);
+    }
+}
+unsafe fn instr_F20F2A_64(source: i64, r: i32) {
+    // cvtsi2sd xmm, r/m64
+    write_xmm_f64(r, source as f64);
 }
 #[no_mangle]
 pub unsafe fn instr_F30F2A(source: i32, r: i32) {
@@ -1186,9 +1205,22 @@ pub unsafe fn instr_F30F2A(source: i32, r: i32) {
     let result = source as f32;
     write_xmm_f32(r, result);
 }
-pub unsafe fn instr_F30F2A_reg(r1: i32, r2: i32) { instr_F30F2A(read_reg32(r1), r2); }
+pub unsafe fn instr_F30F2A_reg(r1: i32, r2: i32) {
+    if rex_w() {
+        // cvtsi2ss xmm, r64
+        write_xmm_f32(r2, read_reg64(r1) as i64 as f32);
+    }
+    else {
+        instr_F30F2A(read_reg32(r1), r2);
+    }
+}
 pub unsafe fn instr_F30F2A_mem(addr: u64, r: i32) {
-    instr_F30F2A(return_on_pagefault!(safe_read32s(addr)), r);
+    if rex_w() {
+        write_xmm_f32(r, return_on_pagefault!(safe_read64s(addr)) as i64 as f32);
+    }
+    else {
+        instr_F30F2A(return_on_pagefault!(safe_read32s(addr)), r);
+    }
 }
 
 pub unsafe fn instr_0F2B_reg(_r1: i32, _r2: i32) { trigger_ud(); }
@@ -1239,9 +1271,14 @@ pub unsafe fn instr_660F2C_mem(addr: u64, r: i32) {
 pub unsafe fn instr_660F2C_reg(r1: i32, r2: i32) { instr_660F2C(read_xmm128s(r1), r2); }
 
 pub unsafe fn instr_F20F2C(source: u64, r: i32) {
-    // cvttsd2si r32, xmm/m64
+    // cvttsd2si r32/r64, xmm/m64
     let source = f64::from_bits(source);
-    write_reg32(r, sse_convert_with_truncation_f64_to_i32(source));
+    if rex_w() {
+        write_reg64(r, sse_convert_with_truncation_f64_to_i64(source) as u64);
+    }
+    else {
+        write_reg32(r, sse_convert_with_truncation_f64_to_i32(source));
+    }
 }
 #[no_mangle]
 pub unsafe fn instr_F20F2C_reg(r1: i32, r2: i32) { instr_F20F2C(read_xmm64s(r1), r2); }
@@ -1252,7 +1289,12 @@ pub unsafe fn instr_F20F2C_mem(addr: u64, r: i32) {
 
 pub unsafe fn instr_F30F2C(source: f32, r: i32) {
     // cvttss2si
-    write_reg32(r, sse_convert_with_truncation_f32_to_i32(source));
+    if rex_w() {
+        write_reg64(r, sse_convert_with_truncation_f32_to_i64(source) as u64);
+    }
+    else {
+        write_reg32(r, sse_convert_with_truncation_f32_to_i32(source));
+    }
 }
 #[no_mangle]
 pub unsafe fn instr_F30F2C_mem(addr: u64, r: i32) {
@@ -1294,16 +1336,26 @@ pub unsafe fn instr_660F2D_mem(addr: u64, r: i32) {
     instr_660F2D(return_on_pagefault!(safe_read128s(addr)), r);
 }
 pub unsafe fn instr_F20F2D(source: u64, r: i32) {
-    // cvtsd2si r32, xmm/m64
-    write_reg32(r, sse_convert_f64_to_i32(f64::from_bits(source)));
+    // cvtsd2si r32/r64, xmm/m64
+    if rex_w() {
+        write_reg64(r, sse_convert_f64_to_i64(f64::from_bits(source)) as u64);
+    }
+    else {
+        write_reg32(r, sse_convert_f64_to_i32(f64::from_bits(source)));
+    }
 }
 pub unsafe fn instr_F20F2D_reg(r1: i32, r2: i32) { instr_F20F2D(read_xmm64s(r1), r2); }
 pub unsafe fn instr_F20F2D_mem(addr: u64, r: i32) {
     instr_F20F2D(return_on_pagefault!(safe_read64s(addr)), r);
 }
 pub unsafe fn instr_F30F2D(source: f32, r: i32) {
-    // cvtss2si r32, xmm1/m32
-    write_reg32(r, sse_convert_f32_to_i32(source));
+    // cvtss2si r32/r64, xmm1/m32
+    if rex_w() {
+        write_reg64(r, sse_convert_f32_to_i64(source) as u64);
+    }
+    else {
+        write_reg32(r, sse_convert_f32_to_i32(source));
+    }
 }
 pub unsafe fn instr_F30F2D_reg(r1: i32, r2: i32) { instr_F30F2D(read_xmm_f32(r1), r2); }
 pub unsafe fn instr_F30F2D_mem(addr: u64, r: i32) {
@@ -1449,7 +1501,7 @@ pub unsafe fn instr_0F30() {
             );
             let address = low & !(IA32_APIC_BASE_BSP | IA32_APIC_BASE_EXTD | IA32_APIC_BASE_EN);
             dbg_assert!(
-                (address == 0 && !*acpi_enabled) // windows me
+                address == 0 // windows me
                 || address == APIC_MEM_ADDRESS as i32,
                 "Changing APIC address not supported"
             );
@@ -1571,11 +1623,10 @@ pub unsafe fn instr_0F32() {
         MSR_TEST_CTRL => {}, // linux 5.x
         IA32_PLATFORM_ID => {},
         IA32_APIC_BASE => {
-            if *acpi_enabled {
-                low = APIC_MEM_ADDRESS as i32;
-                if *apic_enabled {
-                    low |= IA32_APIC_BASE_EN
-                }
+            // BSP bit set; the enable bit mirrors the guest-visible enable state
+            low = APIC_MEM_ADDRESS as i32 | IA32_APIC_BASE_BSP;
+            if *apic_enabled {
+                low |= IA32_APIC_BASE_EN
             }
         },
         IA32_BIOS_SIGN_ID => {},
@@ -2937,17 +2988,47 @@ pub unsafe fn instr_0F6E(source: i32, r: i32) {
     write_mmx_reg64(r, source as u32 as u64);
     transition_fpu_to_mmx();
 }
-pub unsafe fn instr_0F6E_reg(r1: i32, r2: i32) { instr_0F6E(read_reg32(r1), r2); }
+pub unsafe fn instr_0F6E_reg(r1: i32, r2: i32) {
+    if rex_w() {
+        // movq mm, r64
+        write_mmx_reg64(r2, read_reg64(r1));
+        transition_fpu_to_mmx();
+    }
+    else {
+        instr_0F6E(read_reg32(r1), r2);
+    }
+}
 pub unsafe fn instr_0F6E_mem(addr: u64, r: i32) {
-    instr_0F6E(return_on_pagefault!(safe_read32s(addr)), r);
+    if rex_w() {
+        // movq mm, m64
+        write_mmx_reg64(r, return_on_pagefault!(safe_read64s(addr)));
+        transition_fpu_to_mmx();
+    }
+    else {
+        instr_0F6E(return_on_pagefault!(safe_read32s(addr)), r);
+    }
 }
 pub unsafe fn instr_660F6E(source: i32, r: i32) {
-    // movd mm, r/m32
+    // movd xmm, r/m32
     write_xmm128(r, source, 0, 0, 0);
 }
-pub unsafe fn instr_660F6E_reg(r1: i32, r2: i32) { instr_660F6E(read_reg32(r1), r2); }
+pub unsafe fn instr_660F6E_reg(r1: i32, r2: i32) {
+    if rex_w() {
+        // movq xmm, r64
+        write_xmm128_2(r2, read_reg64(r1), 0);
+    }
+    else {
+        instr_660F6E(read_reg32(r1), r2);
+    }
+}
 pub unsafe fn instr_660F6E_mem(addr: u64, r: i32) {
-    instr_660F6E(return_on_pagefault!(safe_read32s(addr)), r);
+    if rex_w() {
+        // movq xmm, m64
+        write_xmm128_2(r, return_on_pagefault!(safe_read64s(addr)), 0);
+    }
+    else {
+        instr_660F6E(return_on_pagefault!(safe_read32s(addr)), r);
+    }
 }
 #[no_mangle]
 pub unsafe fn instr_0F6F(source: u64, r: i32) {
@@ -3386,11 +3467,23 @@ pub unsafe fn instr_0F7E(r: i32) -> i32 {
     return read_mmx64s(r) as i32;
 }
 pub unsafe fn instr_0F7E_reg(r1: i32, r2: i32) {
-    write_reg32(r1, instr_0F7E(r2));
+    if rex_w() {
+        // movq r64, mm
+        write_reg64(r1, read_mmx64s(r2));
+    }
+    else {
+        write_reg32(r1, instr_0F7E(r2));
+    }
     transition_fpu_to_mmx();
 }
 pub unsafe fn instr_0F7E_mem(addr: u64, r: i32) {
-    return_on_pagefault!(safe_write32(addr, instr_0F7E(r)));
+    if rex_w() {
+        // movq m64, mm
+        return_on_pagefault!(safe_write64(addr, read_mmx64s(r)));
+    }
+    else {
+        return_on_pagefault!(safe_write32(addr, instr_0F7E(r)));
+    }
     transition_fpu_to_mmx();
 }
 pub unsafe fn instr_660F7E(r: i32) -> i32 {
@@ -3398,9 +3491,23 @@ pub unsafe fn instr_660F7E(r: i32) -> i32 {
     let data = read_xmm64s(r);
     return data as i32;
 }
-pub unsafe fn instr_660F7E_reg(r1: i32, r2: i32) { write_reg32(r1, instr_660F7E(r2)); }
+pub unsafe fn instr_660F7E_reg(r1: i32, r2: i32) {
+    if rex_w() {
+        // movq r64, xmm
+        write_reg64(r1, read_xmm64s(r2));
+    }
+    else {
+        write_reg32(r1, instr_660F7E(r2));
+    }
+}
 pub unsafe fn instr_660F7E_mem(addr: u64, r: i32) {
-    return_on_pagefault!(safe_write32(addr, instr_660F7E(r)));
+    if rex_w() {
+        // movq m64, xmm
+        return_on_pagefault!(safe_write64(addr, read_xmm64s(r)));
+    }
+    else {
+        return_on_pagefault!(safe_write32(addr, instr_660F7E(r)));
+    }
 }
 pub unsafe fn instr_F30F7E_mem(addr: u64, r: i32) {
     // movq xmm, xmm/mem64
@@ -3576,9 +3683,9 @@ pub unsafe fn instr_0FA2() {
                     1 << 8 | 1 << 11 | 1 << 13 | 1 << 15 | 1 << 16 | 1 << 19 | // cx8, sep, pge, cmov, pat, clflush
                     1 << 23 | 1 << 24 | 1 << 25 | 1 << 26; // mmx, fxsr, sse1, sse2
 
-            if *acpi_enabled
-            //&& this.apic_enabled[0])
-            {
+            // the APIC feature bit mirrors IA32_APIC_BASE.EN (per Intel SDM
+            // and kvm-unit-tests' test_apic_disable)
+            if *apic_enabled {
                 edx |= 1 << 9; // apic
             }
         },
@@ -3627,7 +3734,7 @@ pub unsafe fn instr_0FA2() {
         7 => {
             if read_reg32(ECX) == 0 {
                 eax = 0; // maximum supported sub-level
-                ebx = 1 << 9; // enhanced REP MOVSB/STOSB
+                ebx = 1 << 7 | 1 << 9; // smep, enhanced REP MOVSB/STOSB
                 ecx = 0;
                 edx = 0;
             }

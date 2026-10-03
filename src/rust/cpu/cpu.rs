@@ -166,6 +166,14 @@ pub const PAGE_TABLE_ACCESSED_MASK: i32 = 1 << 5;
 pub const PAGE_TABLE_DIRTY_MASK: i32 = 1 << 6;
 pub const PAGE_TABLE_PSE_MASK: i32 = 1 << 7;
 pub const PAGE_TABLE_GLOBAL_MASK: i32 = 1 << 8;
+// Reserved bits in 64-bit paging-structure entries (PAE/long mode): physical
+// address bits 32..51 — v86 only maps guest memory below 4 GiB. Bits 52..62
+// are ignored (available to software on real hardware), bit 63 is NX (handled
+// separately against EFER.NXE)
+pub const PAE_ENTRY_RSVD: u64 = 0x000F_FFFF_0000_0000;
+// Reserved bits 20:13 in 2 MiB PDEs (PAE/long mode); 4 MiB PDEs in legacy
+// 32-bit mode use some of these as address bits (PSE-36)
+pub const PAE_PDE_PS_RSVD: u64 = 0x1F_E000;
 pub const MMAP_BLOCK_BITS: i32 = 17;
 pub const MMAP_BLOCK_SIZE: i32 = 1 << MMAP_BLOCK_BITS;
 pub const CR0_PE: i32 = 1;
@@ -238,8 +246,8 @@ pub const IA32_PAT: i32 = 0x277;
 pub const IA32_RTIT_CTL: i32 = 0x570;
 pub const MSR_PKG_C2_RESIDENCY: i32 = 0x60D;
 pub const IA32_FS_BASE: i32 = 0xC0000100u32 as i32;
-pub const IA32_GS_BASE: i32 = 0xC0000102u32 as i32;
-pub const IA32_KERNEL_GS_BASE: i32 = 0xC0000101u32 as i32;
+pub const IA32_GS_BASE: i32 = 0xC0000101u32 as i32;
+pub const IA32_KERNEL_GS_BASE: i32 = 0xC0000102u32 as i32;
 pub const MSR_AMD64_LS_CFG: i32 = 0xC0011020u32 as i32;
 pub const MSR_AMD64_DE_CFG: i32 = 0xC0011029u32 as i32;
 
@@ -621,7 +629,8 @@ unsafe fn get_tss_ss_esp(dpl: u8) -> OrPageFault<(i32, i32)> {
 /// The RSP[dpl] stack pointer from the 64-bit TSS (used for privilege-level
 /// switches when delivering interrupts in long mode).
 unsafe fn get_tss_rsp64(dpl: u8) -> OrPageFault<u64> {
-    let tss_stack_offset = 4u32 + (dpl as u32) << 3;
+    // 64-bit TSS: rsp0/1/2 at offsets 4, 12, 20
+    let tss_stack_offset = 4u32 + ((dpl as u32) << 3);
     if tss_stack_offset + 7 > *segment_limits.offset(TR as isize) {
         trigger_ts(0);
         return Err(());
@@ -652,6 +661,7 @@ pub unsafe fn iret32() { iret(false); }
 /// 64-bit interrupt return (iretq).
 pub unsafe fn iret64() {
     dbg_assert!(*is_64);
+    *nmi_blocked = false;
 
     let rsp = read_reg64(ESP);
     let new_rip = return_on_pagefault!(safe_read64s(rsp));
@@ -739,6 +749,11 @@ pub unsafe fn iret64() {
 
         // no exceptions below
 
+        // switch_seg(SS) checks the descriptor against cpl; the checks in
+        // switch_seg must see the *target* cpl (same order as iret32)
+        *cpl = new_cpl;
+        cpl_changed();
+
         write_reg64(ESP, new_rsp);
 
         if !switch_seg(SS, new_ss as i32) {
@@ -773,6 +788,7 @@ pub unsafe fn iret64() {
 }
 
 pub unsafe fn iret(is_16: bool) {
+    *nmi_blocked = false;
     if vm86_mode() && getiopl() < 3 {
         // vm86 mode, iopl != 3
         dbg_log!("#gp iret vm86 mode, iopl != 3");
@@ -1071,7 +1087,7 @@ pub unsafe fn call_interrupt_vector(
         if *is_64 {
             // long mode: 16-byte gates and a 64-bit interrupt frame
             let was_delivering = in_interrupt_delivery;
-            in_interrupt_delivery = true;
+            in_interrupt_delivery = interrupt_nr;
             call_interrupt_vector64(interrupt_nr, is_software_int, error_code);
             in_interrupt_delivery = was_delivering;
             return;
@@ -2582,7 +2598,7 @@ pub unsafe fn translate_address_write_jit(address: u64, wasm_table_index: u16) -
     let mut entry = tlb_pick_entry(address);
     let user = *cpl == 3;
     if entry as i32 & (TLB_VALID | if user { TLB_NO_USER } else { 0 } | TLB_READONLY) != TLB_VALID {
-        entry = do_page_walk(address, true, user, true, true)?;
+        entry = do_page_walk(address, true, user, true, true, false)?;
     }
     let has_code = entry as i32 & TLB_HAS_CODE != 0;
     let phys_addr = ((entry & !0xFFF) ^ address) as u32 - memory::mem8 as u32;
@@ -2627,7 +2643,7 @@ pub unsafe fn translate_address(
             | if for_writing { TLB_READONLY } else { 0 })
         != TLB_VALID
     {
-        entry = do_page_walk(address, for_writing, user, jit, side_effects)?;
+        entry = do_page_walk(address, for_writing, user, jit, side_effects, false)?;
     }
     Ok(((entry & !0xFFF) ^ address) as u32 - memory::mem8 as u32)
 }
@@ -2636,7 +2652,7 @@ pub unsafe fn translate_address_write_and_can_skip_dirty(address: u64) -> OrPage
     let mut entry = tlb_pick_entry(address);
     let user = *cpl == 3;
     if entry as i32 & (TLB_VALID | if user { TLB_NO_USER } else { 0 } | TLB_READONLY) != TLB_VALID {
-        entry = do_page_walk(address, true, user, false, true)?;
+        entry = do_page_walk(address, true, user, false, true, false)?;
     }
     Ok((
         ((entry & !0xFFF) ^ address) as u32 - memory::mem8 as u32,
@@ -2666,6 +2682,7 @@ pub unsafe fn do_page_walk(
     user: bool,
     jit: bool,
     side_effects: bool,
+    for_fetch: bool,
 ) -> OrPageFault<u64> {
     let global;
     let mut allow_user = true;
@@ -2679,6 +2696,15 @@ pub unsafe fn do_page_walk(
 
     let cr0 = *cr;
     let cr4 = *cr.offset(4);
+    // I/D (bit 4) of the page-fault error code: set for instruction fetches
+    // when EFER.NXE or CR4.SMEP is enabled (matches PAE/long-mode hw behavior
+    // and kvm-unit-tests' expectations)
+    let pfec_fetch = for_fetch && (*efer & EFER_NXE != 0 || cr4 & CR4_SMEP != 0);
+    // fetch faults determined by the final permissions (NX, SMEP): raised
+    // before any accessed/dirty bits touch the entries
+    let long_mode_nx = *efer & EFER_LMA != 0 && *efer & EFER_NXE != 0;
+    let nx_fetch_fault = for_fetch && long_mode_nx;
+    let smep_fetch_fault = for_fetch && cr0 & CR0_PG != 0 && cr4 & CR4_SMEP != 0 && !user;
 
     if cr0 & CR0_PG == 0 {
         // paging disabled
@@ -2700,7 +2726,15 @@ pub unsafe fn do_page_walk(
             let pml4_entry = memory::read64s(pml4_addr) as u64;
             if pml4_entry & (PAGE_TABLE_PRESENT_MASK as u64) == 0 {
                 if side_effects {
-                    trigger_pagefault(addr, false, for_writing, user, jit);
+                    trigger_pagefault_extended(addr, for_writing, user, pfec_fetch, false, false, jit);
+                }
+                return Err(());
+            }
+            if pml4_entry & PAE_ENTRY_RSVD != 0
+                || *efer & EFER_NXE == 0 && pml4_entry & (1u64 << 63) != 0
+            {
+                if side_effects {
+                    trigger_pagefault_extended(addr, for_writing, user, pfec_fetch, true, true, jit);
                 }
                 return Err(());
             }
@@ -2716,7 +2750,15 @@ pub unsafe fn do_page_walk(
             let pdpt_entry = memory::read64s(pdpt_addr) as u64;
             if pdpt_entry & (PAGE_TABLE_PRESENT_MASK as u64) == 0 {
                 if side_effects {
-                    trigger_pagefault(addr, false, for_writing, user, jit);
+                    trigger_pagefault_extended(addr, for_writing, user, pfec_fetch, false, false, jit);
+                }
+                return Err(());
+            }
+            if pdpt_entry & PAE_ENTRY_RSVD != 0
+                || *efer & EFER_NXE == 0 && pdpt_entry & (1u64 << 63) != 0
+            {
+                if side_effects {
+                    trigger_pagefault_extended(addr, for_writing, user, pfec_fetch, true, true, jit);
                 }
                 return Err(());
             }
@@ -2734,10 +2776,6 @@ pub unsafe fn do_page_walk(
             let page_dir_addr =
                 ((pdpt_entry & 0x000F_FFFF_FFFF_F000) as u32) + (((addr >> 21) & 0x1FF) << 3) as u32;
             let page_dir_entry = memory::read64s(page_dir_addr) as u64;
-            dbg_assert!(
-                page_dir_entry & 0x0000_0000_7FFF_FFFF_0000_0000 == 0,
-                "Unsupported: Page directory entry larger than 32 bits"
-            );
 
             (page_dir_addr, page_dir_entry)
         }
@@ -2745,7 +2783,7 @@ pub unsafe fn do_page_walk(
             let pdpt_entry = *reg_pdpte.offset(((addr >> 30) & 3) as isize);
             if pdpt_entry as i32 & PAGE_TABLE_PRESENT_MASK == 0 {
                 if side_effects {
-                    trigger_pagefault(addr, false, for_writing, user, jit);
+                    trigger_pagefault_extended(addr, for_writing, user, pfec_fetch, false, false, jit);
                 }
                 return Err(());
             }
@@ -2753,10 +2791,6 @@ pub unsafe fn do_page_walk(
             let page_dir_addr =
                 (pdpt_entry as u32 & 0xFFFF_F000) + (((addr >> 21) & 0x1FF) << 3) as u32;
             let page_dir_entry = memory::read64s(page_dir_addr) as u64;
-            dbg_assert!(
-                page_dir_entry & 0x7FFF_FFFF_0000_0000 == 0,
-                "Unsupported: Page directory entry larger than 32 bits"
-            );
 
             (page_dir_addr, page_dir_entry)
         }
@@ -2768,7 +2802,20 @@ pub unsafe fn do_page_walk(
 
         if page_dir_entry as i32 & PAGE_TABLE_PRESENT_MASK == 0 {
             if side_effects {
-                trigger_pagefault(addr, false, for_writing, user, jit);
+                trigger_pagefault_extended(addr, for_writing, user, pfec_fetch, false, false, jit);
+            }
+            return Err(());
+        }
+        // reserved-bit faults: physical address bits beyond the supported 32
+        // bits (v86 maps memory below 4 GiB) and NX while EFER.NXE=0. Only
+        // 64-bit-entry (PAE/long-mode) formats; 32-bit entries are
+        // read32s-sign-extended, so gate on pae
+        if pae
+            && (page_dir_entry & PAE_ENTRY_RSVD != 0
+                || *efer & EFER_NXE == 0 && page_dir_entry & (1u64 << 63) != 0)
+        {
+            if side_effects {
+                trigger_pagefault_extended(addr, for_writing, user, pfec_fetch, true, true, jit);
             }
             return Err(());
         }
@@ -2782,9 +2829,24 @@ pub unsafe fn do_page_walk(
         if 0 != page_dir_entry as i32 & PAGE_TABLE_PSE_MASK && (long_mode || 0 != cr4 & CR4_PSE) {
             // size bit is set
 
+            if pae && page_dir_entry & PAE_PDE_PS_RSVD != 0 {
+                // reserved bits 20:13 in 2 MiB PDEs
+                if side_effects {
+                    trigger_pagefault_extended(addr, for_writing, user, pfec_fetch, true, true, jit);
+                }
+                return Err(());
+            }
             if for_writing && !allow_write && !kernel_write_override || user && !allow_user {
                 if side_effects {
-                    trigger_pagefault(addr, true, for_writing, user, jit);
+                    trigger_pagefault_extended(addr, for_writing, user, pfec_fetch, true, false, jit);
+                }
+                return Err(());
+            }
+            if nx_fetch_fault && !allow_fetch || smep_fetch_fault && allow_user {
+                // NX fetch fault / SMEP supervisor fetch of a user page: no
+                // accessed/dirty bits are set on a faulting fetch
+                if side_effects {
+                    trigger_pagefault_nx(addr);
                 }
                 return Err(());
             }
@@ -2812,10 +2874,6 @@ pub unsafe fn do_page_walk(
                 let page_table_addr =
                     (page_dir_entry as u32 & 0xFFFF_F000) + (((addr >> 12) & 0x1FF) << 3) as u32;
                 let page_table_entry = memory::read64s(page_table_addr) as u64;
-                dbg_assert!(
-                    page_table_entry & 0x7FFF_FFFF_0000_0000 == 0,
-                    "Unsupported: Page table entry larger than 32 bits"
-                );
 
                 (page_table_addr, page_table_entry)
             }
@@ -2827,6 +2885,16 @@ pub unsafe fn do_page_walk(
             };
 
             let present = page_table_entry as i32 & PAGE_TABLE_PRESENT_MASK != 0;
+            if pae
+                && present
+                && (page_table_entry & PAE_ENTRY_RSVD != 0
+                    || *efer & EFER_NXE == 0 && page_table_entry & (1u64 << 63) != 0)
+            {
+                if side_effects {
+                    trigger_pagefault_extended(addr, for_writing, user, pfec_fetch, true, true, jit);
+                }
+                return Err(());
+            }
             allow_write &= page_table_entry as i32 & PAGE_TABLE_RW_MASK != 0;
             allow_user &= page_table_entry as i32 & PAGE_TABLE_USER_MASK != 0;
             allow_fetch &= page_table_entry & 0x8000_0000_0000_0000u64 == 0;
@@ -2836,7 +2904,15 @@ pub unsafe fn do_page_walk(
                 || user && !allow_user
             {
                 if side_effects {
-                    trigger_pagefault(addr, present, for_writing, user, jit);
+                    trigger_pagefault_extended(addr, for_writing, user, pfec_fetch, present, false, jit);
+                }
+                return Err(());
+            }
+            if nx_fetch_fault && !allow_fetch || smep_fetch_fault && allow_user {
+                // NX fetch fault / SMEP supervisor fetch of a user page: no
+                // accessed/dirty bits are set on a faulting fetch
+                if side_effects {
+                    trigger_pagefault_nx(addr);
                 }
                 return Err(());
             }
@@ -2887,7 +2963,7 @@ pub unsafe fn do_page_walk(
         // address part)
         true
     };
-    let long_mode_nx = *efer & EFER_LMA != 0 && *efer & EFER_NXE != 0;
+    // long_mode_nx computed at the top of this function
     let info_bits = TLB_VALID
         | if for_writing { 0 } else { TLB_READONLY }
         | if allow_user { 0 } else { TLB_NO_USER }
@@ -3052,10 +3128,14 @@ pub unsafe fn exit_jit() {
     call_interrupt_vector(code, false, error_code);
 }
 
-// Set while an exception/interrupt is being delivered; a page fault (or any
-// fault) during delivery is promoted to #DF by call_interrupt_vector, and a
-// fault during #DF delivery shuts the machine down (triple fault).
-pub static mut in_interrupt_delivery: bool = false;
+// Set to the vector number while an exception/interrupt is being delivered
+// (-1 otherwise). A page fault during delivery of a #PF is promoted to #DF
+// (fault-class + fault-class), while a fault during #DF delivery shuts the
+// machine down (triple fault). A page fault during delivery of a benign
+// exception (e.g. #DE mid-delivery with a not-present stack page) is NOT
+// escalated: the PF is delivered normally and the source instruction
+// re-executes after the handler's iret, restarting the outer delivery.
+pub static mut in_interrupt_delivery: i32 = -1;
 pub static mut delivering_double_fault: bool = false;
 
 /// Pagefault handling with the jit works as follows:
@@ -3071,13 +3151,31 @@ pub static mut delivering_double_fault: bool = false;
 ///
 /// Non-jit resets the instruction pointer and does the PF interrupt directly
 pub unsafe fn trigger_pagefault(addr: u64, present: bool, write: bool, user: bool, jit: bool) {
+    trigger_pagefault_extended(addr, write, user, false, present, false, jit)
+}
+
+/// Page fault with full control over the error-code bits. `fetch` is the I/D
+/// bit (instruction fetch), `reserved` is the RSVD bit (page fault caused by a
+/// reserved bit in a present paging-structure entry). Note that P=1 is always
+/// implied for these (a present entry caused the fault).
+pub unsafe fn trigger_pagefault_extended(
+    addr: u64,
+    write: bool,
+    user: bool,
+    fetch: bool,
+    present: bool,
+    reserved: bool,
+    jit: bool,
+) {
     if config::LOG_PAGE_FAULTS {
         dbg_log!(
-            "page fault{} w={} u={} p={} eip={:x} cr2={:x}",
+            "page fault{} w={} u={} p={} r={} i={} eip={:x} cr2={:x}",
             if jit { "jit" } else { "" },
             write as i32,
             user as i32,
             present as i32,
+            reserved as i32,
+            fetch as i32,
             *previous_ip,
             addr
         );
@@ -3088,7 +3186,11 @@ pub unsafe fn trigger_pagefault(addr: u64, present: bool, write: bool, user: boo
     *cr2_64 = addr;
     // invalidate tlb entry
     tlb_invalidate_page(addr);
-    let error_code = (user as i32) << 2 | (write as i32) << 1 | present as i32;
+    let error_code = (user as i32) << 2
+        | (write as i32) << 1
+        | present as i32
+        | (reserved as i32) << 3
+        | (fetch as i32) << 4;
     if jit {
         jit_exit_reason = JitExitReason::CpuException {
             code: CPU_EXCEPTION_PF,
@@ -3097,20 +3199,24 @@ pub unsafe fn trigger_pagefault(addr: u64, present: bool, write: bool, user: boo
     }
     else {
         *instruction_pointer = *previous_ip;
-        if in_interrupt_delivery {
-            if delivering_double_fault {
-                // a fault while delivering #DF: triple fault, shut down
-                panic!("Triple fault: page fault during #DF delivery, cr2={:x}", addr);
-            }
-            // a fault during exception delivery: #DF (page faults nest at most
-            // one level in real hardware; everything beyond is a double fault)
-            dbg_log!("#DF: page fault during exception delivery, cr2={:x}", addr);
+        if delivering_double_fault {
+            // a fault while delivering #DF: triple fault, shut down
+            panic!("Triple fault: page fault during #DF delivery, cr2={:x}", addr);
+        }
+        if in_interrupt_delivery == CPU_EXCEPTION_PF {
+            // a page fault while delivering a page fault escalates to #DF
+            // (fault-class + fault-class); page faults nest at most one level
+            // in real hardware
+            dbg_log!("#DF: page fault during #PF delivery, cr2={:x}", addr);
             delivering_double_fault = true;
-            in_interrupt_delivery = false;
+            in_interrupt_delivery = -1;
             call_interrupt_vector(CPU_EXCEPTION_DF, false, Some(0));
             delivering_double_fault = false;
             return;
         }
+        // note: a page fault during delivery of a benign exception (#DE, ...)
+        // is not escalated — the PF is delivered normally and the outer
+        // delivery restarts when the handler's iret re-runs the source
         call_interrupt_vector(CPU_EXCEPTION_PF, false, Some(error_code));
     }
 }
@@ -4011,19 +4117,29 @@ pub unsafe fn get_phys_eip() -> OrPageFault<u32> {
     return Ok(phys_addr);
 }
 
-/// Like translate_address_read, but additionally faults (with the I/D bit set
-/// in the error code) when the page is not executable (NX bit, long mode).
+/// Like translate_address_read, but for instruction fetches: additionally
+/// faults (with the I/D bit set in the error code) when the page is not
+/// executable (NX bit, long mode) or when a supervisor fetches from a user
+/// page with CR4.SMEP set, and sets I/D on fetch page faults in general when
+/// EFER.NXE or CR4.SMEP is enabled.
 pub fn translate_address_read_code(address: u64) -> OrPageFault<u32> {
     unsafe {
-        let phys = translate_address(address, false, *cpl == 3, false, true)?;
-        if *efer & EFER_NXE != 0 && *efer & EFER_LMA != 0 {
-            // the walk above populated the TLB, so the entry now reflects the
-            // NX state of the whole walk
-            let entry = tlb_pick_entry(address);
-            if entry as i32 & (TLB_VALID | TLB_NOT_EXECUTABLE) == TLB_VALID | TLB_NOT_EXECUTABLE {
-                trigger_pagefault_nx(address);
-                return Err(());
-            }
+        let user = *cpl == 3;
+        let mut entry = tlb_pick_entry(address) as i32;
+        if entry & (TLB_VALID | if user { TLB_NO_USER } else { 0 }) != TLB_VALID {
+            entry = do_page_walk(address, false, user, false, true, true)? as i32;
+        }
+        let phys = (((entry as u64) & !0xFFF) ^ address) as u32 - memory::mem8 as u32;
+        let check_nx = *efer & EFER_NXE != 0 && *efer & EFER_LMA != 0;
+        let check_smep = *cr.offset(0) & CR0_PG != 0 && *cr.offset(4) & CR4_SMEP != 0 && *cpl != 3;
+        if check_nx && entry & (TLB_VALID | TLB_NOT_EXECUTABLE) == TLB_VALID | TLB_NOT_EXECUTABLE {
+            trigger_pagefault_nx(address);
+            return Err(());
+        }
+        if check_smep && entry & (TLB_VALID | TLB_NO_USER) == TLB_VALID {
+            // SMEP: supervisor-mode instruction fetch from a user page
+            trigger_pagefault_extended(address, false, false, true, true, false, false);
+            return Err(());
         }
         Ok(phys)
     }
@@ -5006,44 +5122,60 @@ pub unsafe fn write_reg64(index: i32, value: u64) {
     *reg64.offset(index as isize) = value;
 }
 
-pub unsafe fn read_mmx32s(r: i32) -> i32 { (*fpu_st.offset(r as isize)).mantissa as i32 }
+// MMX register accessors: REX.R/REX.B do not extend MMX register fields, so
+// the index is masked to 3 bits (the generated modrm decode has REX folded in)
+pub unsafe fn read_mmx32s(r: i32) -> i32 { (*fpu_st.offset((r & 7) as isize)).mantissa as i32 }
 
-pub unsafe fn read_mmx64s(r: i32) -> u64 { (*fpu_st.offset(r as isize)).mantissa }
+pub unsafe fn read_mmx64s(r: i32) -> u64 { (*fpu_st.offset((r & 7) as isize)).mantissa }
 
 pub unsafe fn write_mmx_reg64(r: i32, data: u64) {
+    let r = r & 7;
     *fpu_st.offset(r as isize) = softfloat::F80 {
         mantissa: data,
         sign_exponent: 0xFFFF,
     };
 }
 
-pub unsafe fn read_xmm_f32(r: i32) -> f32 { return (*reg_xmm.offset(r as isize)).f32[0]; }
+// xmm register accessor: xmm0-7 live at reg_xmm, xmm8-15 (64-bit mode, REX
+// extension) at reg_xmm_high
+#[inline]
+pub unsafe fn reg_xmm_ptr(r: i32) -> *mut reg128 {
+    dbg_assert!(r >= 0 && r < 16);
+    if r < 8 {
+        reg_xmm.offset(r as isize)
+    }
+    else {
+        reg_xmm_high.offset(r as isize - 8)
+    }
+}
 
-pub unsafe fn read_xmm32(r: i32) -> i32 { return (*reg_xmm.offset(r as isize)).u32[0] as i32; }
+pub unsafe fn read_xmm_f32(r: i32) -> f32 { return (*reg_xmm_ptr(r)).f32[0]; }
 
-pub unsafe fn read_xmm64s(r: i32) -> u64 { (*reg_xmm.offset(r as isize)).u64[0] }
+pub unsafe fn read_xmm32(r: i32) -> i32 { return (*reg_xmm_ptr(r)).u32[0] as i32; }
 
-pub unsafe fn read_xmm128s(r: i32) -> reg128 { return *reg_xmm.offset(r as isize); }
+pub unsafe fn read_xmm64s(r: i32) -> u64 { (*reg_xmm_ptr(r)).u64[0] }
 
-pub unsafe fn write_xmm_f32(r: i32, data: f32) { (*reg_xmm.offset(r as isize)).f32[0] = data; }
+pub unsafe fn read_xmm128s(r: i32) -> reg128 { return *reg_xmm_ptr(r); }
 
-pub unsafe fn write_xmm32(r: i32, data: i32) { (*reg_xmm.offset(r as isize)).i32[0] = data; }
+pub unsafe fn write_xmm_f32(r: i32, data: f32) { (*reg_xmm_ptr(r)).f32[0] = data; }
 
-pub unsafe fn write_xmm64(r: i32, data: u64) { (*reg_xmm.offset(r as isize)).u64[0] = data }
-pub unsafe fn write_xmm_f64(r: i32, data: f64) { (*reg_xmm.offset(r as isize)).f64[0] = data }
+pub unsafe fn write_xmm32(r: i32, data: i32) { (*reg_xmm_ptr(r)).i32[0] = data; }
+
+pub unsafe fn write_xmm64(r: i32, data: u64) { (*reg_xmm_ptr(r)).u64[0] = data }
+pub unsafe fn write_xmm_f64(r: i32, data: f64) { (*reg_xmm_ptr(r)).f64[0] = data }
 
 pub unsafe fn write_xmm128(r: i32, i0: i32, i1: i32, i2: i32, i3: i32) {
     let x = reg128 {
         u32: [i0 as u32, i1 as u32, i2 as u32, i3 as u32],
     };
-    *reg_xmm.offset(r as isize) = x;
+    *reg_xmm_ptr(r) = x;
 }
 
 pub unsafe fn write_xmm128_2(r: i32, i0: u64, i1: u64) {
-    *reg_xmm.offset(r as isize) = reg128 { u64: [i0, i1] };
+    *reg_xmm_ptr(r) = reg128 { u64: [i0, i1] };
 }
 
-pub unsafe fn write_xmm_reg128(r: i32, data: reg128) { *reg_xmm.offset(r as isize) = data; }
+pub unsafe fn write_xmm_reg128(r: i32, data: reg128) { *reg_xmm_ptr(r) = data; }
 
 /// Set the fpu tag word to valid and the top-of-stack to 0 on mmx instructions
 #[no_mangle]
@@ -5485,16 +5617,34 @@ pub unsafe fn store_current_tsc() { *current_tsc = read_tsc(); }
 
 #[no_mangle]
 pub unsafe fn handle_irqs() {
+    if *nmi_pending && !*nmi_blocked {
+        *nmi_pending = false;
+        *nmi_blocked = true;
+        *previous_ip = *instruction_pointer;
+        if *in_hlt {
+            js::stop_idling();
+            *in_hlt = false;
+        }
+        call_interrupt_vector(CPU_EXCEPTION_NMI, false, None);
+    }
     if *flags & FLAG_INTERRUPT != 0 {
         if let Some(irq) = pic::pic_acknowledge_irq() {
             pic_call_irq(irq)
         }
-        else if *acpi_enabled {
+        else if *apic_enabled {
             if let Some(irq) = apic::acknowledge_irq() {
                 pic_call_irq(irq)
             }
         }
     }
+}
+
+/// Latch an NMI (vector 2 through the IDT, not maskable by IF); it is
+/// delivered on the next instruction boundary, unless another NMI is in flight
+#[no_mangle]
+pub unsafe fn raise_nmi() {
+    *nmi_pending = true;
+    handle_irqs();
 }
 
 unsafe fn pic_call_irq(interrupt_nr: u8) {
@@ -5600,6 +5750,7 @@ pub unsafe fn reset_cpu() {
     }
     for i in 8..16 {
         *reg64.offset(i) = 0;
+        write_xmm128_2(i as i32, 0, 0);
     }
 
     *segment_access_bytes.offset(CS as isize) = 0x80 | (0 << 5) | 0x10 | 0x08 | 0x02; // P dpl0 S E RW
@@ -5666,6 +5817,14 @@ pub unsafe fn reset_cpu() {
     *last_op_size = 0;
 
     *pat = 0x0007_0406_0007_0406;
+
+    // the local APIC is enabled at reset (IA32_APIC_BASE = 0xFEE00900 for the BSP)
+    *apic_enabled = true;
+
+    *nmi_pending = false;
+    *nmi_blocked = false;
+    in_interrupt_delivery = -1;
+    delivering_double_fault = false;
 
     set_tsc(0, 0);
 

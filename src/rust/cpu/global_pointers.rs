@@ -57,6 +57,8 @@ pub const fpu_stack_empty: *mut u8 = 816 as *mut u8;
 pub const mxcsr: *mut i32 = 824 as *mut i32;
 
 pub const reg_xmm: *mut reg128 = 832 as *mut reg128;
+// xmm8-15 (only addressable in 64-bit mode via REX.R/REX.B on SSE encodings)
+pub const reg_xmm_high: *mut reg128 = 1408 as *mut reg128;
 pub const current_tsc: *mut u64 = 960 as *mut u64;
 
 pub const reg_pdpte: *mut u64 = 968 as *mut u64; // 4 64-bit entries
@@ -120,6 +122,10 @@ pub const sysenter_eip64: *mut u64 = 416 as *mut u64;
 // ia32_misc_enable (value retained, semantics not modelled)
 pub const misc_enable: *mut u64 = 424 as *mut u64;
 
+// NMI bookkeeping: pending (latched) and blocked (in an NMI handler, until iret)
+pub const nmi_pending: *mut bool = 432 as *mut bool;
+pub const nmi_blocked: *mut bool = 433 as *mut bool;
+
 pub fn get_reg32_offset(r: u32) -> u32 {
     dbg_assert!(r < 16);
     (unsafe { reg32.offset((r * 2) as isize) }) as u32
@@ -136,8 +142,13 @@ pub fn get_reg_mmx_offset(r: u32) -> u32 {
 }
 
 pub fn get_reg_xmm_offset(r: u32) -> u32 {
-    dbg_assert!(r < 8);
-    (unsafe { reg_xmm.offset(r as isize) }) as u32
+    dbg_assert!(r < 16);
+    if r < 8 {
+        (unsafe { reg_xmm.offset(r as isize) }) as u32
+    }
+    else {
+        (unsafe { reg_xmm_high.offset(r as isize - 8) }) as u32
+    }
 }
 
 pub fn get_sreg_offset(s: u32) -> u32 {
