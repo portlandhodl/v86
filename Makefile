@@ -317,6 +317,7 @@ nasmtests-force-jit: build/v86-debug.wasm
 
 longmode-tests: build/v86-debug.wasm
 	./tests/longmode/run.js
+	./tests/longmode/multiboot64.js
 
 jitpagingtests: build/v86-debug.wasm
 	$(MAKE) -C tests/jit-paging test-jit test-jit-smc

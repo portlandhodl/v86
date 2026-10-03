@@ -386,8 +386,11 @@ Run `grep -n unimplemented src/rust/cpu/instructions_64.rs`. Notable groups:
   protocol (entry at `code32_start + 0x200` with paging + long mode already
   enabled by the loader — v86 must build identity page tables, a GDT with a
   64-bit code segment, and set EFER.LMA itself).
-- `src/elf.js` is 32-bit only (`console.assert(header.class === 1)`) — add
-  ELF64 parsing.
+- ~~`src/elf.js` is 32-bit only~~ — done: ELF64 headers are parsed (virtual
+  addresses as BigInt, offsets/sizes/paddr as numbers), and the multiboot
+  loader maps a higher-half ELF64 entry point to its physical address.
+  `tests/longmode/multiboot64.js` (part of `make longmode-tests`) boots a
+  hand-built higher-half ELF64 multiboot kernel that enables long mode itself.
 - Devices: APIC + IOAPIC exist (Rust). x2APIC is not advertised; setting
   IA32_APIC_BASE.EXTD raises #GP, as on hardware without x2APIC (implement
   properly only if a kernel needs it). No HPET: Linux falls back to

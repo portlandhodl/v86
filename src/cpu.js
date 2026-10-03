@@ -1498,7 +1498,10 @@ CPU.prototype.load_multiboot_option_rom = function(buffer, initrd, cmdline)
 
                 const elf = read_elf(buffer);
 
-                entrypoint = elf.header.entry;
+                // BigInt for 64-bit images (see elf.js)
+                const elf_entry = BigInt(elf.header.entry);
+                let entry_adjusted = false;
+                entrypoint = Number(BigInt.asUintN(32, elf_entry));
 
                 for(const program of elf.program_headers)
                 {
@@ -1525,9 +1528,11 @@ CPU.prototype.load_multiboot_option_rom = function(buffer, initrd, cmdline)
                             // Since multiboot specifies that paging is disabled, we load to the physical address;
                             // but the entry point is specified in virtual addresses so adjust the entrypoint if needed
 
-                            if(entrypoint === elf.header.entry && program.vaddr <= entrypoint && (program.vaddr + program.memsz) > entrypoint)
+                            const vaddr = BigInt(program.vaddr);
+                            if(!entry_adjusted && vaddr <= elf_entry && vaddr + BigInt(program.memsz) > elf_entry)
                             {
-                                entrypoint = (entrypoint - program.vaddr) + program.paddr;
+                                entrypoint = Number(elf_entry - vaddr) + program.paddr;
+                                entry_adjusted = true;
                             }
                         }
                         else
@@ -1554,6 +1559,10 @@ CPU.prototype.load_multiboot_option_rom = function(buffer, initrd, cmdline)
                         dbg_assert(false, "unimplemented elf section type: " + h(program.type));
                     }
                 }
+
+                // multiboot always enters in 32-bit protected mode, so 64-bit images
+                // need a 32-bit entry point inside a loaded segment
+                dbg_assert(entry_adjusted || elf_entry < BigInt(0x100000000), "elf entry point not reachable from 32-bit mode: " + elf_entry.toString(16));
             }
             else
             {
