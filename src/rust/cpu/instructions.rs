@@ -2419,7 +2419,10 @@ pub unsafe fn instr_FB() {
         *prefixes = 0;
         *previous_ip = *instruction_pointer;
         *instruction_counter += 1;
-        run_instruction(return_on_pagefault!(read_imm8()) | (is_osize_32() as i32) << 8);
+
+        // interrupt shadow: service the pending irq only after the next
+        // instruction: run it with the standard dispatch rules
+        run_shadow_instruction();
 
         handle_irqs();
     }

@@ -221,12 +221,48 @@ Remaining known gaps (non-blocking for the goal above):
   The decompressor now runs end-to-end and hands off into the uncompressed
   64-bit kernel (verified by instruction traces past `secondary_startup_64`'s
   CR3 switch).
-  Remaining: the kernel later halts at `native_halt` with IF=0 having never
-  produced serial output (no 0x3F8 writes observed) — silent, so the next
-  failure is in the initcalls between the GS-base fix and console_init;
-  this is where to continue the 64-bit boot bring-up (differential tracing
-  against QEMU `-kernel vmlinuz-virt -append "console=ttyS0 nokaslr"` boots
-  to a shell).
+
+  **2026-10 update — the kernel now boots to the initramfs shell over
+  serial.** Differential tracing past secondary_startup_64 into the
+  initcalls turned up six more long-mode CPU bugs, each fixed with a
+  regression test in tests/longmode/ (running vmlinuz-virt + initramfs-virt
+  with `console=ttyS0 nokaslr ignore_loglevel` now runs the full kernel
+  init, survives the arch selftests, reaches userspace, and stops at the
+  initramfs recovery shell, matching QEMU on the same image):
+  - #PF now records the full (canonical, sign-extended) linear address in
+    CR2 — the 48-bit truncation broke Linux's early on-demand physmap
+    handler (early_make_pgtable), which computes the physical address of the
+    faulting page by subtracting the physmap base from CR2; a truncated CR2
+    produced garbage.
+  - `rep stosq` (qword stores on the rep fast path) was never actually
+    written — the store case had Size::Q empty while the pointer advanced.
+    memset-style loops wrote nothing ("cf. struct insn zeroing", which the
+    alternatives machinery does on every patch site; writes silently lost
+    caused later unpredictable reads).
+  - 64-bit exception frames are always pushed with five slots
+    (ss:rsp:rflags:cs:rip) regardless of privilege change, and IRETQ pops
+    the stack pointer unconditionally (the real x86-64 semantics; the
+    previous three-slot modelling survives only where tested).
+  - The STI "shadow one instruction" path (`instr_FB`) re-dispatched the
+    next instruction through the 32-bit tier in long mode, so any
+    instruction after `sti` was decoded as its 32-bit form (e.g. `ret`
+    popping truncated addresses).
+  - The TLB membership list stored page numbers as u32, so mappings above
+    4 GiB were not flushed by CR3 switches / INVLPG: fixmap-style temporary
+    mappings (poking_mm) kept pointing at stale physical pages.
+  - The 64-bit TSS base is now a full-width field decoded from the 16-byte
+    TSS descriptor (it was truncated to 32 bits before) and the ISTn offset
+    computation uses 0x1c+8*ist, not 0x28+8*ist.
+
+  Boot state: with `console=ttyS0 nokaslr ignore_loglevel` the guest
+  kernel runs the full early-init path (fault handling, retpoline/alterns,
+  page table, NMI/int3 selftests, IPC) and hands over to the Alpine
+  initramfs recovery shell on ttyS0, matching QEMU on the same image.
+  Remaining for a full userspace boot: the *first* ring-3 transition
+  faults when an (already-userland-waiting) #PF is delivered onto the
+  per-cpu entry stack (cr2 = stack_base - 0x30), i.e. the frame-push of a
+  nested fault under the kernel's PTI-ish vmmaps needs another differential
+  pass against QEMU.
 - ISO/SeaBIOS path currently idles at the ISOLINUX `boot:` prompt (v86 accepts
   no keyboard input in this headless runner; direct-bzImage is the default
   bring-up vehicle).

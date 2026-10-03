@@ -191,6 +191,10 @@ fn check_jit_state_invariants(ctx: &mut JitState) {
 
     for i in 0..unsafe { cpu::valid_tlb_entries_count } {
         let page = unsafe { cpu::valid_tlb_entries[i as usize] };
+        // pages >= 4 GiB live in the secondary TLB and never hold jittered code
+        if page >= 0x10_0000 {
+            continue;
+        }
         let entry = unsafe { cpu::tlb_data[page as usize] };
         if 0 != entry {
             let tlb_physical_page = Page::of_u32(
@@ -2226,6 +2230,9 @@ fn free_wasm_table_index(ctx: &mut JitState, wasm_table_index: WasmTableIndex) {
 
         for i in 0..unsafe { cpu::valid_tlb_entries_count } {
             let page = unsafe { cpu::valid_tlb_entries[i as usize] };
+            if page >= 0x10_0000 {
+                continue;
+            }
             unsafe {
                 match cpu::tlb_code[page as usize] {
                     None => {},

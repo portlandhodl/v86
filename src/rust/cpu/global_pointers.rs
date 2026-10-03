@@ -126,6 +126,11 @@ pub const misc_enable: *mut u64 = 424 as *mut u64;
 pub const nmi_pending: *mut bool = 432 as *mut bool;
 pub const nmi_blocked: *mut bool = 433 as *mut bool;
 
+// the 64-bit base of the TSS. In long mode the TSS descriptor is 16 bytes wide
+// and its base is a full 64-bit address (split across both words), while the
+// i32 segment_offsets[TR] mirrors only its low half
+pub const tss_base64: *mut u64 = 456 as *mut u64;
+
 pub fn get_reg32_offset(r: u32) -> u32 {
     dbg_assert!(r < 16);
     (unsafe { reg32.offset((r * 2) as isize) }) as u32

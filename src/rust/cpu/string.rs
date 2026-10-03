@@ -382,7 +382,7 @@ unsafe fn string_instruction(
                     },
                     Size::W => memory::write16_no_mmap_or_dirty_check(phys_dst, src_val as i32),
                     Size::D => memory::write32_no_mmap_or_dirty_check(phys_dst, src_val as i32),
-                    Size::Q => {},
+                    Size::Q => memory::write64_no_mmap_or_dirty_check(phys_dst, src_val),
                 },
             };
 

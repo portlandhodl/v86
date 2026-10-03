@@ -95,6 +95,13 @@ const expected = [
     0xFACEn,             // 60: r12 as SIB base via REX.B
     0xA5A5DEADn,         // 61: IA32_GS_BASE write/read-back
     0x1234000n,          // 62: IA32_KERNEL_GS_BASE untouched by the GS write
+    0xCCCCCCCCCCCCCCCCn, // 63: rep stosq: poison baseline (64-bit memset of 16 qwords)
+    0x1122334455667788n, // 64: rep stosq: last qword of the memset range
+    0xCCCCCCCCCCCCCCCCn, // 65: rep stosq: first qword past the range left untouched
+    1n,                  // 66: rep stosq: rdi advanced by exactly the written span
+    0x123456789ABCDEFn,  // 67: freshly-mapped 4K page reads phys 0x800000 content
+    0x0BADC0DEABAD1234n, // 68: cr3 reload flushes stale translation to phys 0x900000
+    0x123456789ABCDEFn,  // 69: invlpg picks up the rewritten PTE
 ];
 
 const emulator = new V86({

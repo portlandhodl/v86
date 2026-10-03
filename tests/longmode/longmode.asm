@@ -446,6 +446,50 @@ after_nx:
     xor edx, edx
     wrmsr
 
+    ; ======== test 63-66: rep stosq (qword memset on the rep fast path) ========
+    ; poison the target buffer first
+    lea rdi, [rel stos_buf]
+    mov rcx, 16
+    mov rax, 0xCCCCCCCCCCCCCCCC
+    rep stosq
+    mov rax, [rel stos_buf + 8]      ; poisoned value
+    mov [r15 + 63*8], rax            ; 0xCCCCCCCCCCCCCCCC
+    ; the real check: memset 8 qwords via rep stosq
+    lea rdi, [rel stos_buf]
+    mov rax, 0x1122334455667788
+    mov rcx, 8
+    rep stosq
+    mov rax, [rel stos_buf + 56]     ; last qword written
+    mov [r15 + 64*8], rax            ; 0x1122334455667788
+    mov rax, [rel stos_buf + 64]     ; first qword past the range (untouched)
+    mov [r15 + 65*8], rax            ; 0xCCCCCCCCCCCCCCCC
+    lea rax, [rel stos_buf + 64]     ; rdi must have advanced by 8 qwords
+    cmp rdi, rax
+    sete al
+    movzx rax, al
+    mov [r15 + 66*8], rax            ; 1
+
+    ; ======== test 67/68/69: TLB invalidation of a 64-bit mapping after PTE rewrite ========
+    ; Build a 4 KiB PT at phys 0x6000 and map linear 0x3FE00000 -> phys 0x800000
+    mov dword [abs 0x3000 + 511*8], 0x6007    ; PD[511] -> PT@0x6000 (P|RW|US)
+    mov dword [abs 0x3000 + 511*8 + 4], 0
+    mov dword [abs 0x6000], 0x00800007        ; PT[0] -> phys 0x800000, 4K
+    mov dword [abs 0x6004], 0
+    mov rax, [abs 0x3FE00000]                 ; warm TLB, content = marker at phys 0x800000
+    mov [r15 + 67*8], rax                     ; 0x123456789ABCDEF
+    mov rax, 0x0BADC0DEABAD1234
+    mov [abs 0x900000], rax                   ; plant a new marker at phys 0x900000
+    mov dword [abs 0x6000], 0x00900007        ; PT[0] now -> phys 0x900000
+    mov dword [abs 0x6004], 0
+    mov rax, cr3
+    mov cr3, rax                              ; flush TLB
+    mov rbx, [abs 0x3FE00000]
+    mov [r15 + 68*8], rbx                     ; 0x0BADC0DEABAD1234 if flushed
+    mov dword [abs 0x6000], 0x00800007
+    invlpg [abs 0x3FE00000]                   ; selective invalidate
+    mov rbx, [abs 0x3FE00000]
+    mov [r15 + 69*8], rbx                     ; 0x123456789ABCDEF again
+
     ; set DF before the syscall: r11 must carry it, rflags must lose it
     pushfq
     or  qword [rsp], 0x400
@@ -567,6 +611,7 @@ cx16_scratch: dq 0, 0
 
 align 16
 fx_area: times 64 dq 0             ; 512-byte fxsave area (16-byte aligned)
+stos_buf: times 32 dq 0            ; rep stosq playground
 
 idt_ptr:
     dw 0xFF                      ; 16 entries - 1
