@@ -103,6 +103,7 @@ const expected = [
     0x0BADC0DEABAD1234n, // 68: cr3 reload flushes stale translation to phys 0x900000
     0x123456789ABCDEFn,  // 69: invlpg picks up the rewritten PTE
     0x3020n,             // 70: cpuid 0x80000008 address sizes (48 linear, 32 physical)
+    0x71717171n,         // 71: write through a high alias of a page with jit entry points
 ];
 
 const emulator = new V86({

@@ -43,6 +43,13 @@ fill_pd:
     mov dword [0x3000 + 256*8], 0x00200087
     mov dword [0x3000 + 256*8 + 4], 0x80000000  ; bit 63 = NX
 
+    ; execute a stub in RAM at phys 0x7000 (retf) so that its page is known to
+    ; the jit (entry points recorded), see test 71
+    xor ax, ax
+    mov es, ax
+    mov byte [es:0x7000], 0xCB   ; retf
+    call 0x0000:0x7000
+
     ; --- GDT at 0x800: null, 64-bit code (0x08), data (0x10) ---
     xor eax, eax
     mov edi, 0x800
@@ -495,6 +502,17 @@ after_nx:
     cpuid
     and eax, 0xFFFF
     mov [r15 + 70*8], rax                     ; 0x3020 (48 linear, 32 physical)
+
+    ; ======== test 71: write to a page with jit entry points through an alias above 4 GiB ========
+    ; PML4[1] aliases the low 1 GiB at 0x8000000000. Dirtying the jit page walks
+    ; all tlb entries mapping it, including the high one, whose page number does
+    ; not fit the tables for the low 4 GiB (and must not be truncated into them).
+    mov dword [abs 0x1000 + 1*8], 0x2007
+    mov rax, 0x8000007000
+    mov rbx, [rax]                            ; warm the high tlb entry
+    mov dword [rax + 0x100], 0x71717171
+    mov ebx, [abs 0x7100]
+    mov [r15 + 71*8], rbx                     ; 0x71717171
 
     ; set DF before the syscall: r11 must carry it, rflags must lose it
     pushfq

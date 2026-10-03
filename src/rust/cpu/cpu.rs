@@ -3251,7 +3251,8 @@ pub fn tlb_set_has_code(physical_page: Page, has_code: bool) {
                         if has_code { entry | TLB_HAS_CODE as u64 } else { entry & !(TLB_HAS_CODE as u64) },
                     )
                 }
-                if !has_code {
+                // pages at or above 4 GiB never have jitted code (tlb_code covers the low 4 GiB)
+                if !has_code && page < 0x10_0000 {
                     clear_tlb_code(page as i32);
                 }
             }
