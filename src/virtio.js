@@ -155,6 +155,28 @@ var VirtIO_DeviceSpecificCapabilityOptions;
 var VirtIO_Options;
 
 /**
+ * Replace the low 32 bits of a 64-bit physical address (exact up to 2^53)
+ * @param {number} addr
+ * @param {number} low
+ * @return {number}
+ */
+function set_low_dword(addr, low)
+{
+    return Math.floor(addr / 0x100000000) * 0x100000000 + (low >>> 0);
+}
+
+/**
+ * Replace the high 32 bits of a 64-bit physical address (exact up to 2^53)
+ * @param {number} addr
+ * @param {number} high
+ * @return {number}
+ */
+function set_high_dword(addr, high)
+{
+    return (high >>> 0) * 0x100000000 + addr % 0x100000000;
+}
+
+/**
  * @constructor
  * @param {CPU} cpu
  * @param {VirtIO_Options} options
@@ -547,55 +569,55 @@ VirtIO.prototype.create_common_capability = function(options)
             {
                 bytes: 4,
                 name: "queue_desc (low dword)",
-                read: () => this.queue_selected ? this.queue_selected.desc_addr : 0,
+                read: () => this.queue_selected ? this.queue_selected.desc_addr % 0x100000000 : 0,
                 write: data =>
                 {
-                    if(this.queue_selected) this.queue_selected.desc_addr = data;
+                    if(this.queue_selected) this.queue_selected.desc_addr = set_low_dword(this.queue_selected.desc_addr, data);
                 },
             },
             {
                 bytes: 4,
                 name: "queue_desc (high dword)",
-                read: () => 0,
+                read: () => this.queue_selected ? Math.floor(this.queue_selected.desc_addr / 0x100000000) : 0,
                 write: data =>
                 {
-                    if(data !== 0) dbg_log("Warning: High dword of 64 bit queue_desc ignored:" + data, LOG_VIRTIO);
+                    if(this.queue_selected) this.queue_selected.desc_addr = set_high_dword(this.queue_selected.desc_addr, data);
                 },
             },
             {
                 bytes: 4,
                 name: "queue_avail (low dword)",
-                read: () => this.queue_selected ? this.queue_selected.avail_addr : 0,
+                read: () => this.queue_selected ? this.queue_selected.avail_addr % 0x100000000 : 0,
                 write: data =>
                 {
-                    if(this.queue_selected) this.queue_selected.avail_addr = data;
+                    if(this.queue_selected) this.queue_selected.avail_addr = set_low_dword(this.queue_selected.avail_addr, data);
                 },
             },
             {
                 bytes: 4,
                 name: "queue_avail (high dword)",
-                read: () => 0,
+                read: () => this.queue_selected ? Math.floor(this.queue_selected.avail_addr / 0x100000000) : 0,
                 write: data =>
                 {
-                    if(data !== 0) dbg_log("Warning: High dword of 64 bit queue_avail ignored:" + data, LOG_VIRTIO);
+                    if(this.queue_selected) this.queue_selected.avail_addr = set_high_dword(this.queue_selected.avail_addr, data);
                 },
             },
             {
                 bytes: 4,
                 name: "queue_used (low dword)",
-                read: () => this.queue_selected ? this.queue_selected.used_addr : 0,
+                read: () => this.queue_selected ? this.queue_selected.used_addr % 0x100000000 : 0,
                 write: data =>
                 {
-                    if(this.queue_selected) this.queue_selected.used_addr = data;
+                    if(this.queue_selected) this.queue_selected.used_addr = set_low_dword(this.queue_selected.used_addr, data);
                 },
             },
             {
                 bytes: 4,
                 name: "queue_used (high dword)",
-                read: () => 0,
+                read: () => this.queue_selected ? Math.floor(this.queue_selected.used_addr / 0x100000000) : 0,
                 write: data =>
                 {
-                    if(data !== 0) dbg_log("Warning: High dword of 64 bit queue_used ignored:" + data, LOG_VIRTIO);
+                    if(this.queue_selected) this.queue_selected.used_addr = set_high_dword(this.queue_selected.used_addr, data);
                 },
             },
         ],
@@ -1267,12 +1289,16 @@ VirtQueue.prototype.notify_me_after = function(num_skipped_requests)
  */
 VirtQueue.prototype.get_descriptor = function(table_address, i)
 {
+    const addr_low = this.cpu.read32s_phys64(table_address + i * VIRTQ_DESC_ENTRYSIZE) >>> 0;
+    const addr_high = this.cpu.read32s_phys64(table_address + i * VIRTQ_DESC_ENTRYSIZE + 4) >>> 0;
     return {
-        addr_low: this.cpu.read32s(table_address + i * VIRTQ_DESC_ENTRYSIZE) >>> 0,
-        addr_high: this.cpu.read32s(table_address + i * VIRTQ_DESC_ENTRYSIZE + 4) >>> 0,
-        len: this.cpu.read32s(table_address + i * VIRTQ_DESC_ENTRYSIZE + 8) >>> 0,
-        flags: this.cpu.read16(table_address + i * VIRTQ_DESC_ENTRYSIZE + 12),
-        next: this.cpu.read16(table_address + i * VIRTQ_DESC_ENTRYSIZE + 14),
+        addr_low,
+        addr_high,
+        // the full physical address (exact up to 2^53)
+        addr: addr_high * 0x100000000 + addr_low,
+        len: this.cpu.read32s_phys64(table_address + i * VIRTQ_DESC_ENTRYSIZE + 8) >>> 0,
+        flags: this.cpu.read16_phys64(table_address + i * VIRTQ_DESC_ENTRYSIZE + 12),
+        next: this.cpu.read16_phys64(table_address + i * VIRTQ_DESC_ENTRYSIZE + 14),
     };
 };
 
@@ -1280,55 +1306,55 @@ VirtQueue.prototype.get_descriptor = function(table_address, i)
 
 VirtQueue.prototype.avail_get_flags = function()
 {
-    return this.cpu.read16(this.avail_addr);
+    return this.cpu.read16_phys64(this.avail_addr);
 };
 
 VirtQueue.prototype.avail_get_idx = function()
 {
-    return this.cpu.read16(this.avail_addr + 2);
+    return this.cpu.read16_phys64(this.avail_addr + 2);
 };
 
 VirtQueue.prototype.avail_get_entry = function(i)
 {
-    return this.cpu.read16(this.avail_addr + 4 + VIRTQ_AVAIL_ENTRYSIZE * (i & this.mask));
+    return this.cpu.read16_phys64(this.avail_addr + 4 + VIRTQ_AVAIL_ENTRYSIZE * (i & this.mask));
 };
 
 VirtQueue.prototype.avail_get_used_event = function()
 {
-    return this.cpu.read16(this.avail_addr + 4 + VIRTQ_AVAIL_ENTRYSIZE * this.size);
+    return this.cpu.read16_phys64(this.avail_addr + 4 + VIRTQ_AVAIL_ENTRYSIZE * this.size);
 };
 
 // Used ring fields
 
 VirtQueue.prototype.used_get_flags = function()
 {
-    return this.cpu.read16(this.used_addr);
+    return this.cpu.read16_phys64(this.used_addr);
 };
 
 VirtQueue.prototype.used_set_flags = function(value)
 {
-    this.cpu.write16(this.used_addr, value);
+    this.cpu.write16_phys64(this.used_addr, value);
 };
 
 VirtQueue.prototype.used_get_idx = function()
 {
-    return this.cpu.read16(this.used_addr + 2);
+    return this.cpu.read16_phys64(this.used_addr + 2);
 };
 
 VirtQueue.prototype.used_set_idx = function(value)
 {
-    this.cpu.write16(this.used_addr + 2, value);
+    this.cpu.write16_phys64(this.used_addr + 2, value);
 };
 
 VirtQueue.prototype.used_set_entry = function(i, desc_idx, length_written)
 {
-    this.cpu.write32(this.used_addr + 4 + VIRTQ_USED_ENTRYSIZE * i, desc_idx);
-    this.cpu.write32(this.used_addr + 8 + VIRTQ_USED_ENTRYSIZE * i, length_written);
+    this.cpu.write32_phys64(this.used_addr + 4 + VIRTQ_USED_ENTRYSIZE * i, desc_idx);
+    this.cpu.write32_phys64(this.used_addr + 8 + VIRTQ_USED_ENTRYSIZE * i, length_written);
 };
 
 VirtQueue.prototype.used_set_avail_event = function(value)
 {
-    this.cpu.write16(this.used_addr + 4 + VIRTQ_USED_ENTRYSIZE * this.size, value);
+    this.cpu.write16_phys64(this.used_addr + 4 + VIRTQ_USED_ENTRYSIZE * this.size, value);
 };
 
 /**
@@ -1385,7 +1411,7 @@ function VirtQueueBufferChain(virtqueue, head_idx)
             }
 
             // Carry on using indirect table, starting at first entry.
-            table_address = desc.addr_low;
+            table_address = desc.addr;
             desc_idx = 0;
             chain_length = 0;
             chain_max = desc.len / VIRTQ_DESC_ENTRYSIZE;
@@ -1449,7 +1475,7 @@ VirtQueueBufferChain.prototype.get_next_blob = function(dest_buffer)
         }
 
         const buf = this.read_buffers[this.read_buffer_idx];
-        const read_address = buf.addr_low + this.read_buffer_offset;
+        const read_address = buf.addr + this.read_buffer_offset;
         let read_length = buf.len - this.read_buffer_offset;
 
         if(read_length > remaining)
@@ -1491,7 +1517,7 @@ VirtQueueBufferChain.prototype.set_next_blob = function(src_buffer)
         }
 
         const buf = this.write_buffers[this.write_buffer_idx];
-        const write_address = buf.addr_low + this.write_buffer_offset;
+        const write_address = buf.addr + this.write_buffer_offset;
         let write_length = buf.len - this.write_buffer_offset;
 
         if(write_length > remaining)

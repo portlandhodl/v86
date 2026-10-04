@@ -45,8 +45,9 @@ export function load_kernel(mem8, bzimage, initrd, cmdline)
 
     const KERNEL_HIGH_ADDRESS = 0x100000;
 
-    // Put the initrd at the 64 MB boundary. This means the minimum memory size
-    // is 64 MB plus the size of the initrd.
+    // Put the initrd at the 64 MB boundary, or above the kernel's decompression area if that
+    // extends further (see below). This means the minimum memory size is 64 MB plus the size of
+    // the initrd.
     // Note: If set too low, kernel may fail to load the initrd with "invalid magic at start of compressed archive"
     const INITRD_ADDRESS = 64 << 20;
 
@@ -156,7 +157,14 @@ export function load_kernel(mem8, bzimage, initrd, cmdline)
 
     if(initrd)
     {
-        ramdisk_address = INITRD_ADDRESS;
+        // The kernel decompresses itself to max(load address, pref_address) and needs init_size
+        // bytes there (boot protocol 2.10+); keep the initrd out of that range. Recent
+        // distribution kernels (Ubuntu's: init_size ~69 MB at 16 MB) reach beyond 64 MB.
+        const decompression_end = protocol >= 0x20A ?
+            Math.max(KERNEL_HIGH_ADDRESS, pref_address >>> 0) + (init_size >>> 0) : 0;
+        const MB = 1 << 20;
+        ramdisk_address = Math.max(INITRD_ADDRESS, Math.ceil(decompression_end / MB) * MB);
+        dbg_log("ramdisk_address=" + h(ramdisk_address));
         ramdisk_size = initrd.byteLength;
 
         dbg_assert(KERNEL_HIGH_ADDRESS + protected_mode_kernel.length < ramdisk_address);

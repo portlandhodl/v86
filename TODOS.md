@@ -369,6 +369,13 @@ Run `grep -n unimplemented src/rust/cpu/instructions_64.rs`. Notable groups:
 - Leaving long mode (clearing PG with LMA set): currently only partially
   handled (see `set_cr0`); real kernels may do this on kexec/panic paths.
 - Task switches, VM86: not needed for a Linux boot; leave.
+- **Compatibility mode (long mode with a 32-bit code segment) is largely
+  unimplemented**: 32-bit binaries under a 64-bit kernel don't work. The page
+  walk keys on EFER.LMA, but interrupt/exception delivery, iret, far
+  transfers and syscall paths key on `is_64` (CS.L), so an interrupt from
+  compat mode goes through the legacy path (`get_tss_ss_esp`), page-faults
+  and recurses until the JS stack overflows. Repro: run the 32-bit
+  `tests/api/memhog` on Alpine x86_64 (found 2026-10-04).
 
 ### 2.7 Validation for M2
 - Extend `tests/longmode/` with: page faults in long mode, syscall/sysret
@@ -620,42 +627,85 @@ returning 0. With the Rust memhog payload the 3 GiB test passes: fills and
 verifies 2703 MiB in ~8 s (1802 MiB in ~6 s at 2048 MiB), straight through
 frames above 2 GiB with no cliff.
 
-### Phase 2: mem64 build (started)
+### Phase 2: mem64 build (DONE)
 - Done: cargo feature `mem64`; placeholders in `guest.rs`;
   `tools/patch-mem64.mjs`; Makefile targets `build/v86-mem64.wasm` and
   `build/v86-mem64-debug.wasm` (build, patch and validate; all 12
   placeholders survive LTO as separate functions).
-- To do:
-  - `allocate_memory` under mem64: JS grows `guest_memory`, `mem8` = 0.
-  - `tlb_data` becomes u64 under mem64 (host offsets exceed 32 bits).
-  - JIT fast paths (codegen.rs `gen_safe_read`/`_write`/`_read_write`,
-    `gen_get_phys_eip_plus_mem`; jit64.rs `gen_tlb_entry`,
-    `gen_tlb_high_entry`, `gen_pointer_from_entry`, `gen_load`/`gen_store`,
-    `gen_page_switch_check64`): i64 entries, pointer
-    `((entry & !0xFFF) ^ addr) & 0xFFFF_FFFF_FFFF` (strip the sign bits),
-    loads and stores with memarg `0x40|align, 1, offset`. Plan: `*_guest`
-    builder methods that emit today's bytes in the default build.
-  - Slow paths (`safe_*_slow_jit*` in cpu.rs): under mem64 return a 0/1
-    status and store the i64 entry in a fixed global (avoids new function
-    types).
-  - The JIT scratch buffer must live in guest memory: host offset 0xA0000
-    (VGA hole, never accessed as RAM).
-  - wasm_builder: import `"e" "g"` (memory64, limits flag 0x04) after `"m"`
-    and fix the export index. JS: `jit_imports["g"]`, `mem8` over
-    `guest_memory`, pick the wasm in starter.js (with feature detection),
-    zstd worker.
-  - Expect tests and verify-wasmgen-dummy-output need memory64 and
-    multi-memory enabled in wabt if run against the mem64 build.
+- **Milestone 1 (interpreter on the mem64 build)**: done. JS grows
+  `guest_memory` in `create_memory` (`core::arch::wasm32::memory_grow` is
+  still hard-wired to memory 0), `mem8` stays null so `tlb_host_base` is the
+  identity, and JS `mem8`/`mem32s` views sit on `guest_memory.buffer` (the
+  `view()` helper re-reads `.buffer` per access, so no invalidation issues).
+  starter.js loads `v86-mem64[-debug].wasm` when `memory_size` exceeds
+  `MAX_LOW_MEMORY_SIZE` (no fallback: hosts without memory64+multi-memory
+  fail there); tests can point at it via `V86_WASM_PATH` (2g-mem, nasm and longmode
+  runners). Verified:
+  `MEMORY_MB=3072 DISABLE_JIT=1 V86_WASM_PATH=build/v86-mem64-debug.wasm
+  node tests/api/2g-mem.js` passes (fills/verifies 2703 MiB), and the
+  default build is untouched (longmode 90/90 + multiboot64 5/5, nasmtests
+  15599/15599 both variants, 2g-mem at 2048 usual).
+- **Milestone 2 (JIT on the mem64 build)**: done.
+  - `tlb_data` is `TlbEntry` (i32 default, i64 under mem64); reads go through
+    `tlb_pick_entry`/`tlb_entry_to_u64` (zero-extending).
+  - The jit slow paths (`safe_*_slow_jit*`, `get_phys_eip_slow_jit`) return a
+    0/1 status under mem64 and stash the i64 entry in
+    `cpu::jit_slow_path_entry` (no new function types). The generated code
+    reloads it only on the slow path, inside the fast-path block: the fast
+    path must keep its own TLB entry.
+  - JIT scratch buffer at host offset 0xA0000 (VGA hole) under mem64.
+  - wasm_builder imports `"e" "g"` (memory64) and emits memory-index-1
+    memargs via `load_guest_*`/`store_guest_*`, which emit today's bytes in
+    the default build. codegen.rs has `*_mem64` twins of the 32-bit fast
+    paths; jit64.rs handles both entry widths through `Val`.
+  - The zstd worker needs no change (same imports, only uses memory 0).
+  - Verified on `build/v86-mem64-debug.wasm` with the JIT on: 2g-mem at
+    512/2048/3072 MiB, longmode 90/90 (also with `JIT_THRESHOLD=1`),
+    nasmtests 15599/15599 both variants; default build unchanged
+    (expect-tests, nasmtests both variants, longmode 90/90 + multiboot64).
+  - Lesson: under mem64 an identity-mapped page's pointer
+    `(host_base ^ addr) & ~0xFFF` is 0, so a stale stashed entry is usually
+    "right" too. A bug that used the stash on the fast path passed nasm and
+    longmode and only broke in the kernel decompressor (after a page-crossing
+    read stashed the 0xA0000 scratch). Always run 2g-mem on mem64.
+- Open: expect tests and verify-wasmgen-dummy-output need memory64 and
+  multi-memory enabled in wabt to run against the mem64 build.
 
-### Phase 3: RAM above 4 GiB (not started)
-CMOS 0x5b-0x5d (64 KiB units) or fw_cfg `etc/e820` (the shipped SeaBIOS
-reads both); multiboot memory map; CPUID 0x80000008 = 36 physical bits;
-`PAE_ENTRY_RSVD = 0x000F_FFF0_0000_0000`; drop the `load_pdpte` assert; JS
-`phys_to_offset` for read_blob/write_blob, virtio (use `addr_high` and the
-queue registers' high halves) and virtio_balloon; a `high_memory_pages`
-global and `in_mapped_range` for the hole; UI max 16384. Tests: longmode asm
-with page tables and code above 4 GiB, 2g-mem.js at 6 and 15 GiB with a
-64-bit kernel, kvm-unit-tests at 6 GiB, Ubuntu with 8 GiB.
+### Phase 3: RAM above 4 GiB (DONE, some tests open)
+- Layout: low RAM is `[0, min(size, 3 GiB))` (`memory_size`), the rest at
+  `0x1_0000_0000` (`high_memory_size`, u64 global at offset 448, always 0 in
+  the default build). In guest memory, high RAM follows low RAM.
+  `memory::phys_to_host`/`host_to_phys` must be a **bijection on all
+  physical addresses**, not only RAM: tlb entries encode the host address of
+  mmio pages too and `phys_of_tlb_entry` decodes it. Under mem64 the hole
+  `[memory_size, 4 GiB)` therefore maps to `phys + 2^40`. (With a plain
+  "high RAM follows low RAM" mapping, the LFB at 0xE0000000 decoded as high
+  RAM at 0x1_2000_0000: fbcon's `memcpy_toio` overwrote user pages. memhog
+  caught it as 32 zero bytes per page.)
+- `in_mapped_range` covers the hole and everything above the high RAM.
+- Firmware: CMOS 0x5b-0x5d (64 KiB units; SeaBIOS adds the e820 entry),
+  `FW_CFG_RAM_SIZE` is the total, the multiboot memory map gets a high entry
+  (untested).
+- CPUID 0x80000008 reports 36 physical bits (`PHYSICAL_ADDRESS_BITS`) and
+  `PAE_ENTRY_RSVD` follows it, in both builds. The `load_pdpte` assert only
+  rejects bits 52+, so it stays.
+- JS: `cpu.phys_to_offset` for `read_blob`/`write_blob` (64-bit physical
+  addresses as numbers), `jit_dirty_cache` takes f64, `*_phys64` exports
+  (f64 addresses) for virtio: the queue registers' high dwords and
+  descriptor `addr_high` are used (`desc.addr`), as does virtio_balloon.
+  IDE PRDs and ISA DMA stay 32-bit (the guest bounces).
+- `create_memory` accepts up to 16 GiB (`MAX_MEMORY_SIZE`) in the mem64
+  build; starter.js now also resolves the mem64 wasm path like the default
+  one; `make all` builds `v86-mem64.wasm`; UI max 16384.
+- Tests: `tests/api/high-mem.js` (Alpine x86_64 ISO + 9p + parallel 64-bit
+  memhogs over 85% of RAM; `make tests/api/memhog64`) passes at 6 GiB
+  (debug and release) and 12 GiB; 16 GiB boots (16008 MiB in the guest).
+  9p at 6 GiB uses descriptors and rings above 4 GiB (checked).
+- Open: a longmode asm test with page tables and code above 4 GiB (needs a
+  >3 GiB config in tests/longmode), the multiboot high entry, kvm-unit-tests
+  at 6 GiB, Ubuntu with 8 GiB, a 32-bit PAE guest with RAM above 4 GiB
+  (needs a PAE kernel image; the 32-bit memhog can't run on the 64-bit
+  kernel, see §2.6 compatibility mode).
 
 ### Phase 4: saved state above 2 GiB (not started)
 pack/unpack_memory chunking, the state.js Int32 header, `cr3_high` and high

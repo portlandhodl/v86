@@ -1,5 +1,5 @@
 import { v86 } from "../main.js";
-import { LOG_CPU, WASM_TABLE_OFFSET, WASM_TABLE_SIZE } from "../const.js";
+import { LOG_CPU, WASM_TABLE_OFFSET, WASM_TABLE_SIZE, MAX_LOW_MEMORY_SIZE } from "../const.js";
 import { get_rand_int, load_file, read_sized_string_from_mem } from "../lib.js";
 import { dbg_assert, dbg_trace, dbg_log, set_log_level } from "../log.js";
 import * as print_stats from "./print_stats.js";
@@ -117,24 +117,33 @@ export function V86(options)
         {
             /* global __dirname */
 
-            return new Promise(resolve => {
+            return new Promise((resolve, reject) => {
                 let v86_bin = DEBUG ? "v86-debug.wasm" : "v86.wasm";
                 let v86_bin_fallback = "v86-fallback.wasm";
+
+                if(options.memory_size > MAX_LOW_MEMORY_SIZE)
+                {
+                    // guest RAM above 3 GiB needs the mem64 build (a separate
+                    // 64-bit wasm memory); requires memory64 + multi-memory
+                    // support in the host JS engine (no fallback)
+                    v86_bin = DEBUG ? "v86-mem64-debug.wasm" : "v86-mem64.wasm";
+                    v86_bin_fallback = null;
+                }
 
                 if(options.wasm_path)
                 {
                     v86_bin = options.wasm_path;
-                    v86_bin_fallback = v86_bin.replace("v86.wasm", "v86-fallback.wasm");
+                    v86_bin_fallback = v86_bin_fallback && v86_bin.replace("v86.wasm", "v86-fallback.wasm");
                 }
                 else if(typeof window === "undefined" && typeof __dirname === "string")
                 {
                     v86_bin = __dirname + "/" + v86_bin;
-                    v86_bin_fallback = __dirname + "/" + v86_bin_fallback;
+                    v86_bin_fallback = v86_bin_fallback && __dirname + "/" + v86_bin_fallback;
                 }
                 else
                 {
                     v86_bin = "build/" + v86_bin;
-                    v86_bin_fallback = "build/" + v86_bin_fallback;
+                    v86_bin_fallback = v86_bin_fallback && "build/" + v86_bin_fallback;
                 }
 
                 load_file(v86_bin, {
@@ -148,13 +157,22 @@ export function V86(options)
                         }
                         catch(err)
                         {
-                            load_file(v86_bin_fallback, {
-                                    done: async bytes => {
-                                        const { instance } = await WebAssembly.instantiate(bytes, env);
-                                        this.wasm_source = bytes;
-                                        resolve(instance.exports);
-                                    },
-                                });
+                            if(v86_bin_fallback)
+                            {
+                                load_file(v86_bin_fallback, {
+                                        done: async bytes => {
+                                            const { instance } = await WebAssembly.instantiate(bytes, env);
+                                            this.wasm_source = bytes;
+                                            resolve(instance.exports);
+                                        },
+                                    });
+                            }
+                            else
+                            {
+                                // mem64 build: needs memory64 + multi-memory
+                                // (Node 22+, not Safari), don't fall back
+                                reject(err);
+                            }
                         }
                     },
                     progress: e =>
@@ -228,6 +246,8 @@ V86.prototype.continue_init = async function(emulator, options)
     }
 
     settings.acpi = options.acpi;
+    // floppy drive types, see FloppyController (e.g. { fda: { drive_type: 0 } } hides fda)
+    settings.fdc = options.fdc;
     settings.disable_jit = options.disable_jit;
     settings.load_devices = true;
     settings.memory_size = options.memory_size || 64 * 1024 * 1024;

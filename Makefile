@@ -22,7 +22,7 @@ endif
 WASM_OPT ?= false
 
 default: build/v86-debug.wasm
-all: build/v86_all.js build/libv86.js build/libv86.mjs build/v86.wasm
+all: build/v86_all.js build/libv86.js build/libv86.mjs build/v86.wasm build/v86-mem64.wasm
 all-debug: build/libv86-debug.js build/libv86-debug.mjs build/v86-debug.wasm
 browser: build/v86_all.js
 
@@ -402,13 +402,16 @@ rust-test-intensive:
 # without cargo (needs `rustup target add i686-unknown-linux-musl`); the stock
 # musl target pulls a crt that conflicts with the custom _start, so link the
 # object ourselves with the bundled rust-lld.
-tests/api/memhog: tests/api/memhog.rs
-	rustc --edition 2021 -O --target i686-unknown-linux-musl -C panic=abort --emit=obj -o tests/api/.memhog.o $<
+# memhog: 32-bit payload of tests/api/2g-mem.js; memhog64: the same for 64-bit kernels
+tests/api/memhog: MEMHOG_TARGET=i686-unknown-linux-musl
+tests/api/memhog64: MEMHOG_TARGET=x86_64-unknown-linux-musl
+tests/api/memhog tests/api/memhog64: tests/api/memhog.rs
+	rustc --edition 2021 -O --target $(MEMHOG_TARGET) -C panic=abort --emit=obj -o $@.o $<
 	SYSROOT=$$(rustc --print sysroot) && \
-	    RUSTLIB=$$SYSROOT/lib/rustlib/i686-unknown-linux-musl/lib && \
+	    RUSTLIB=$$SYSROOT/lib/rustlib/$(MEMHOG_TARGET)/lib && \
 	    $$SYSROOT/lib/rustlib/$$(rustc -vV | sed -n 's/^host: //p')/bin/rust-lld -flavor gnu -static \
-	        -o $@ tests/api/.memhog.o $$RUSTLIB/libcore-*.rlib $$RUSTLIB/libcompiler_builtins-*.rlib
-	rm tests/api/.memhog.o
+	        -o $@ $@.o $$RUSTLIB/libcore-*.rlib $$RUSTLIB/libcompiler_builtins-*.rlib
+	rm $@.o
 
 api-tests: build/v86-debug.wasm
 	./tests/api/clean-shutdown.js

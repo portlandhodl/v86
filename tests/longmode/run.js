@@ -102,7 +102,7 @@ const expected = [
     0x123456789ABCDEFn,  // 67: freshly-mapped 4K page reads phys 0x800000 content
     0x0BADC0DEABAD1234n, // 68: cr3 reload flushes stale translation to phys 0x900000
     0x123456789ABCDEFn,  // 69: invlpg picks up the rewritten PTE
-    0x3020n,             // 70: cpuid 0x80000008 address sizes (48 linear, 32 physical)
+    0x3024n,             // 70: cpuid 0x80000008 address sizes (48 linear, 36 physical)
     0x71717171n,         // 71: write through a high alias of a page with jit entry points
     0x12345A78n,         // 72: mov eax, imm32 (zero-extends) + mov ah, imm8
     0x0008000000000123n, // 73: mov r64, imm64
@@ -130,6 +130,8 @@ const emulator = new V86({
     memory_size: 32 * 1024 * 1024,
     log_level: 0,
     disable_jit: +process.env.DISABLE_JIT,
+    // V86_WASM_PATH overrides the core build, e.g. build/v86-mem64-debug.wasm
+    wasm_path: process.env.V86_WASM_PATH,
 });
 
 // JIT64_CHAINING=0: don't chain modules (as on hosts without wasm tail calls)

@@ -112,6 +112,10 @@ pub const cr2_64: *mut u64 = 384 as *mut u64;
 // bits 32..63 of cr3 (the low half is cr[3]); see cpu::get_cr3
 pub const cr3_high: *mut u32 = 440 as *mut u32;
 
+// guest RAM above 4 GiB, in bytes: physical [4 GiB, 4 GiB + high_memory_size) (mem64 build only,
+// always 0 in the default build). memory_size is the size of the RAM below the PCI hole.
+pub const high_memory_size: *mut u64 = 448 as *mut u64;
+
 // gdtr/idtr base as full 64-bit linear addresses (the i32 slots at 568/576 keep
 // low-32 mirrors for JS)
 pub const idtr_offset64: *mut u64 = 392 as *mut u64;

@@ -108,7 +108,11 @@ export const
     MMAP_BLOCK_SIZE = 1 << MMAP_BLOCK_BITS,
     MMAP_MAX = 0x100000000,
     // RAM below 4 GiB ends here; the space above is reserved for memory-mapped devices
-    MAX_LOW_MEMORY_SIZE = 0xC0000000;
+    MAX_LOW_MEMORY_SIZE = 0xC0000000,
+    // mem64 build: RAM beyond MAX_LOW_MEMORY_SIZE is placed at 4 GiB
+    HIGH_MEMORY_START = 0x100000000,
+    // mem64 build: V8 limits 64-bit wasm memories (which hold only guest RAM there) to 16 GiB
+    MAX_MEMORY_SIZE = 0x400000000;
 
 export const CR0_PG = 1 << 31;
 export const CR4_PAE = 1 << 5;

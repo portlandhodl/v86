@@ -99,6 +99,7 @@ pub struct WasmBuilder {
 
     import_table_size: usize, // the current import table size (to avoid reading 2 byte leb)
     import_count: u16,        // same as above
+    memory_import_count: u16, // memories don't take up function indices (needed for the export)
 
     initial_static_size: usize, // size of module after initialization, rest is drained on reset
 
@@ -152,6 +153,7 @@ impl WasmBuilder {
 
             import_table_size: 2,
             import_count: 0,
+            memory_import_count: 0,
 
             initial_static_size: 0,
 
@@ -190,6 +192,7 @@ impl WasmBuilder {
         self.output.drain(self.initial_static_size..);
         self.set_import_table_size(2);
         self.set_import_count(0);
+        self.memory_import_count = 0;
         self.instruction_body.clear();
         self.free_locals_i32.clear();
         self.free_locals_i64.clear();
@@ -560,21 +563,12 @@ impl WasmBuilder {
     }
 
     pub fn write_memory_import(&mut self) {
-        self.output.push(1);
-        self.output.push('e' as u8);
-        self.output.push(1);
-        self.output.push('m' as u8);
+        self.write_memory_import_named(b'm', false);
 
-        self.output.push(op::EXT_MEMORY);
-
-        self.output.push(0); // memory flag, 0 for no maximum memory limit present
-        write_leb_u32(&mut self.output, 64); // initial memory length of 64 pages, takes 1 bytes in leb128
-
-        let new_import_count = self.import_count + 1;
-        self.set_import_count(new_import_count);
-
-        let new_table_size = self.import_table_size + 7;
-        self.set_import_table_size(new_table_size);
+        // mem64 build: the guest memory (64-bit) as a second import
+        if cfg!(feature = "mem64") {
+            self.write_memory_import_named(b'g', true);
+        }
 
         if self.import_function_table {
             // the table with the compiled modules (for return_call_indirect)
@@ -592,6 +586,27 @@ impl WasmBuilder {
             let new_table_size = self.import_table_size + (self.output.len() - start);
             self.set_import_table_size(new_table_size);
         }
+    }
+
+    fn write_memory_import_named(&mut self, name: u8, is_64: bool) {
+        self.output.push(1);
+        self.output.push('e' as u8);
+        self.output.push(1);
+        self.output.push(name);
+
+        self.output.push(op::EXT_MEMORY);
+
+        // limits flags: 0x04 = 64-bit memory (memory64), no maximum
+        self.output.push(if is_64 { 0x04 } else { 0x00 });
+        write_leb_u32(&mut self.output, if is_64 { 0 } else { 64 }); // minimum size in pages
+
+        self.memory_import_count += 1;
+
+        let new_import_count = self.import_count + 1;
+        self.set_import_count(new_import_count);
+
+        let new_table_size = self.import_table_size + 7;
+        self.set_import_table_size(new_table_size);
     }
 
     /// Generate the function of a module for 64-bit code (type FN_JIT64): the registers are
@@ -658,9 +673,10 @@ impl WasmBuilder {
         self.output.push(op::EXT_FUNCTION);
 
         // index of the exported function
-        // function space starts with imports. index of last import is import count - 1
-        // the last import(s) however are the memory (and table), so we subtract those
-        let non_function_imports = if self.import_function_table { 2 } else { 1 };
+        // function space starts with imports; the memories and the table don't take up
+        // function indices, so the exported function's index is the count of the other imports
+        let non_function_imports =
+            self.memory_import_count + if self.import_function_table { 1 } else { 0 };
         let next_op_idx = self.output.len();
         self.output.push(0);
         self.output.push(0); // add 2 bytes for writing 16 byte val
@@ -931,6 +947,49 @@ impl WasmBuilder {
         self.const_i64(n);
         self.add_i64();
         self.store_aligned_i64(0);
+    }
+
+    // Guest-memory accessors: identical bytes to the plain versions in the default build, but in
+    // the mem64 build they access the 64-bit guest memory (index 1) — the memarg gets the 0x40
+    // flag (memidx present) followed by the memory index 1. The address on the stack must be an
+    // i64 in the mem64 build (and an i32 in the default build).
+
+    fn mem_op(&mut self, opcode: u8, align: u8, byte_offset: u32) {
+        self.instruction_body.push(opcode);
+        if cfg!(feature = "mem64") {
+            self.instruction_body.push(0x40 | align);
+            self.instruction_body.push(1); // memory index of the guest memory
+        }
+        else {
+            self.instruction_body.push(align);
+        }
+        write_leb_u32(&mut self.instruction_body, byte_offset);
+    }
+
+    pub fn load_guest_u8(&mut self, byte_offset: u32) {
+        self.mem_op(op::OP_I32LOAD8U, op::MEM_NO_ALIGN, byte_offset)
+    }
+    pub fn load_guest_u16(&mut self, byte_offset: u32) {
+        self.mem_op(op::OP_I32LOAD16U, op::MEM_NO_ALIGN, byte_offset)
+    }
+    pub fn load_guest_i32(&mut self, byte_offset: u32) {
+        self.mem_op(op::OP_I32LOAD, op::MEM_NO_ALIGN, byte_offset)
+    }
+    pub fn load_guest_i64(&mut self, byte_offset: u32) {
+        self.mem_op(op::OP_I64LOAD, op::MEM_NO_ALIGN, byte_offset)
+    }
+    pub fn load_guest_u64(&mut self, byte_offset: u32) { self.load_guest_i64(byte_offset) }
+    pub fn store_guest_u8(&mut self, byte_offset: u32) {
+        self.mem_op(op::OP_I32STORE8, op::MEM_NO_ALIGN, byte_offset)
+    }
+    pub fn store_guest_u16(&mut self, byte_offset: u32) {
+        self.mem_op(op::OP_I32STORE16, op::MEM_NO_ALIGN, byte_offset)
+    }
+    pub fn store_guest_i32(&mut self, byte_offset: u32) {
+        self.mem_op(op::OP_I32STORE, op::MEM_NO_ALIGN, byte_offset)
+    }
+    pub fn store_guest_i64(&mut self, byte_offset: u32) {
+        self.mem_op(op::OP_I64STORE, op::MEM_NO_ALIGN, byte_offset)
     }
 
     pub fn add_i32(&mut self) { self.instruction_body.push(op::OP_I32ADD); }
