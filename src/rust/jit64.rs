@@ -699,6 +699,39 @@ pub unsafe fn jit64_test_cc(condition: i32) -> i32 {
     r as i32
 }
 
+/// After jumping to another page within a module: leave the module unless the instruction
+/// pointer still maps to next_block_phys. Checked inline if the page is in the tlb, by
+/// jit_page_switch_check64 otherwise.
+pub fn gen_page_switch_check64(ctx: &mut JitContext, next_block_phys: u32) {
+    let cont = ctx.builder.block_void();
+    codegen::gen_get_eip64(ctx.builder);
+    let address = ctx.builder.set_new_local_i64();
+    let entry = ctx.builder.new_local();
+    gen_tlb_entry(ctx, &address);
+    ctx.builder.tee_local(&entry);
+    let user = if ctx.cpu.cpl3() { TLB_NO_USER } else { 0 };
+    ctx.builder
+        .const_i32(TLB_VALID | TLB_NOT_EXECUTABLE | user | crate::cpu::cpu::TLB_IN_MAPPED_RANGE);
+    ctx.builder.and_i32();
+    ctx.builder.const_i32(TLB_VALID);
+    ctx.builder.eq_i32();
+    gen_pointer_from_entry(ctx, &address, &entry);
+    ctx.builder.const_i32(!0xFFF);
+    ctx.builder.and_i32();
+    ctx.builder
+        .const_i32((next_block_phys & !0xFFF) as i32 + unsafe { crate::cpu::memory::mem8 } as i32);
+    ctx.builder.eq_i32();
+    ctx.builder.and_i32();
+    ctx.builder.br_if(cont);
+    ctx.builder.free_local(entry);
+    ctx.builder.free_local_i64(address);
+
+    ctx.builder.const_i32(next_block_phys as i32);
+    ctx.builder.call_fn1_ret("jit_page_switch_check64");
+    ctx.builder.br_if(ctx.exit_label);
+    ctx.builder.block_end();
+}
+
 /// After jumping to another page within compiled code: returns 1 if the new page isn't mapped
 /// to the physical page the code was compiled for
 #[no_mangle]
@@ -846,8 +879,6 @@ fn eip_and_wasm_table_index(ctx: &JitContext) -> i32 {
 
 /// Generate the fast path tlb check for a 64-bit address: sets entry (the low 32 bits of the
 /// tlb entry) and leaves 1 on the stack if the fast path can be used.
-/// Addresses below 4 GiB use the flat tlb (tlb_data), higher ones the hashed tlb (tlb_high_*);
-/// both have the same entry format.
 fn gen_tlb_fast_path_check(
     ctx: &mut JitContext,
     bits: u32,
@@ -855,25 +886,7 @@ fn gen_tlb_fast_path_check(
     for_writing: bool,
     entry: &WasmLocal,
 ) {
-    ctx.builder.get_local_i64(address);
-    ctx.builder.const_i64(32);
-    ctx.builder.shr_u_i64();
-    ctx.builder.eqz_i64();
-    ctx.builder.if_i32();
-    {
-        // entry = tlb_data[address >> 12]
-        ctx.builder.get_local_i64(address);
-        ctx.builder.wrap_i64_to_i32();
-        ctx.builder.const_i32(12);
-        ctx.builder.shr_u_i32();
-        ctx.builder.const_i32(2);
-        ctx.builder.shl_i32();
-        ctx.builder
-            .load_aligned_i32(&raw const cpu::tlb_data as u32);
-    }
-    ctx.builder.else_();
-    gen_tlb_high_entry(ctx, address);
-    ctx.builder.block_end();
+    gen_tlb_entry(ctx, address);
     ctx.builder.tee_local(entry);
 
     // flags that must be clear (or set) for the fast path
@@ -899,6 +912,31 @@ fn gen_tlb_fast_path_check(
         ctx.builder.le_i32();
         ctx.builder.and_i32();
     }
+}
+
+/// Push the low 32 bits of the tlb entry for the page of a 64-bit address (0 if there is none).
+/// Addresses below 4 GiB use the flat tlb (tlb_data), higher ones the hashed tlb (tlb_high_*);
+/// both have the same entry format.
+fn gen_tlb_entry(ctx: &mut JitContext, address: &WasmLocalI64) {
+    ctx.builder.get_local_i64(address);
+    ctx.builder.const_i64(32);
+    ctx.builder.shr_u_i64();
+    ctx.builder.eqz_i64();
+    ctx.builder.if_i32();
+    {
+        // entry = tlb_data[address >> 12]
+        ctx.builder.get_local_i64(address);
+        ctx.builder.wrap_i64_to_i32();
+        ctx.builder.const_i32(12);
+        ctx.builder.shr_u_i32();
+        ctx.builder.const_i32(2);
+        ctx.builder.shl_i32();
+        ctx.builder
+            .load_aligned_i32(&raw const cpu::tlb_data as u32);
+    }
+    ctx.builder.else_();
+    gen_tlb_high_entry(ctx, address);
+    ctx.builder.block_end();
 }
 
 /// Push the low 32 bits of the hashed tlb's entry for the page of a 64-bit address, or 0 (not

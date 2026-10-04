@@ -816,6 +816,14 @@ t85_2:
     jnz t85_loop
     mov [r15 + 85*8], r13
     mov qword [r15 + 86*8], 0
+
+    ; ======== test 87: hot loop whose blocks are on two pages (jumps between them
+    ; check the page mapping), jitted ========
+    xor r13, r13
+    mov ecx, 100000
+    jmp t87_a
+t87_done:
+    mov [r15 + 87*8], r13
     jmp t81_done
 t81_func:
     add rax, 1
@@ -964,6 +972,20 @@ idt_ptr:
 gdt_ptr:
     dw 0x17                      ; 3 entries - 1
     dd 0x800
+
+[bits 64]
+    ; test 87: t87_a is at the end of one page, t87_b at the start of the next
+    times 0x1F00 - ($ - $$) db 0xCC
+t87_a:
+    add r13, rcx
+    imul r13, r13, 3
+    jmp t87_b
+    times 0x2000 - ($ - $$) db 0xCC
+t87_b:
+    xor r13, 0x55
+    dec ecx
+    jnz t87_a
+    jmp t87_done
 
 [bits 16]
     ; reset vector at file offset 0xFFF0

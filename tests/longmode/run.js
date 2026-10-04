@@ -119,6 +119,7 @@ const expected = [
     0x200n,              // 84: sysret loads IF from r11 (it was ignored at cpl 3)
     0x31f72987e3c9ac08n, // 85: imul cf/of (32/64-bit, operands in and out of 32-bit range)
     0n,                  // 86: scratch slot of test 85, cleared
+    0x941949e38be6f2b0n, // 87: hot loop with blocks on two pages
 ];
 
 const emulator = new V86({
