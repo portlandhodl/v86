@@ -195,7 +195,7 @@ function gen_instruction_body_after_fixed_g(encoding, size)
     const name = make_instruction_name(encoding, size);
     const postfix = [];
 
-    if(encoding.block_boundary && !(JUMP_OPCODES.has(encoding.opcode) && size !== 16))
+    if(encoding.block_boundary && !encoding.not_block_boundary_in_64 && !(JUMP_OPCODES.has(encoding.opcode) && size !== 16))
     {
         postfix.push("*instr_flags |= jit::JIT_INSTR_BLOCK_BOUNDARY_FLAG;");
     }
@@ -232,14 +232,18 @@ function gen_instruction_body_after_fixed_g(encoding, size)
     }
     assert(!encoding.custom_modrm_resolve, "unhandled custom_modrm_resolve: " + name);
 
-    const native = gen_native(encoding, size, imm);
+    const native = gen_native(encoding, size, imm, () => gen_generic(encoding, size, imm, name, []));
     if(native)
     {
         return native.concat(postfix);
     }
 
-    // generic: call the interpreter's handler through a wrapper
+    return gen_generic(encoding, size, imm, name, postfix);
+}
 
+// generic: call the interpreter's handler through a wrapper
+function gen_generic(encoding, size, imm, name, postfix)
+{
     if(encoding.e)
     {
         const reg_args = ["jit64::A::I32((modrm_byte & 7) as i32 | ctx.cpu.rex_b() as i32)"];
@@ -355,12 +359,17 @@ function native_group(op, encoding)
     if(op >= 0x0FB6 && op <= 0x0FBF || op === 0x63) return "movx";
     if(op === 0xFE || op === 0xFF && encoding.fixed_g < 2) return "incdec";
     if(op === 0xC3) return "ret";
+    if(op === 0xC1 || op === 0xD1 || op === 0xD3) return "shift";
+    if(op === 0x0FAF || op === 0x69 || op === 0x6B) return "imul";
+    if((op & 0xFFF0) === 0x0F90 || (op & 0xFFF0) === 0x0F40) return "cc";
+    if(op === 0xFF) return "jump";
+    if(op === 0x63 || op >= 0x0F18 && op <= 0x0F1F || op >= 0x90 && op <= 0x99 || op === 0x87 || op >= 0x0FC8 && op <= 0x0FCF || op === 0xF7) return "misc";
     return "stack";
 }
 
-function gen_native(encoding, size, imm)
+function gen_native(encoding, size, imm, generic)
 {
-    const code = gen_native_any(encoding, size, imm);
+    const code = gen_native_any(encoding, size, imm, generic);
     if(code && NATIVE64_SKIP.includes(native_group(encoding.opcode, encoding)))
     {
         return undefined;
@@ -368,7 +377,7 @@ function gen_native(encoding, size, imm)
     return code;
 }
 
-function gen_native_any(encoding, size, imm)
+function gen_native_any(encoding, size, imm, generic)
 {
     const op = encoding.opcode;
     const bits_of = wide => wide ? size : 8;
@@ -468,10 +477,6 @@ function gen_native_any(encoding, size, imm)
         const signed = (op & 8) !== 0;
         return modrm_form(src_bits, rm => [`jit64::gen_movx(ctx, ${signed}, ${src_bits}, ${size}, ${R}, ${rm});`]);
     }
-    if(op === 0x63 && size === 64)
-    {
-        return modrm_form(32, rm => [`jit64::gen_movx(ctx, true, 32, 64, ${R}, ${rm});`]);
-    }
     if((op === 0xFF && size !== 16 || op === 0xFE) && (encoding.fixed_g === 0 || encoding.fixed_g === 1))
     {
         // note: 0xFF is a default-64 group, inc/dec are 64-bit only with REX.W
@@ -497,6 +502,98 @@ function gen_native_any(encoding, size, imm)
     if(size === 64 && op === 0xC3)
     {
         return ["jit64::gen_ret64(ctx, 0);"];
+    }
+    if((op === 0xC1 || op === 0xD1 || op === 0xD3) && size !== 16 && [0, 1, 4, 5, 7].includes(encoding.fixed_g))
+    {
+        if(op === 0xD3)
+        {
+            return modrm_form(size, rm => [`jit64::gen_shift(ctx, ${encoding.fixed_g}, ${size}, ${rm}, jit64::ShiftCount::Cl);`]);
+        }
+        // shifts by a constant (the count byte follows the modrm operand)
+        return modrm_form(size, (rm, i) => [].concat(
+            op === 0xC1 ?
+                [`let count = match ${i} { jit64::Opnd::Imm(i) => i as u32, _ => 0 } & ${size - 1};`] :
+                ["let count = 1;"],
+            {
+                type: "if-else",
+                if_blocks: [{ condition: "count != 0", body: [`jit64::gen_shift(ctx, ${encoding.fixed_g}, ${size}, ${rm}, jit64::ShiftCount::Imm(count));`] }],
+                // note: the interpreter writes the (unchanged) register, which zero-extends it
+                else_block: { body: [`jit64::gen_shift_by_zero(ctx, ${size}, ${rm});`] },
+            }
+        ));
+    }
+    if(op === 0x0FAF && size !== 16)
+    {
+        return modrm_form(size, rm => [`jit64::gen_imul(ctx, ${size}, r, ${rm}, None);`]);
+    }
+    if((op === 0x69 || op === 0x6B) && size !== 16)
+    {
+        return modrm_form(size, (rm, i) => [`let i = match ${i} { jit64::Opnd::Imm(i) => i, _ => 0 };`, `jit64::gen_imul(ctx, ${size}, r, ${rm}, Some(i));`]);
+    }
+    if((op & 0xFFF0) === 0x0F90)
+    {
+        return modrm_form(8, rm => [`jit64::gen_setcc(ctx, ${op & 0xF}, ${rm});`]);
+    }
+    if((op & 0xFFF0) === 0x0F40 && size !== 16)
+    {
+        return modrm_form(size, rm => [`jit64::gen_cmovcc(ctx, ${op & 0xF}, ${size}, r, ${rm});`]);
+    }
+    const if_else = (condition, body, else_body) => [{
+        type: "if-else",
+        if_blocks: [{ condition, body }],
+        else_block: { body: else_body },
+    }];
+    const NO_66 = "ctx.cpu.prefixes & prefix::PREFIX_66 == 0";
+    if(op === 0x63)
+    {
+        // movsxd (REX.W) or mov r32, r/m32 (0x66: interpreter)
+        return if_else(NO_66,
+            modrm_form(32, rm => if_else("ctx.cpu.rex_w()",
+                [`jit64::gen_movx(ctx, true, 32, 64, r, ${rm});`],
+                [`jit64::gen_alu(ctx, jit64::OP_MOV, 32, jit64::Opnd::Reg(r), ${rm});`])),
+            generic());
+    }
+    if([0x0F18, 0x0F19, 0x0F1C, 0x0F1D, 0x0F1E, 0x0F1F].includes(op))
+    {
+        // prefetch and hint nops (the memory operand isn't accessed)
+        return ["jit64::skip_modrm(ctx.cpu, modrm_byte);"];
+    }
+    if(op === 0x90)
+    {
+        // nop, or xchg r8, rax with REX.B
+        return if_else("ctx.cpu.rex_b() == 0", [], generic());
+    }
+    if(op >= 0x91 && op <= 0x97 && size !== 16)
+    {
+        return [`let r = ${op & 7} | ctx.cpu.rex_b();`, `jit64::gen_xchg(ctx, ${size}, 0, jit64::Opnd::Reg(r));`];
+    }
+    if(op === 0x87 && size !== 16)
+    {
+        return modrm_form(size, rm => [`jit64::gen_xchg(ctx, ${size}, r, ${rm});`]);
+    }
+    if(op === 0x98)
+    {
+        return [`jit64::gen_cbw(ctx, ${size});`];
+    }
+    if(op === 0x99)
+    {
+        return [`jit64::gen_cwd(ctx, ${size});`];
+    }
+    if(op >= 0x0FC8 && op <= 0x0FCF)
+    {
+        return if_else(NO_66, [
+            "let bits = if ctx.cpu.rex_w() { 64 } else { 32 };",
+            `let r = ${op & 7} | ctx.cpu.rex_b();`,
+            "jit64::gen_bswap(ctx, bits, r);",
+        ], generic());
+    }
+    if((op === 0xF7) && (encoding.fixed_g === 2 || encoding.fixed_g === 3) && size !== 16)
+    {
+        return modrm_form(size, rm => [`jit64::gen_not_neg(ctx, ${encoding.fixed_g === 3}, ${size}, ${rm});`]);
+    }
+    if(op === 0xFF && (encoding.fixed_g === 2 || encoding.fixed_g === 4) && size === 64)
+    {
+        return modrm_form(64, rm => [`jit64::gen_indirect_jump64(ctx, ${encoding.fixed_g === 2}, ${rm});`]);
     }
     return undefined;
 }

@@ -30,6 +30,7 @@
   (type $t28 (func (param i32 i32 i64 i32 i32) (result i32)))
   (type $t29 (func (param i64 i32 i32) (result i32)))
   (type $t30 (func (param i64 i64 i32) (result i32)))
+  (type $t31 (func (param i64 i64) (result i64)))
   (import "e" "task_switch_test_mmx_jit" (func $e.task_switch_test_mmx_jit (type $t1)))
   (import "e" "instr_660F54" (func $e.instr_660F54 (type $t2)))
   (import "e" "instr_F4" (func $e.instr_F4 (type $t0)))

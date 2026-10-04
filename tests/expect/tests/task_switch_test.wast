@@ -30,6 +30,7 @@
   (type $t28 (func (param i32 i32 i64 i32 i32) (result i32)))
   (type $t29 (func (param i64 i32 i32) (result i32)))
   (type $t30 (func (param i64 i64 i32) (result i32)))
+  (type $t31 (func (param i64 i64) (result i64)))
   (import "e" "task_switch_test_jit" (func $e.task_switch_test_jit (type $t1)))
   (import "e" "fpu_get_sti_jit" (func $e.fpu_get_sti_jit (type $t2)))
   (import "e" "fpu_fadd" (func $e.fpu_fadd (type $t18)))

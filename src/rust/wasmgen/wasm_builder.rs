@@ -68,6 +68,7 @@ enum FunctionType {
     FN5_I32_I32_I64_I32_I32_RET,
     FN3_I64_I32_I32_RET,
     FN3_I64_I64_I32_RET,
+    FN2_I64_I64_RET_I64,
     // When adding at the end, update LAST below
 }
 
@@ -77,7 +78,7 @@ impl FunctionType {
         unsafe { transmute(x) }
     }
     pub fn to_u8(self: FunctionType) -> u8 { self as u8 }
-    pub const LAST: FunctionType = FunctionType::FN3_I64_I64_I32_RET;
+    pub const LAST: FunctionType = FunctionType::FN2_I64_I64_RET_I64;
 }
 
 pub const WASM_MODULE_ARGUMENT_COUNT: u8 = 1;
@@ -118,6 +119,8 @@ impl WasmLocal {
 pub struct WasmLocalI64(u8);
 impl WasmLocalI64 {
     pub fn idx(&self) -> u8 { self.0 }
+    /// Unsafe: see WasmLocal::unsafe_clone
+    pub fn unsafe_clone(&self) -> WasmLocalI64 { WasmLocalI64(self.0) }
 }
 
 #[derive(Copy, Clone, Eq, Hash, PartialEq)]
@@ -286,6 +289,7 @@ impl WasmBuilder {
                 },
                 FunctionType::FN3_I64_I32_I32_RET => Some((&[I64, I32, I32], &[I32])),
                 FunctionType::FN3_I64_I64_I32_RET => Some((&[I64, I64, I32], &[I32])),
+                FunctionType::FN2_I64_I64_RET_I64 => Some((&[I64, I64], &[I64])),
                 _ => None,
             };
             if let Some((params, results)) = generic {
@@ -643,6 +647,7 @@ impl WasmBuilder {
     #[must_use = "local allocated but not used"]
     /// A new local that is written later (wasm locals start out as zero)
     pub fn new_local(&mut self) -> WasmLocal { self.alloc_local() }
+    pub fn new_local_i64(&mut self) -> WasmLocalI64 { self.alloc_local_i64() }
     pub fn set_new_local(&mut self) -> WasmLocal {
         let local = self.alloc_local();
         self.instruction_body.push(op::OP_SETLOCAL);
@@ -703,6 +708,14 @@ impl WasmBuilder {
     }
     pub fn get_local_i64(&mut self, local: &WasmLocalI64) {
         self.instruction_body.push(op::OP_GETLOCAL);
+        self.instruction_body.push(local.idx());
+    }
+    pub fn set_local_i64(&mut self, local: &WasmLocalI64) {
+        self.instruction_body.push(op::OP_SETLOCAL);
+        self.instruction_body.push(local.idx());
+    }
+    pub fn tee_local_i64(&mut self, local: &WasmLocalI64) {
+        self.instruction_body.push(op::OP_TEELOCAL);
         self.instruction_body.push(local.idx());
     }
 
@@ -864,6 +877,9 @@ impl WasmBuilder {
     pub fn rem_i64(&mut self) { self.instruction_body.push(op::OP_I64REMU); }
 
     pub fn rotl_i32(&mut self) { self.instruction_body.push(op::OP_I32ROTL); }
+    pub fn rotr_i32(&mut self) { self.instruction_body.push(op::OP_I32ROTR); }
+    pub fn rotl_i64(&mut self) { self.instruction_body.push(op::OP_I64ROTL); }
+    pub fn rotr_i64(&mut self) { self.instruction_body.push(op::OP_I64ROTR); }
 
     pub fn shl_i32(&mut self) { self.instruction_body.push(op::OP_I32SHL); }
     pub fn shl_i64(&mut self) { self.instruction_body.push(op::OP_I64SHL); }
@@ -1041,6 +1057,9 @@ impl WasmBuilder {
     }
     pub fn call_fn5_i32_i32_i64_i32_i32_ret(&mut self, name: &str) {
         self.call_fn(name, FunctionType::FN5_I32_I32_I64_I32_I32_RET)
+    }
+    pub fn call_fn2_i64_i64_ret_i64(&mut self, name: &str) {
+        self.call_fn(name, FunctionType::FN2_I64_I64_RET_I64)
     }
     pub fn call_fn3_i64_i64_i32_ret(&mut self, name: &str) {
         self.call_fn(name, FunctionType::FN3_I64_I64_I32_RET)

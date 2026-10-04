@@ -2738,7 +2738,12 @@ pub fn gen_condition_fn(ctx: &mut JitContext, condition: u8) {
 
 pub fn gen_move_registers_from_locals_to_memory(ctx: &mut JitContext) {
     if ctx.cpu.is_64() {
-        // the 64-bit jit keeps registers in memory
+        for i in 0..16 {
+            ctx.builder
+                .const_i32(global_pointers::get_reg64_offset(i as u32) as i32);
+            ctx.builder.get_local_i64(&ctx.register_locals64[i]);
+            ctx.builder.store_aligned_i64(0);
+        }
         return;
     }
     if cfg!(feature = "profiler") {
@@ -2755,7 +2760,11 @@ pub fn gen_move_registers_from_locals_to_memory(ctx: &mut JitContext) {
 }
 pub fn gen_move_registers_from_memory_to_locals(ctx: &mut JitContext) {
     if ctx.cpu.is_64() {
-        // the 64-bit jit keeps registers in memory
+        for i in 0..16 {
+            ctx.builder
+                .load_fixed_i64(global_pointers::get_reg64_offset(i as u32));
+            ctx.builder.set_local_i64(&ctx.register_locals64[i]);
+        }
         return;
     }
     if cfg!(feature = "profiler") {

@@ -157,7 +157,11 @@ pub unsafe fn cmovcc16(condition: bool, value: i32, r: i32) {
 pub unsafe fn cmovcc32(condition: bool, value: i32, r: i32) {
     if condition {
         write_reg32(r, value);
-    };
+    }
+    else if *is_64 {
+        // the destination is written (zero-extended) even if the condition is false
+        write_reg32(r, read_reg32(r));
+    }
 }
 
 pub unsafe fn get_stack_pointer(offset: i32) -> u64 {

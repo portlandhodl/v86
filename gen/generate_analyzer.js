@@ -233,7 +233,20 @@ function gen_instruction_body_after_fixed_g(encoding, size)
         // jump_offset_imm: Is a block boundary, but gets a different type (Jump) below
         !encoding.jump_offset_imm)
     {
-        instruction_postfix.push("analysis.ty = analysis::AnalysisType::BlockBoundary;");
+        if(encoding.not_block_boundary_in_64)
+        {
+            instruction_postfix.push({
+                type: "if-else",
+                if_blocks: [{
+                    condition: "!cpu.is_64()",
+                    body: ["analysis.ty = analysis::AnalysisType::BlockBoundary;"],
+                }],
+            });
+        }
+        else
+        {
+            instruction_postfix.push("analysis.ty = analysis::AnalysisType::BlockBoundary;");
+        }
     }
     else if(!encoding.custom && encoding.e)
     {

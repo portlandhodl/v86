@@ -410,8 +410,8 @@ Run `grep -n unimplemented src/rust/cpu/instructions_64.rs`. Notable groups:
 
 Interpreter-first was deliberate; M4 makes long mode fast. Measure with
 `tests/benchmark/bench64.js` (same workload in 32-bit and higher-half 64-bit
-mode): 32-bit with the JIT ~1100 MIPS; 64-bit interpreted ~80, phase 1 ~200,
-with the native instructions below ~390.
+mode): 32-bit with the JIT ~1100-1200 MIPS; 64-bit interpreted ~80, phase 1
+~200, with the native instructions and register locals below ~500.
 
 Design (see the header comment of `src/rust/jit64.rs`): the block finder,
 control-flow structuring and module generation in jit.rs are shared; 64-bit
@@ -427,9 +427,13 @@ Done:
   call rel32, lea and sti are native; pop r/m and 0x67-prefixed instructions
   are interpreted one at a time (`jit64_interpret_one`). Block finder uses
   u64 virtual addresses; code for pages above 4 GiB lives in `tlb_code_high`.
-- Phase 2 (first part): registers stay in memory; native code for add/or/
-  and/sub/xor/cmp/test, mov (r/m, imm, imm64), movzx/movsx/movsxd, inc/dec,
-  push/pop r64, push imm/r/m, ret. Memory accesses inline the lookup of the
+- Phase 2: registers live in 16 i64 wasm locals (spilled around interpreter
+  calls and at exits). Native code for add/or/and/sub/xor/cmp/test, mov (r/m,
+  imm, imm64), movzx/movsx/movsxd (and 0x63 as mov r32 without REX.W),
+  inc/dec, push/pop r64, push imm/r/m, ret, call/jmp r/m64, shl/shr/sar/rol/
+  ror by imm and cl, imul, setcc, cmovcc, not/neg, cbw/cwd families, bswap,
+  xchg, hint nops (0F 18-1F, 90). Conditions and the cf saved by inc/dec are
+  inline after known flag-setting ops. Memory accesses inline the lookup of the
   high TLB (`tlb_high_*`, hashed) and share the 32-bit JIT's slow paths
   (`*_slow_jit64`, exceptions via exit_jit). `NATIVE64_SKIP=group,...` when
   generating falls back to the interpreter for groups of native instructions
@@ -437,13 +441,14 @@ Done:
 - `set_jit_config(4, 1)` disables the 64-bit JIT, `(5, n)` sets the hotness
   threshold (`JIT_THRESHOLD=1 tests/longmode/run.js` in `make longmode-tests`).
 
-Next:
-- Conditions: `jit64_test_cc` is a call per jcc; generate the condition
-  inline, fused with the preceding cmp/test/sub (the 32-bit JIT's
-  `gen_condition_fn` does this for 32-bit lazy flags).
-- More native instructions: shifts (C1/D1/D3), imul (0F AF, 69, 6B), setcc,
-  cmovcc, xchg, call r/m / call rel (push inline), leave, string ops.
-- Registers in wasm locals (16 x i64), spilled around wrapper calls.
+Next (measure with `set_jit_config(6, 1)` + `jit64_print_profile()` on a debug
+build, which counts the remaining interpreter calls per instruction):
+- Spills around interpreter calls copy all 16 registers both ways; track
+  dirty/stale registers within a block to spill only what's needed.
+- Remaining hot interpreter calls in the Alpine boot: adc/sbb, bt, cmpxchg/
+  xadd, rep movs/stos, pushf, cli, 8/16-bit shifts, SSE moves.
+- Inline flags for 8/16-bit operations (conditions currently fall back to a
+  call for them).
 - Low (<4 GiB) addresses always take the slow path in 64-bit code; add the
   flat-TLB check if non-PIE 64-bit user code matters.
 - The wrappers inline each handler: release wasm grew 2.3 -> 3.0 MB. Consider

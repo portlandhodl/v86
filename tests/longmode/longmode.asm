@@ -585,6 +585,116 @@ t79_6:
     jnz t79_loop
     mov [r15 + 79*8], r13
 
+    ; ======== test 80: imul/shl/shr/sar/setcc/cmovcc, jitted (hot loop) ========
+    xor r13, r13
+    mov ecx, 100000
+    mov rdx, 0x9E3779B97F4A7C15
+t80_loop:
+    mov rax, rcx
+    imul rax, rdx
+    mov rbx, rax
+    shr rbx, 7
+    xor r13, rbx
+    mov rbx, rax
+    shl rbx, 13
+    add r13, rbx
+    mov rbx, rax
+    sar rbx, 9
+    xor r13, rbx
+    imul ebx, ecx, -7
+    add r13, rbx
+    mov r8, rax
+    shl r8, 1
+    jnc t80_1
+    add r13, 3
+t80_1:
+    mov r9, 5
+    mov r10, 9
+    mov r11, 0
+    cmp ecx, 50000
+    cmovl r9, r10
+    setge r11b
+    add r13, r9
+    shl r11, 4
+    add r13, r11
+    mov r12, -1
+    cmp ecx, 0
+    cmovl r12d, ecx
+    add r13, r12
+    dec ecx
+    jnz t80_loop
+    mov [r15 + 80*8], r13
+
+    ; ======== test 81: rotates, shifts by cl, inc/dec cf, not/neg, movsxd, cdqe/cqo, bswap,
+    ; xchg, indirect call/jmp, nops, jitted (hot loop) ========
+    xor r13, r13
+    mov ecx, 100000
+    mov r14, 0x9E3779B97F4A7C15
+t81_loop:
+    mov rax, rcx
+    imul rax, r14
+    mov rsi, rax
+    mov rbx, rax
+    rol rbx, 13
+    xor r13, rbx
+    mov ebx, eax
+    ror ebx, 7
+    add r13, rbx
+    mov rbx, rax
+    shl rbx, cl
+    xor r13, rbx
+    mov ebx, eax
+    shr ebx, cl
+    add r13, rbx
+    xor r8d, r8d
+    cmp rcx, 50000
+    inc r8
+    adc r13, r8
+    mov rbx, rax
+    not rbx
+    xor r13, rbx
+    mov rbx, rax
+    neg rbx
+    add r13, rbx
+    movsxd r9, eax
+    add r13, r9
+    db 0x44, 0x63, 0xD0                       ; 63 without REX.W: mov r10d, eax
+    add r13, r10
+    cdqe
+    xor r13, rax
+    mov rax, rsi
+    cqo
+    add r13, rdx
+    mov rbx, rsi
+    bswap rbx
+    xor r13, rbx
+    mov ebx, esi
+    bswap ebx
+    add r13, rbx
+    mov r11, rsi
+    mov r12, rcx
+    xchg r11, r12
+    add r13, r11
+    nop
+    db 0x0F, 0x1F, 0x44, 0x00, 0x00           ; nop dword [rax + rax]
+    db 0xF3, 0x0F, 0x1E, 0xFA                 ; endbr64
+    lea rbx, [rel t81_after_jmp]
+    jmp rbx
+    hlt
+t81_after_jmp:
+    mov rax, rsi
+    lea rbx, [rel t81_func]
+    call rbx
+    add r13, rax
+    dec ecx
+    jnz t81_loop
+    mov [r15 + 81*8], r13
+    jmp t81_done
+t81_func:
+    add rax, 1
+    ret
+t81_done:
+
     ; set DF before the syscall: r11 must carry it, rflags must lose it
     pushfq
     or  qword [rsp], 0x400

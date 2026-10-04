@@ -53,6 +53,7 @@ const TESTS_ASSUME_INTEL = false;
 // imm8, imm8s, imm16, imm1632, immaddr, extra_imm8, extra_imm16: one or two immediate bytes follows the instruction
 // custom: will callback jit to generate custom code
 // block_boundary: may change eip in a way not handled by the jit
+// not_block_boundary_in_64: block_boundary only outside of 64-bit mode
 // no_next_instruction: jit will stop analysing after instruction (e.g., unconditional jump, ret)
 const encodings = [
     { opcode: 0x06, os: 1, custom: 1 },
@@ -75,7 +76,7 @@ const encodings = [
     { opcode: 0x60, os: 1, block_boundary: 1 }, // pusha
     { opcode: 0x61, os: 1, block_boundary: 1 }, // popa
     { opcode: 0x62, e: 1, skip: 1 },
-    { opcode: 0x63, e: 1, block_boundary: 1 }, // arpl
+    { opcode: 0x63, e: 1, block_boundary: 1, not_block_boundary_in_64: 1 }, // arpl (movsxd in 64-bit mode)
     { opcode: 0x64, prefix: 1 },
     { opcode: 0x65, prefix: 1 },
     { opcode: 0x66, prefix: 1 },

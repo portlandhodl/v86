@@ -20,7 +20,7 @@ use crate::page::Page;
 use crate::profiler;
 use crate::profiler::stat;
 use crate::state_flags::CachedStateFlags;
-use crate::wasmgen::wasm_builder::{Label, WasmBuilder, WasmLocal};
+use crate::wasmgen::wasm_builder::{Label, WasmBuilder, WasmLocal, WasmLocalI64};
 
 #[derive(Copy, Clone, Eq, Hash, PartialEq)]
 #[repr(transparent)]
@@ -358,6 +358,8 @@ pub struct JitContext<'a> {
     pub wasm_table_index: WasmTableIndex,
     /// 64-bit jit: the operation that last set the lazy flags in the current block, if known
     pub flags64: crate::jit64::Flags64,
+    /// 64-bit jit: the 16 general purpose registers
+    pub register_locals64: Vec<WasmLocalI64>,
 }
 impl<'a> JitContext<'a> {
     pub fn reg(&self, i: u32) -> WasmLocal {
@@ -1269,7 +1271,18 @@ fn jit_generate_module(
 ) -> Vec<(u32, u16)> {
     builder.reset();
 
-    // the 64-bit jit keeps registers in memory
+    // the 64-bit jit keeps registers in i64 locals (register_locals64)
+    let register_locals64: Vec<WasmLocalI64> = if state_flags.is_64() {
+        (0..16)
+            .map(|i| {
+                builder.load_fixed_i64(global_pointers::get_reg64_offset(i));
+                builder.set_new_local_i64()
+            })
+            .collect()
+    }
+    else {
+        Vec::new()
+    };
     let mut register_locals = if state_flags.is_64() {
         Vec::new()
     }
@@ -1316,6 +1329,7 @@ fn jit_generate_module(
         instruction_counter,
         wasm_table_index,
         flags64: crate::jit64::Flags64::Unknown,
+        register_locals64,
     };
 
     let entry_blocks = {
@@ -2094,6 +2108,9 @@ fn jit_generate_module(
     for local in ctx.register_locals.drain(..) {
         ctx.builder.free_local(local);
     }
+    for local in ctx.register_locals64.drain(..) {
+        ctx.builder.free_local_i64(local);
+    }
     ctx.builder
         .free_local(ctx.instruction_counter.unsafe_clone());
 
@@ -2593,6 +2610,7 @@ pub unsafe fn set_jit_config(index: u32, value: u32) {
         3 => MAX_EXTRA_BASIC_BLOCKS = value,
         4 => JIT64_DISABLED = value != 0,
         5 => JIT_HOTNESS_THRESHOLD = value,
+        6 => crate::jit64::PROFILE_GENERIC = value != 0,
         _ => dbg_assert!(false),
     }
 }
