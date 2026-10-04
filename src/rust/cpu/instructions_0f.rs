@@ -1691,6 +1691,10 @@ pub unsafe fn instr_0F32() {
         IA32_MCU_OPT_CTRL => {},   // linux 5.19
         MSR_AMD64_LS_CFG => {},    // linux 5.19
         MSR_AMD64_DE_CFG => {},    // linux 6.1
+        IA32_ARCH_CAPABILITIES => {
+            low = ARCH_CAPABILITIES as i32;
+            high = (ARCH_CAPABILITIES >> 32) as i32;
+        },
         _ => {
             dbg_log!("Unknown msr: {:x}", index);
             dbg_assert!(false);
@@ -3743,7 +3747,7 @@ pub unsafe fn instr_0FA2() {
                 eax = 0; // maximum supported sub-level
                 ebx = 1 << 7 | 1 << 9; // smep, enhanced REP MOVSB/STOSB
                 ecx = 0;
-                edx = 0;
+                edx = 1 << 29; // IA32_ARCH_CAPABILITIES
             }
         },
 
