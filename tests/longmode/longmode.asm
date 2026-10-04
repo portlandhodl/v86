@@ -764,6 +764,58 @@ t83_loop:
     dec ecx
     jnz t83_loop
     mov [r15 + 83*8], r13
+
+    ; ======== test 85: imul cf/of for 32/64-bit, small and large operands, memory
+    ; operand at a low address, jitted (hot loop) ========
+    xor r13, r13
+    mov ecx, 100000
+    mov r14, 0x9E3779B97F4A7C15
+t85_loop:
+    mov eax, ecx
+    imul eax, eax, 0x10001       ; overflows once ecx >= 0x8000
+    pushfq
+    pop rbx
+    and ebx, 0x801
+    add r13, rbx
+    add r13, rax
+    mov [r15 + 86*8], rcx
+    mov eax, 0x7FFF
+    imul eax, [r15 + 86*8]
+    seto bl
+    movzx ebx, bl
+    add r13, rbx
+    add r13, rax
+    mov rax, rcx
+    imul rax, rcx                ; both fit into 32 bits: no overflow
+    seto bl
+    movzx ebx, bl
+    add r13, rbx
+    add r13, rax
+    mov rax, rcx
+    imul rax, r14                ; large operand: overflows
+    jno t85_1
+    add r13, 7
+t85_1:
+    add r13, rax
+    mov rdx, rcx
+    shl rdx, 31                  ; doesn't fit into 32 bits, overflows for large rcx
+    imul rdx, rdx, 3
+    jc t85_2
+    add r13, 11
+t85_2:
+    add r13, rdx
+    mov rdx, rcx
+    neg rdx
+    imul rdx, [r15 + 86*8]       ; negative * positive, fits
+    pushfq
+    pop rbx
+    and ebx, 0x801
+    add r13, rbx
+    add r13, rdx
+    dec ecx
+    jnz t85_loop
+    mov [r15 + 85*8], r13
+    mov qword [r15 + 86*8], 0
     jmp t81_done
 t81_func:
     add rax, 1

@@ -117,6 +117,8 @@ const expected = [
     50000n,              // 82: inc at a block start preserves cf for adc
     0x4f2ab3636643714n,  // 83: adc/sbb/bt*/cmpxchg/xadd/pushf in a hot loop
     0x200n,              // 84: sysret loads IF from r11 (it was ignored at cpl 3)
+    0x31f72987e3c9ac08n, // 85: imul cf/of (32/64-bit, operands in and out of 32-bit range)
+    0n,                  // 86: scratch slot of test 85, cleared
 ];
 
 const emulator = new V86({

@@ -1,3 +1,4 @@
+
 #![allow(non_snake_case)]
 
 //! Code generation for 64-bit (long mode) code.
@@ -1616,26 +1617,90 @@ pub fn gen_shift(ctx: &mut JitContext, kind: u32, bits: u32, dst: Opnd, count: S
     ctx.builder.free_local(count_local);
 }
 
-/// imul r, r/m[, imm]: the flags are computed by a helper (cf/of need the full product)
+/// imul r, r/m[, imm]. cf and of are set if the full product doesn't fit into the destination.
+/// 32-bit: the product of two sign-extended 32-bit values always fits into an i64, so it's
+/// computed inline. 64-bit: inline if both operands fit into 32 bits (then there's no
+/// overflow), otherwise a helper computes the 128-bit product.
 pub fn gen_imul(ctx: &mut JitContext, bits: u32, r: u32, src: Opnd, imm: Option<i64>) {
     dbg_assert!(bits == 32 || bits == 64);
     gen_get_operand(ctx, bits, &src);
+    let a = set_new_val(ctx, bits);
     match imm {
         Some(i) => gen_const(ctx, bits, i),
         None => gen_get_reg(ctx, bits, r),
     }
-    if bits == 64 {
-        ctx.builder.call_fn2_i64_i64_ret_i64("jit64_imul64");
+    let b = set_new_val(ctx, bits);
+
+    if bits == 32 {
+        a.get(ctx);
+        ctx.builder.extend_signed_i32_to_i64();
+        b.get(ctx);
+        ctx.builder.extend_signed_i32_to_i64();
+        ctx.builder.mul_i64();
+        let product = ctx.builder.tee_new_local_i64();
+        ctx.builder.wrap_i64_to_i32();
+        let result = set_new_val(ctx, 32);
+
+        gen_set_last_result(ctx, 32, &result);
+        // flags = flags & ~(cf | of) | (product != sign_extend(result) ? cf | of : 0)
+        ctx.builder.const_i32(global_pointers::flags as i32);
+        ctx.builder.load_fixed_i32(global_pointers::flags as u32);
+        ctx.builder.const_i32(!(FLAG_CARRY | FLAG_OVERFLOW));
+        ctx.builder.and_i32();
+        ctx.builder.const_i32(FLAG_CARRY | FLAG_OVERFLOW);
+        ctx.builder.const_i32(0);
+        ctx.builder.get_local_i64(&product);
+        result.get(ctx);
+        ctx.builder.extend_signed_i32_to_i64();
+        ctx.builder.ne_i64();
+        ctx.builder.select();
+        ctx.builder.or_i32();
+        ctx.builder.store_aligned_i32(0);
+        gen_set_op_size_and_flags_changed(ctx, 32, FLAGS_ALL & !FLAG_CARRY & !FLAG_OVERFLOW);
+        ctx.builder.free_local_i64(product);
+
+        gen_set_reg(ctx, 32, r, &result);
+        result.free(ctx);
     }
     else {
-        ctx.builder.call_fn2_ret("jit64_imul32");
+        let fits_in_32 = |ctx: &mut JitContext, x: &Val| {
+            x.get(ctx);
+            x.get(ctx);
+            ctx.builder.wrap_i64_to_i32();
+            ctx.builder.extend_signed_i32_to_i64();
+            ctx.builder.eq_i64();
+        };
+        fits_in_32(ctx, &a);
+        if imm.map_or(true, |i| i as i32 as i64 != i) {
+            fits_in_32(ctx, &b);
+            ctx.builder.and_i32();
+        }
+        ctx.builder.if_i64();
+        {
+            a.get(ctx);
+            b.get(ctx);
+            ctx.builder.mul_i64();
+            let result = set_new_val(ctx, 64);
+            gen_set_last_result(ctx, 64, &result);
+            gen_clear_flags(ctx, FLAG_CARRY | FLAG_OVERFLOW);
+            gen_set_op_size_and_flags_changed(ctx, 64, FLAGS_ALL & !FLAG_CARRY & !FLAG_OVERFLOW);
+            result.get(ctx);
+            result.free(ctx);
+        }
+        ctx.builder.else_();
+        {
+            a.get(ctx);
+            b.get(ctx);
+            ctx.builder.call_fn2_i64_i64_ret_i64("jit64_imul64");
+        }
+        ctx.builder.block_end();
+        gen_set_reg_from_stack(ctx, 64, r);
     }
-    gen_set_reg_from_stack(ctx, bits, r);
+    b.free(ctx);
+    a.free(ctx);
     ctx.flags64 = Flags64::Unknown;
 }
 
-#[no_mangle]
-pub unsafe fn jit64_imul32(a: i32, b: i32) -> i32 { crate::cpu::arith::imul_reg32(a, b) }
 #[no_mangle]
 pub unsafe fn jit64_imul64(a: u64, b: u64) -> u64 { crate::cpu::arith::imul_reg64(a, b) }
 
