@@ -76,6 +76,10 @@ export function CPU(bus, wm, stop_idling)
 
     this.wasm_memory = memory;
 
+    // the 64-bit guest memory of the mem64 build (see src/rust/cpu/guest.rs);
+    // when present, guest RAM lives there instead of in wasm_memory
+    this.guest_memory = this.wm.exports["guest_memory"] || null;
+
     this.memory_size = view(Uint32Array, memory, 812, 1);
 
     this.mem8 = new Uint8Array(0);
@@ -1032,8 +1036,21 @@ CPU.prototype.create_memory = function(size, minimum_size)
 
     const memory_offset = this.allocate_memory(size) >>> 0;
 
-    this.mem8 = view(Uint8Array, this.wasm_memory, memory_offset, size);
-    this.mem32s = view(Uint32Array, this.wasm_memory, memory_offset, size / 4);
+    if(this.guest_memory)
+    {
+        // mem64 build: guest RAM is the 64-bit guest_memory, offset 0; grow it here
+        // (rust can't address the second memory). Freshly grown pages are zeroed.
+        dbg_assert(memory_offset === 0);
+        dbg_assert(size % 0x10000 === 0);
+        this.guest_memory.grow(size / 0x10000);
+        this.mem8 = view(Uint8Array, this.guest_memory, 0, size);
+        this.mem32s = view(Uint32Array, this.guest_memory, 0, size / 4);
+    }
+    else
+    {
+        this.mem8 = view(Uint8Array, this.wasm_memory, memory_offset, size);
+        this.mem32s = view(Uint32Array, this.wasm_memory, memory_offset, size / 4);
+    }
 };
 
 /**

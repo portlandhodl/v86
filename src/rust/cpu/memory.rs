@@ -51,6 +51,9 @@ pub fn phys_of_tlb_host_base(host: u64) -> u64 { unsafe { host_to_phys(host - me
 
 /// Allocate guest RAM. It's placed in newly grown wasm memory pages instead of the rust heap,
 /// whose allocations are limited to isize::MAX (2 GiB) bytes. Fresh pages are zeroed.
+///
+/// Under mem64, guest RAM is the separate 64-bit memory 1, grown from JS (create_memory);
+/// mem8 stays null, so tlb_host_base is the identity (host offsets are the physical addresses).
 #[no_mangle]
 pub fn allocate_memory(size: u32) -> u32 {
     unsafe {
@@ -59,12 +62,15 @@ pub fn allocate_memory(size: u32) -> u32 {
     dbg_log!("Allocate memory size={}m", size >> 20);
     const WASM_PAGE_SIZE: usize = 0x10000;
     dbg_assert!(size as usize % WASM_PAGE_SIZE == 0);
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(feature = "mem64")))]
     let ptr = {
         let previous_pages = core::arch::wasm32::memory_grow(0, size as usize / WASM_PAGE_SIZE);
         assert!(previous_pages != usize::MAX, "Failed to allocate guest memory");
         (previous_pages * WASM_PAGE_SIZE) as *mut u8
     };
+    // guest RAM is memory 1 in this build; grown by JS (rust can't address a second memory)
+    #[cfg(all(target_arch = "wasm32", feature = "mem64"))]
+    let ptr = ptr::null_mut();
     #[cfg(not(target_arch = "wasm32"))]
     let ptr = unsafe {
         alloc::alloc_zeroed(alloc::Layout::from_size_align(size as usize, WASM_PAGE_SIZE).unwrap())

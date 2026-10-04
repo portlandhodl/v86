@@ -28,6 +28,8 @@ const config = {
     filesystem: {},
     log_level: 0,
     disable_jit: +process.env.DISABLE_JIT,
+    // V86_WASM_PATH overrides the core build, e.g. build/v86-mem64-debug.wasm
+    wasm_path: process.env.V86_WASM_PATH,
 };
 
 const emulator = new V86(config);

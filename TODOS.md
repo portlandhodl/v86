@@ -595,14 +595,27 @@ returning 0. With the Rust memhog payload the 3 GiB test passes: fills and
 verifies 2703 MiB in ~8 s (1802 MiB in ~6 s at 2048 MiB), straight through
 frames above 2 GiB with no cliff.
 
-### Phase 2: mem64 build (started)
+### Phase 2: mem64 build (started; milestone 1 done)
 - Done: cargo feature `mem64`; placeholders in `guest.rs`;
   `tools/patch-mem64.mjs`; Makefile targets `build/v86-mem64.wasm` and
   `build/v86-mem64-debug.wasm` (build, patch and validate; all 12
   placeholders survive LTO as separate functions).
+- **Milestone 1 (interpreter on the mem64 build)**: done. JS grows
+  `guest_memory` in `create_memory` (`core::arch::wasm32::memory_grow` is
+  still hard-wired to memory 0), `mem8` stays null so `tlb_host_base` is the
+  identity, and JS `mem8`/`mem32s` views sit on `guest_memory.buffer` (the
+  `view()` helper re-reads `.buffer` per access, so no invalidation issues).
+  starter.js loads `v86-mem64[-debug].wasm` when `memory_size` exceeds
+  `MAX_LOW_MEMORY_SIZE` (no fallback: hosts without memory64+multi-memory
+  fail there); tests can point at it via `V86_WASM_PATH`. Verified:
+  `MEMORY_MB=3072 DISABLE_JIT=1 V86_WASM_PATH=build/v86-mem64-debug.wasm
+  node tests/api/2g-mem.js` passes (fills/verifies 2703 MiB), and the
+  default build is untouched (longmode 90/90 + multiboot64 5/5, nasmtests
+  15599/15599 both variants, 2g-mem at 2048 usual).
 - To do:
-  - `allocate_memory` under mem64: JS grows `guest_memory`, `mem8` = 0.
-  - `tlb_data` becomes u64 under mem64 (host offsets exceed 32 bits).
+  - `tlb_data` becomes u64 under mem64 (host offsets exceed 32 bits above
+    4 GiB; for RAM <= 3 GiB the identity layout keeps entries in u32, which
+    is why milestone 1 works without it).
   - JIT fast paths (codegen.rs `gen_safe_read`/`_write`/`_read_write`,
     `gen_get_phys_eip_plus_mem`; jit64.rs `gen_tlb_entry`,
     `gen_tlb_high_entry`, `gen_pointer_from_entry`, `gen_load`/`gen_store`,
@@ -617,8 +630,7 @@ frames above 2 GiB with no cliff.
     (VGA hole, never accessed as RAM).
   - wasm_builder: import `"e" "g"` (memory64, limits flag 0x04) after `"m"`
     and fix the export index. JS: `jit_imports["g"]`, `mem8` over
-    `guest_memory`, pick the wasm in starter.js (with feature detection),
-    zstd worker.
+    `guest_memory`, zstd worker.
   - Expect tests and verify-wasmgen-dummy-output need memory64 and
     multi-memory enabled in wabt if run against the mem64 build.
 
