@@ -239,11 +239,59 @@ fn gen_call_wrapper(ctx: &mut JitContext, name: &str, mem: Option<&Modrm64>, arg
             dbg_assert!(false, "unsupported wrapper signature");
         },
     }
-    gen_reload_registers_and_exit_if(ctx);
+    let written = gpr_writes_of_current_instruction(ctx);
+    gen_reload_registers_and_exit_if(ctx, written);
 }
 
-/// After a call into the interpreter that may have changed registers: reload them into the
-/// locals, then leave the module if the call returned non-zero (the exit path spills the locals)
+/// The general purpose registers that the interpreter's handler for the current instruction may
+/// write, unless it raises an exception. Conservative: all registers for anything not listed.
+fn gpr_writes_of_current_instruction(ctx: &JitContext) -> u16 {
+    const RAX: u16 = 1 << 0;
+    const RCX: u16 = 1 << 1;
+    const RSI: u16 = 1 << 6;
+    const RDI: u16 = 1 << 7;
+    let mut cpu = ctx.cpu.clone();
+    cpu.eip = ctx.start_of_current_instruction;
+    let mut opcode;
+    loop {
+        opcode = cpu.read_imm8() as u32;
+        match opcode {
+            0x26 | 0x2E | 0x36 | 0x3E | 0x64 | 0x65 | 0x66 | 0x67 | 0xF0 | 0xF2 | 0xF3 => {},
+            0x40..=0x4F => {},
+            _ => break,
+        }
+    }
+    if opcode == 0x0F {
+        opcode = 0x0F00 | cpu.read_imm8() as u32;
+    }
+    match opcode {
+        // x87; only fnstsw ax (DF E0) writes a general purpose register
+        0xD8..=0xDE => 0,
+        0xDF => RAX,
+        // string instructions (also with rep)
+        0xA4..=0xA7 => RCX | RSI | RDI,
+        0xAA | 0xAB | 0xAE | 0xAF => RCX | RDI,
+        0xAC | 0xAD => RAX | RCX | RSI,
+        // sse/mmx with an xmm/mm register or memory as the destination. Not included because
+        // they can write general purpose registers: 0F 2C/2D (cvt to integer), 50 (movmsk),
+        // 78/79, 7E (movd r/m, xmm), AE (rdfsbase etc.), C5 (pextrw), D7 (pmovmskb)
+        0x0F10..=0x0F17
+        | 0x0F28..=0x0F2B
+        | 0x0F2E
+        | 0x0F2F
+        | 0x0F51..=0x0F77
+        | 0x0F7C
+        | 0x0F7D
+        | 0x0F7F
+        | 0x0FC2
+        | 0x0FC4
+        | 0x0FC6
+        | 0x0FD0..=0x0FD6
+        | 0x0FD8..=0x0FFF => 0,
+        _ => 0xFFFF,
+    }
+}
+
 /// Write the registers that may have been changed since the last sync back to memory
 fn gen_spill_dirty_registers(ctx: &mut JitContext) {
     for i in 0..16 {
@@ -257,13 +305,22 @@ fn gen_spill_dirty_registers(ctx: &mut JitContext) {
     ctx.dirty_registers64 = 0;
 }
 
-fn gen_reload_registers_and_exit_if(ctx: &mut JitContext) {
-    let exit = ctx.builder.set_new_local();
+/// After a call into the interpreter (with all registers synced to memory): leave the module if
+/// the call returned non-zero, reloading all registers first since an exception may have changed
+/// any of them (the exit path spills the locals). Otherwise reload the registers in `written`.
+fn gen_reload_registers_and_exit_if(ctx: &mut JitContext, written: u16) {
+    dbg_assert!(ctx.dirty_registers64 == 0);
+    ctx.builder.if_void();
     codegen::gen_move_registers_from_memory_to_locals(ctx);
-    ctx.dirty_registers64 = 0;
-    ctx.builder.get_local(&exit);
-    ctx.builder.br_if(ctx.exit_label);
-    ctx.builder.free_local(exit);
+    ctx.builder.br(ctx.exit_label);
+    ctx.builder.block_end();
+    for i in 0..16 {
+        if written & 1 << i != 0 {
+            ctx.builder
+                .load_fixed_i64(global_pointers::get_reg64_offset(i));
+            ctx.builder.set_local_i64(&reg_local(ctx, i));
+        }
+    }
 }
 
 pub fn gen_generic(ctx: &mut JitContext, name: &str, args: &[A]) {
@@ -421,7 +478,8 @@ pub fn instr_FB_jit64(ctx: &mut JitContext) {
     gen_spill_dirty_registers(ctx);
     ctx.builder.const_i32(instruction_ips(ctx));
     ctx.builder.call_fn1_ret("jit64_sti");
-    gen_reload_registers_and_exit_if(ctx);
+    // registers only change if it raises an exception
+    gen_reload_registers_and_exit_if(ctx, 0);
 }
 
 /// pop r/m: the address is computed after rsp has been incremented, leave it to the interpreter

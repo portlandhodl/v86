@@ -847,6 +847,61 @@ t88_loop:
     dec ecx
     jnz t88_loop
     mov [r15 + 88*8], r13
+
+    ; ======== test 89: registers written by string, sse and x87 instructions (which
+    ; are interpreter calls in jitted code), jitted (hot loop) ========
+    xor r13, r13
+    mov ecx, 20000
+    lea r12, [r15 + 0x2000]      ; scratch buffer at 0x92000
+    fninit
+t89_loop:
+    mov r14, rcx
+    mov rdi, r12
+    mov rax, r14
+    mov ecx, 4
+    rep stosq                    ; rdi, rcx
+    add r13, rdi
+    add r13, rcx
+    mov rsi, r12
+    lea rdi, [r12 + 64]
+    mov ecx, 32
+    rep movsb                    ; rsi, rdi, rcx
+    add r13, rsi
+    add r13, rdi
+    add r13, rcx
+    lea rsi, [r12 + 64]
+    lodsq                        ; rax, rsi
+    add r13, rax
+    add r13, rsi
+    mov rdi, r12
+    mov al, 0x55
+    mov ecx, 16
+    repne scasb                  ; rdi, rcx
+    add r13, rcx
+    add r13, rdi
+    movq xmm0, r14
+    paddq xmm0, xmm0
+    movdqu [r12 + 128], xmm0
+    movq rbx, xmm0               ; gpr destination
+    add r13, rbx
+    pmovmskb edx, xmm0
+    add r13, rdx
+    cvtsi2sd xmm1, r14
+    cvttsd2si rsi, xmm1
+    add r13, rsi
+    mov [r12 + 192], r14
+    fild qword [r12 + 192]
+    fadd st0, st0
+    fistp qword [r12 + 200]
+    add r13, [r12 + 200]
+    fnstsw ax
+    and eax, 0x4700
+    add r13, rax
+    add r13, [r12 + 128]
+    mov rcx, r14
+    dec ecx
+    jnz t89_loop
+    mov [r15 + 89*8], r13
     jmp t81_done
 t81_func:
     add rax, 1

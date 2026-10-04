@@ -121,6 +121,7 @@ const expected = [
     0n,                  // 86: scratch slot of test 85, cleared
     0x941949e38be6f2b0n, // 87: hot loop with blocks on two pages
     0x254113b2en,        // 88: cf around inc/dec after add/sub
+    0xe4c1f3ac2n,        // 89: registers written by string/sse/x87 instructions
 ];
 
 const emulator = new V86({
