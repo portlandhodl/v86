@@ -10,7 +10,12 @@ const { V86 } = await import(TEST_RELEASE_BUILD ? "../../build/libv86.mjs" : "..
 
 process.on("unhandledRejection", exn => { throw exn; });
 
-// MEMORY_MB: guest memory size, the test allocates and checks about 90% of it
+// MEMORY_MB: guest memory size, the test allocates and checks about 88% of it.
+// The payload is the freestanding (no_std) 32-bit memhog binary (memhog.rs,
+// rebuilt with `make tests/api/memhog`): it grows the heap with brk, fills
+// every word with a per-page pattern and re-verifies it. It replaced the Lua
+// payload, which goes quadratic in the GC at ~2 GiB of managed memory — a
+// limitation of 32-bit Lua, not of the emulator.
 const MEMORY_MB = +process.env.MEMORY_MB || 2048;
 
 const config = {
@@ -30,25 +35,7 @@ const emulator = new V86(config);
 emulator.bus.register("emulator-started", function()
 {
     console.log("Booting now, please stand by");
-
-    emulator.create_file("test.lua", Buffer.from(`
-local t = {}
-local m = 1
-while collectgarbage("count") < ${MEMORY_MB * 0.88} * 1024 do
-    t[m] = string.rep("A", 4096)
-    m = m + 1
-    if m % 10000 == 0 then
-        print(m, " ", collectgarbage("count"))
-    end
-end
-print("memory usage (kB) ", collectgarbage("count"))
-print("page count ", m)
-local ref = string.rep("A", 4096)
-for i = 1, m - 1 do
-    assert(t[i] == ref)
-end
-print("ok")
-`));
+    emulator.create_file("memhog", fs.readFileSync(__dirname + "/memhog"));
 });
 
 let ran_command = false;
@@ -79,8 +66,11 @@ emulator.add_listener("serial0-output-byte", async function(byte)
     {
         ran_command = true;
 
+        const target = Math.floor(MEMORY_MB * 0.88);
+        // copy out of the 9p mount (its files aren't executable)
         emulator.serial0_send("free -m\n");
-        emulator.serial0_send("time -v lua /mnt/test.lua\n");
+        emulator.serial0_send("cat /mnt/memhog > /root/memhog && chmod +x /root/memhog\n");
+        emulator.serial0_send("time -v /root/memhog " + target + "\n");
         emulator.serial0_send("echo test fini''shed\n");
     }
 

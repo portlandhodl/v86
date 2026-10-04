@@ -397,6 +397,18 @@ rust-test: $(RUST_FILES)
 rust-test-intensive:
 	QUICKCHECK_TESTS=100000000 make rust-test
 
+# Freestanding 32-bit guest payload used by tests/api/2g-mem.js. Compiles
+# without cargo (needs `rustup target add i686-unknown-linux-musl`); the stock
+# musl target pulls a crt that conflicts with the custom _start, so link the
+# object ourselves with the bundled rust-lld.
+tests/api/memhog: tests/api/memhog.rs
+	rustc --edition 2021 -O --target i686-unknown-linux-musl -C panic=abort --emit=obj -o tests/api/.memhog.o $<
+	SYSROOT=$$(rustc --print sysroot) && \
+	    RUSTLIB=$$SYSROOT/lib/rustlib/i686-unknown-linux-musl/lib && \
+	    $$SYSROOT/lib/rustlib/$$(rustc -vV | sed -n 's/^host: //p')/bin/rust-lld -flavor gnu -static \
+	        -o $@ tests/api/.memhog.o $$RUSTLIB/libcore-*.rlib $$RUSTLIB/libcompiler_builtins-*.rlib
+	rm tests/api/.memhog.o
+
 api-tests: build/v86-debug.wasm
 	./tests/api/clean-shutdown.js
 	./tests/api/state.js

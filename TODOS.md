@@ -550,7 +550,7 @@ agreed with the user:
 - Node 22 here supports memory64 + multi-memory (memories > 4 GiB and a
   `Uint8Array` over them work). Bun doesn't; Safari is uncertain.
 
-### Phase 1: 64-bit physical addresses, 3 GiB in the default build (code done, one open bug)
+### Phase 1: 64-bit physical addresses, 3 GiB in the default build (DONE)
 - Physical addresses are u64 throughout Rust: `Page::page_of(u64)`,
   `translate_address_*` (via `phys_of_tlb_entry`, which also strips the
   sign-extension bits of high-half addresses), `do_page_walk` (52-bit
@@ -567,8 +567,11 @@ agreed with the user:
   pointer arithmetic. `create_memory` throws above `MAX_LOW_MEMORY_SIZE`
   (3 GiB).
 - Virtio descriptor and IDE PRD addresses are read unsigned (`>>> 0`).
-- `tests/api/2g-mem.js` takes `MEMORY_MB` and now fails unless the Lua check
-  prints `ok`.
+- `tests/api/2g-mem.js` takes `MEMORY_MB` and now fails unless the check
+  prints `ok`. The payload is a freestanding (no_std) 32-bit Rust memhog
+  binary (`tests/api/memhog.rs`, `make tests/api/memhog`): it grows the heap
+  with brk, fills every word with a per-page pattern and re-verifies. It
+  replaced the Lua payload — see below.
 - Results against a baseline build of cd1d5cd0 (identical unless noted):
   longmode 90/90, multiboot64 5/5, nasmtests 15599/15599, expect-tests ok,
   `cargo test` ok; kvm-unit-tests msr port80 setjmp smptest realmode eventinj
@@ -578,26 +581,19 @@ agreed with the user:
   130 vs 129 ms 32-bit, 270 vs 264 ms 64-bit). jitpagingtests already hangs
   at baseline.
 
-**Open bug (blocks Phase 1):** `MEMORY_MB=3072 node tests/api/2g-mem.js`
-boots (`free -m` shows 3023 MB) and the Lua loop runs fast up to ~520000
-pages (~2.1 GB), then slows down about 100x. The guest keeps making progress
-(cr2 of the demand faults advances ~0.6 MB per 10 s). Observations from a
-probe script that prints the cpu state every 10 s:
-- At that point new user pages come from frames around 0x3c000000, i.e.
-  highmem (896 MiB..3 GiB) is used up.
-- eip is always exactly page-aligned (b7ede000, b7f2d000, ...), on a code
-  page whose frame is near the top of RAM (pte be643025).
-- While slow, `jit_get_wasm_table_index_free_list_count() == 0` and
-  `jit_get_cache_size() == 0`: strong lead that the JIT is thrashing (no free
-  wasm table indices, so `jit_clear_cache` on every compile). Same slowdown
-  with `set_jit_config(1, 1)` (MAX_PAGES=1).
-- With `DISABLE_JIT=1` the interpreter reached 370000 pages after 760 s and
-  was still going; not run to the critical point yet.
-
-Next: find out why wasm table indices aren't freed (something keeps
-dirtying and recompiling pages, or modules leak, e.g. a Page/phys mismatch
-between `pages`/`entry_points` and `jit_dirty_page`), check the same
-counters at 2048 MiB, and finish the DISABLE_JIT run.
+Resolved open bug: with the Lua payload, `MEMORY_MB=3072` slowed down ~100x
+once the guest touched ~2.05 GiB (~520000 strings). Root cause is in the
+**guest**, not the emulator: 32-bit Lua's GC debt accounting (`l_mem`, a
+signed ptrdiff_t) crosses 2^31 bytes and the collector goes quadratic,
+spinning in a fully-JIT-compiled sweep loop. Evidence: identical cliff with
+`DISABLE_JIT=1` (interpreter, 500/s → 71/s at the same page count); all
+profiler counters flat during the slow phase (no compiles, no invalidations,
+no page faults, ~200M steps/s from compiled code); eip pinned in the Lua
+GC table sweep (confirmed by in-guest disassembly); the earlier "JIT thrash"
+readings (`jit_get_*` == 0) were an artifact of the non-profiler build
+returning 0. With the Rust memhog payload the 3 GiB test passes: fills and
+verifies 2703 MiB in ~8 s (1802 MiB in ~6 s at 2048 MiB), straight through
+frames above 2 GiB with no cliff.
 
 ### Phase 2: mem64 build (started)
 - Done: cargo feature `mem64`; placeholders in `guest.rs`;
