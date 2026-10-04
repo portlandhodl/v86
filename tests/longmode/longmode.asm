@@ -908,6 +908,18 @@ t81_func:
     ret
 t81_done:
 
+    ; ======== test 90/91: sse3 addsubps, addsubpd and lddqu (unaligned) on high xmm regs ========
+    movaps xmm9, [rel sse3_data]
+    movaps xmm10, [rel sse3_data + 16]
+    addsubps xmm9, xmm10             ; [1-0.5, 2+0.5, 3-0.5, 4+0.5]
+    movq rbx, xmm9
+    mov [r15 + 90*8], rbx            ; 2.5f:0.5f
+    lddqu xmm13, [rel sse3_unaligned]
+    addsubpd xmm13, xmm13            ; [1.5-1.5, 2.25+2.25]
+    psrldq xmm13, 8
+    movq rbx, xmm13
+    mov [r15 + 91*8], rbx            ; 4.5
+
     ; mask all PIC interrupts: user mode runs with IF set below (test 84)
     mov al, 0xFF
     out 0x21, al
@@ -1041,6 +1053,9 @@ cx16_scratch: dq 0, 0
 
 align 16
 fx_area: times 64 dq 0             ; 512-byte fxsave area (16-byte aligned)
+sse3_data: dd 1.0, 2.0, 3.0, 4.0, 0.5, 0.5, 0.5, 0.5 ; test 90 (16-byte aligned)
+    db 0
+sse3_unaligned: dq 1.5, 2.25          ; test 91
 stos_buf: times 32 dq 0            ; rep stosq playground
 
 idt_ptr:

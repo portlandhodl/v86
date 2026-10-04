@@ -707,7 +707,9 @@ const encodings = [
     { sse: 1, opcode: 0x0FC6, e: 1, imm8: 1, custom: 1 },
     { sse: 1, opcode: 0x660FC6, e: 1, imm8: 1, custom: 1 },
 
-    { sse: 1, opcode: 0x0FD0, skip: 1, block_boundary: 1 }, // sse3
+    { sse: 1, opcode: 0x660FD0, e: 1 }, // sse3: addsubpd
+    { sse: 1, opcode: 0xF20FD0, e: 1 }, // sse3: addsubps
+    { sse: 1, opcode: 0x0FD0, skip: 1, block_boundary: 1 }, // ud
 
     { sse: 1, opcode: 0x0FD1, e: 1, custom: 1 },
     { sse: 1, opcode: 0x660FD1, e: 1, custom: 1 },
@@ -782,7 +784,8 @@ const encodings = [
     { sse: 1, opcode: 0x0FEF, e: 1, custom: 1 },
     { sse: 1, opcode: 0x660FEF, e: 1, custom: 1 },
 
-    { sse: 1, opcode: 0x0FF0, skip: 1, block_boundary: 1 }, // sse3
+    { sse: 1, opcode: 0xF20FF0, e: 1, reg_ud: 1 }, // sse3: lddqu
+    { sse: 1, opcode: 0x0FF0, skip: 1, block_boundary: 1 }, // ud
 
     { sse: 1, opcode: 0x0FF1, e: 1, custom: 1 },
     { sse: 1, opcode: 0x660FF1, e: 1, custom: 1 },
