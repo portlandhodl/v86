@@ -1,6 +1,7 @@
-# TODOs — x86-64 (long mode) support for v86
+# TODOs — x86-64 (long mode) support in v86_64
 
-This file is the roadmap for completing full x86-64 emulation in v86, so that
+This file is the roadmap for completing full x86-64 emulation in v86_64 (a
+64-bit fork of v86), so that
 modern 64-bit Linux distributions can boot. It is written to be picked up by
 another engineer (human or LLM) with no prior context.
 
@@ -10,7 +11,7 @@ shell is interactive (bench64: ~530 MIPS for 64-bit code vs ~80 interpreted).
 M1-M3 are complete (apart from optional items), M4 (64-bit JIT) meets its goal
 and has optional performance work left (§4). Next: graphical distributions
 such as Ubuntu (§4b). The work lives on branch `x86-64-long-mode`
-(fork: https://github.com/portlandhodl/v86).**
+(repo: https://github.com/portlandhodl/v86_64).**
 
 ---
 

@@ -1,231 +1,217 @@
-[![Join the chat at https://gitter.im/copy/v86](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/copy/v86) or #v86 on [irc.libera.chat](https://libera.chat/)
+# v86_64
 
-v86 emulates an x86-compatible CPU and hardware. Machine code is translated to
-WebAssembly modules at runtime in order to achieve decent performance. Here's a
-list of emulated hardware:
+**x86-64 in the browser.** v86_64 is a PC emulator and x86-to-WebAssembly JIT
+that boots modern **64-bit (long mode)** operating systems in a web page or in
+Node.js: 64-bit Linux kernels, 64-bit userspace and a 64-bit JIT, all running
+in wasm.
 
-- An x86-compatible CPU. The instruction set is around Pentium 4 level,
-  including full SSE3 support. Some features are missing, in particular:
-  - Task gates, far calls in protected mode
-  - Some 16 bit protected mode features
-  - Single stepping (trap flag, debug registers)
-  - Some exceptions, especially floating point and SSE
-  - Multicore
-  - 64-bit extensions
-- A floating point unit (FPU). Calculations are done using the Berkeley
-  SoftFloat library and therefore should be precise (but slow). Trigonometric
-  and log functions are emulated using 64-bit floats and may be less precise.
-  Not all FPU exceptions are supported.
-- A floppy disk controller (8272A).
-- An 8042 Keyboard Controller, PS2. With mouse support.
-- An 8254 Programmable Interval Timer (PIT).
-- An 8259 Programmable Interrupt Controller (PIC).
-- Partial APIC support.
-- A CMOS Real Time Clock (RTC).
-- A generic VGA card with SVGA support and Bochs VBE Extensions.
-- A PCI bus. This one is partly incomplete and not used by every device.
-- An IDE disk controller.
-  - A built-in ISO 9660 CD-ROM generator with Joliet support.
-- An NE2000 (RTL8390) PCI network card.
-- Various virtio devices: Filesystem, network and balloon.
-- A SoundBlaster 16 sound card.
-- A hayes-compatible dial-up Modem.
+It started as a fork of [v86](https://github.com/copy/v86) and has diverged
+into its own project. Everything 32-bit that v86 runs still runs, bit for bit.
 
-## Demos
+## Status
 
-[9front](https://copy.sh/v86/?profile=9front) —
-[Arch Linux](https://copy.sh/v86/?profile=archlinux) —
-[Android-x86 1.6-r2](https://copy.sh/v86?profile=android) —
-[Android-x86 4.4-r2](https://copy.sh/v86?profile=android4) —
-[BasicLinux](https://copy.sh/v86/?profile=basiclinux) —
-[Buildroot Linux](https://copy.sh/v86/?profile=buildroot) —
-[Damn Small Linux](https://copy.sh/v86/?profile=dsl) —
-[ELKS](https://copy.sh/v86/?profile=elks) —
-[FreeDOS](https://copy.sh/v86/?profile=freedos) —
-[FreeBSD](https://copy.sh/v86/?profile=freebsd) —
-[FiwixOS](https://copy.sh/v86/?profile=fiwix) —
-[Haiku](https://copy.sh/v86/?profile=haiku) —
-[SkiffOS](https://copy.sh/v86/?profile=copy/skiffos) —
-[ReactOS](https://copy.sh/v86/?profile=reactos) —
-[Windows 2000](https://copy.sh/v86/?profile=windows2000) —
-[Windows 98](https://copy.sh/v86/?profile=windows98) —
-[Windows 95](https://copy.sh/v86/?profile=windows95) —
-[Windows 1.01](https://copy.sh/v86/?profile=windows1) —
-[MS-DOS 6.22](https://copy.sh/v86/?profile=msdos) —
-[OpenBSD](https://copy.sh/v86/?profile=openbsd) —
-[Oberon](https://copy.sh/v86/?profile=oberon) —
-[KolibriOS](https://copy.sh/v86/?profile=kolibrios) —
-[SkiftOS](https://copy.sh/v86?profile=skift) —
-[QNX](https://copy.sh/v86/?profile=qnx)
+| Guest | State |
+|---|---|
+| Alpine Linux 3.19 x86_64 | Boots from its ISO (SeaBIOS + ISOLINUX) to an interactive root shell in ~28 s, with 64-bit code in the JIT |
+| Linux x86_64 kernels | Full early init, arch selftests and userspace, booted from an ISO or directly from a bzImage |
+| ELF64 multiboot kernels | Higher-half ELF64 entry points are loaded and run |
+| Xubuntu 24.04 (amd64 live ISO) | Being brought up: [examples/xubuntu.html](examples/xubuntu.html) |
+| 32-bit guests | Unchanged from v86 (Linux, Windows 1.01-2000, DOS, BSDs, hobby OSes) |
 
-## Documentation
+| Milestone | |
+|---|---|
+| M1: long-mode CPU core (REX, 64-bit registers and addressing, 4-level paging) | Done |
+| M2: 64-bit kernel to userspace (interrupts, syscall, NX, full 48-bit addresses) | Done |
+| M3: boot media and devices for real distributions | Done |
+| M4: JIT for 64-bit code (~530 MIPS vs ~80 interpreted) | Done, performance work ongoing |
+| M5: graphical distributions (Ubuntu and friends) | In progress |
 
-[How it works](docs/how-it-works.md) —
-[Networking](docs/networking.md) —
-[Dial-up modem networking](docs/modem.md) —
-[Alpine Linux guest setup](tools/docker/alpine/) —
-[Arch Linux guest setup](docs/archlinux.md) —
-[Debian with xfce guest setup](tools/docker/debian/) —
-[MS-DOS/FreeDOS guest setup](docs/dos.md) —
-[Windows 3.1x guest setup](docs/windows-31x.md) —
-[Windows 9x guest setup](docs/windows-9x.md) —
-[Windows NT guest setup](docs/windows-nt.md) —
-[9p filesystem](docs/filesystem.md) —
-[Linux rootfs on 9p](docs/linux-9p-image.md) —
-[Profiling](docs/profiling.md)
+The roadmap, design notes and every long-mode bug found so far are in
+[TODOS.md](TODOS.md).
 
-## Compatibility
+## What's emulated
 
-Here's an overview of the operating systems supported in v86:
+**CPU**: x86-64 with the 32-bit instruction set at around Pentium 4 level.
 
-- Linux works pretty well. 64-bit kernels are not supported.
-  - [Buildroot](https://buildroot.org/) can be used to build a minimal image.
-    [humphd/browser-vm](https://github.com/humphd/browser-vm) and
-    [darin755/browser-buildroot](https://github.com/Darin755/browser-buildroot) have some useful scripts for building one.
-  - [SkiffOS](https://github.com/skiffos/SkiffOS/tree/master/configs/browser/v86) (based on Buildroot) can cross-compile a custom image.
-  - Ubuntu and other Debian derivatives works up to the latest version that supported i386 (16.04 LTS or 18.04 LTS for some variants).
-  - Alpine Linux works. An image can be built from a Dockerfile, see [tools/docker/alpine/](tools/docker/alpine/).
-  - Arch Linux 32 works. See [archlinux.md](docs/archlinux.md) for building an image.
-- ReactOS works.
-- FreeDOS, Windows 1.01 and MS-DOS run very well.
-- KolibriOS works.
-- Haiku works.
-- Android-x86 has been tested up to 4.4-r2.
-- Windows 1, 3.x, 95, 98, ME, NT and 2000 work reasonably well.
-  - In Windows 2000 and higher the PC type has to be changed from ACPI PC to Standard PC
-  - There are some known boot issues ([#250](https://github.com/copy/v86/issues/250), [#433](https://github.com/copy/v86/issues/433), [#507](https://github.com/copy/v86/issues/507), [#555](https://github.com/copy/v86/issues/555), [#620](https://github.com/copy/v86/issues/620), [#645](https://github.com/copy/v86/issues/645))
-  - See [Windows 9x guest setup](docs/windows-9x.md)
-- Windows XP, Vista and 8 work under certain conditions (see [#86](https://github.com/copy/v86/issues/86), [#208](https://github.com/copy/v86/issues/208))
-  - See [Windows NT guest setup](docs/windows-nt.md)
-- Many hobby operating systems work.
-- 9front works.
-- Plan 9 doesn't work.
-- QNX works.
-- OS/2 doesn't work.
-- FreeBSD works.
-- OpenBSD works with a specific boot configuration. At the `boot>` prompt type
-  `boot -c`, then at the `UKC>` prompt `disable mpbios` and `exit`.
-- NetBSD works only with a custom kernel, see [#350](https://github.com/copy/v86/issues/350).
-- SerenityOS works (only 32-bit versions).
-- [SkiftOS](https://skiftos.org/) works.
+- Long mode: EFER.LME/LMA/SCE/NXE, 64-bit and compatibility code segments,
+  canonical 48-bit linear addresses, 4-level paging with 4 KiB and 2 MiB
+  pages, NX, SMEP. The TLB covers the full 48-bit address space (flat for the
+  low 4 GiB, hashed above).
+- 64-bit instructions: REX prefixes and 16 GPRs, RIP-relative addressing,
+  default-64 opcodes, `movsxd`, `cmpxchg16b`, qword string ops including
+  `rep` forms, `moffs64`, `rdrand`, 64-bit far calls, jumps and returns.
+- SSE through SSE3, with all 16 xmm registers in 64-bit mode, REX.W GPR<->XMM
+  moves and conversions, and `fxsave`/`fxrstor` in 64-bit format.
+- System: 16-byte IDT gates, 64-bit interrupt frames, TSS RSP0-2 and IST stack
+  switches, `iretq`, `syscall`/`sysret`, `swapgs`, FS/GS/KERNEL_GS_BASE MSRs,
+  NMIs.
+- CPUID reports the x86-64-v1 baseline plus SSE3, POPCNT, RDRAND, NX,
+  LAHF/SAHF and SMEP, with 48 linear and 32 physical address bits.
+- An x87 FPU using Berkeley SoftFloat (precise, but slow).
+- Two execution engines that share one instruction table: an interpreter and
+  a JIT that compiles hot guest code to wasm modules. 64-bit code has its own
+  JIT tables (`gen/generate_jit64.js`); registers live in i64 wasm locals, and
+  the common integer instructions, conditions, branches and memory accesses
+  are compiled natively.
 
-You can get some information on the disk images here: https://github.com/copy/images.
+**Devices**: local APIC and IOAPIC, 8259 PIC, 8254 PIT, CMOS RTC, ACPI, a PCI
+bus, an IDE controller with CD-ROM (including a built-in ISO 9660 generator),
+a floppy controller, PS/2 keyboard and mouse, a VGA card with SVGA and Bochs
+VBE extensions (Linux's `bochs` DRM driver binds to it), an NE2000 network
+card, virtio (9p filesystem, network, console, balloon), a SoundBlaster 16, a
+serial port and a Hayes-compatible modem.
 
-## How to build, run and embed?
+**Limits**: one CPU, guest physical memory up to 4 GiB (wasm32), no 1 GiB
+pages, no x2APIC, no SSSE3/SSE4/AVX, no 3D graphics (OpenGL in guests is
+software-rendered).
 
-You need:
+## Getting started
 
-- make
-- Rust with the wasm32-unknown-unknown target
-- A version of clang compatible with Rust
-- java (for Closure Compiler, not necessary when using `debug.html`)
-- nodejs (a recent version is required, v24.16 is known to be working)
-- To run tests: nasm, gdb, qemu-system, gcc, libc-i386 and rustfmt
+You need make, Rust with the `wasm32-unknown-unknown` target, a clang
+compatible with your Rust, Java (for Closure Compiler) and a recent Node.js
+(v24.16 is known to work).
+[tools/docker/test-image/Dockerfile](tools/docker/test-image/Dockerfile) has a
+full setup for Debian or WSL.
 
-See [tools/docker/test-image/Dockerfile](tools/docker/test-image/Dockerfile)
-for a full setup on Debian or
-[WSL](https://docs.microsoft.com/en-us/windows/wsl/install).
+```sh
+make all                          # build/libv86.js and build/v86.wasm (index.html)
+make                              # debug build (debug.html)
+./tools/serve.mjs --port 8000     # static server with HTTP range requests
+```
 
-- Run `make` to build the debug build (at `debug.html`).
-- Run `make all` to build the optimized build (at `index.html`).
-- ROM and disk images are loaded via XHR, so if you want to try out `index.html`
-  locally, make sure to serve it from a local webserver. You can use `make run`
-  to serve the files using Python's http module.
-- If you only want to embed v86 in a webpage you can use `libv86.js`. For usage,
-  check out the [examples](examples/). You can download it from the [release section](https://github.com/copy/v86/releases).
-- For bundler-based setups (Vite/React/Next/Webpack), there is also an official npm package:
-https://www.npmjs.com/package/v86
+Use `tools/serve.mjs` rather than `make run`: 64-bit distribution ISOs are
+several GB and are streamed with range requests, which Python's http.server
+doesn't support.
 
-  This package was originally maintained by [@giulioz](https://github.com/giulioz) (bundler-optimized fork) and was made "official" for this repo by [@basicer](https://github.com/basicer) with the author's permission.
-  It is published automatically from this repository via GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml), Upload release job) on pushes to `master` and uses `npm publish --provenance`.
+**Xubuntu 24.04 in the browser.** Download the ISO into `images/` (the
+commands are at the top of [examples/xubuntu.html](examples/xubuntu.html)) and
+open http://localhost:8000/examples/xubuntu.html. Add `?serial` to see the
+serial console, `?mem=<MiB>` to change the memory size.
 
-  Install: `npm install v86`
+**Alpine x86_64 in Node.js.** This boots the ISO, logs in on the serial
+console and checks `uname -m`:
 
-### Alternatively, to build using Docker
+```sh
+ALPINE_ISO=images/alpine-virt-3.19.1-x86_64.iso ./tests/longmode/alpine.js
+```
 
-- If you have Docker installed, you can run the whole system inside a container.
-- See `tools/docker/exec` to find the Dockerfile required for this.
-- You can run `docker build -f tools/docker/exec/Dockerfile -t v86:alpine-3.19 .` from the root directory to generate docker image.
-- Then you can simply run `docker run -it -p 8000:8000 v86:alpine-3.19` to start the server.
-- Check `localhost:8000` for hosted server.
+## Embedding
 
-### Running via Dev Container
-
-- If you are using an IDE that supports Dev Containers, such as GitHub Codespaces, the Visual Studio Code Remote Container extension, or possibly others such as Jetbrains' IntelliJ IDEA, you can setup the development environment in a Dev Container.
-- Follow the instructions from your development environment to setup the container.
-- Run the Task "Fetch images" in order to download images for testing.
-
-## Testing
-
-The disk images for testing are not included in this repository. You can
-download them directly from the website using:
-
-`mkdir -p images && curl --compressed --output-dir images/ --remote-name-all https://i.copy.sh/{linux.iso,linux3.iso,linux4.iso,buildroot-bzimage68.bin,TinyCore-11.0.iso,oberon.img,msdos.img,openbsd-floppy.img,kolibri.img,windows101.img,os8.img,freedos722.img,mobius-fd-release5.img,msdos622.img}`
-
-Run integration tests: `make tests`
-
-Run all tests: `make jshint rustfmt kvm-unit-test nasmtests nasmtests-force-jit expect-tests jitpagingtests qemutests rust-test tests`
-
-See [tests/Readme.md](tests/Readme.md) for more information.
-
-## API examples
-
-- [Basic](examples/basic.html)
-- [Programmatically using the serial terminal](examples/serial.html)
-- [A Lua interpreter](examples/lua.html)
-- [Two instances in one window](examples/two_instances.html)
-- [Networking between browser windows/tabs using the Broadcast Channel API](examples/broadcast-network.html)
-- [TCP Terminal (fetch-based networking)](examples/tcp_terminal.html)
-- [Saving and restoring emulator state](examples/save_restore.html)
-
-Using v86 for your own purposes is as easy as:
+The JavaScript API is the same for 32-bit and 64-bit guests. Load
+`build/libv86.js` and point it at a 64-bit ISO, or at a 64-bit `bzimage` plus
+`initrd`:
 
 ```javascript
-var emulator = new V86({
+const emulator = new V86({
+    wasm_path: "build/v86.wasm",
+    memory_size: 2048 * 1024 * 1024,
+    vga_memory_size: 32 * 1024 * 1024,   // 16-32 MiB for large framebuffers
     screen_container: document.getElementById("screen_container"),
-    bios: {
-        url: "../../bios/seabios.bin",
-    },
-    vga_bios: {
-        url: "../../bios/vgabios.bin",
-    },
-    cdrom: {
-        url: "../../images/linux.iso",
-    },
+    bios: { url: "bios/seabios.bin" },
+    vga_bios: { url: "bios/vgabios.bin" },
+    cdrom: { url: "images/distro-amd64.iso", async: true },  // streamed
+    acpi: true,                          // needed for kernels that use the IOAPIC
     autostart: true,
 });
 ```
 
-See [v86.d.ts](v86.d.ts) for TypeScript definitions. You can use `make doc` (TypeDoc) or `make denodoc` (Deno) to generate HTML documentation in `./docs/api/`.
+See [v86.d.ts](v86.d.ts) for the TypeScript definitions (`make doc` or
+`make denodoc` generate HTML documentation in `docs/api/`). More examples:
 
-## Generative AI
+- [Xubuntu 24.04 x86-64 live ISO](examples/xubuntu.html)
+- [Basic](examples/basic.html)
+- [Programmatically using the serial terminal](examples/serial.html)
+- [Saving and restoring emulator state](examples/save_restore.html)
+- [Two instances in one window](examples/two_instances.html)
+- [Running in a web worker](examples/worker.html)
+- [Networking between tabs with the Broadcast Channel API](examples/broadcast-network.html)
+- [TCP terminal (fetch-based networking)](examples/tcp_terminal.html)
+- [Node.js](examples/nodejs.js)
 
-At this time, v86 does not accept pull requests or issues written partially or entirely by generative AI tools.
-Exceptions may be made on a case-by-case basis.
+## Testing
+
+```sh
+make longmode-tests        # long mode: interpreter and JIT_THRESHOLD=1, plus ELF64 multiboot
+make nasmtests             # instruction tests against the host CPU (nasm + gdb)
+make nasmtests-force-jit
+make rust-test expect-tests
+make tests                 # boots guest images (see below)
+make kvm-unit-test
+```
+
+`tests/longmode/longmode.asm` enters long mode from the reset vector and
+checks 70+ results, each a regression test for a long-mode bug. The x86_64
+kvm-unit-tests build from `tests/kvm-unit-tests/`
+(`./configure --arch=x86_64 && make`) and run with
+`node tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/<test>.flat`;
+`access`, `eventinj`, `apic`, `msr`, `vmexit`, `realmode`, `smptest`,
+`port80` and `setjmp` pass.
+
+Guest images for `make tests` aren't in the repository:
+
+```sh
+mkdir -p images && curl --compressed --output-dir images/ --remote-name-all https://i.copy.sh/{linux.iso,linux3.iso,linux4.iso,buildroot-bzimage68.bin,TinyCore-11.0.iso,oberon.img,msdos.img,openbsd-floppy.img,kolibri.img,windows101.img,os8.img,freedos722.img,mobius-fd-release5.img,msdos622.img}
+```
+
+See [tests/Readme.md](tests/Readme.md) for more.
+
+## Documentation
+
+- [TODOS.md](TODOS.md): x86-64 roadmap, design and lessons learned
+- [How it works](docs/how-it-works.md) and [Profiling](docs/profiling.md)
+- [Networking](docs/networking.md) and [dial-up modem networking](docs/modem.md)
+- [9p filesystem](docs/filesystem.md) and [Linux rootfs on 9p](docs/linux-9p-image.md)
+- Guest setup: [Alpine](tools/docker/alpine/), [Arch Linux](docs/archlinux.md),
+  [Debian with Xfce](tools/docker/debian/), [MS-DOS/FreeDOS](docs/dos.md),
+  [Windows 3.1x](docs/windows-31x.md), [Windows 9x](docs/windows-9x.md),
+  [Windows NT](docs/windows-nt.md)
+
+## Contributing: generative AI submissions required
+
+**All contributions to v86_64 must be made with generative AI.** Code, tests,
+documentation and debugging work are expected to be produced by an AI coding
+agent (for example [Claude Code](https://claude.com/claude-code)), with a human
+directing and reviewing it. Hand-written submissions will not be accepted.
+
+- Say which tool and model produced the change in the pull request, and keep
+  the `Co-Authored-By` trailer the agent adds to commits.
+- [TODOS.md](TODOS.md) is written to be handed to an agent with no prior
+  context: it contains the orientation, the patterns for adding 64-bit
+  instructions, and the hard-won lessons about decoding. Point your agent at
+  it first.
+- Every CPU fix needs a regression test (usually a new check in
+  `tests/longmode/`), and 32-bit behaviour must stay bit-identical: run
+  `make nasmtests nasmtests-force-jit longmode-tests` before submitting.
+
+Questions and bug reports go to the
+[issue tracker](https://github.com/portlandhodl/v86_64/issues).
+
+## Relationship to v86
+
+v86_64 is built on [v86](https://github.com/copy/v86) by the v86 contributors,
+and keeps its API (`new V86({...})`) and build outputs (`libv86.js`,
+`v86.wasm`). Upstream v86 does not accept AI-written contributions, so
+v86_64's changes are not submitted upstream. For the 32-bit demos, see
+[copy.sh/v86](https://copy.sh/v86/).
 
 ## License
 
-v86 is distributed under the terms of the Simplified BSD License, see
+v86_64 is distributed under the terms of the Simplified BSD License, see
 [LICENSE](LICENSE). The following third-party dependencies are included in the
 repository under their own licenses:
 
 - [`lib/softfloat/softfloat.c`](lib/softfloat/softfloat.c)
 - [`lib/zstd/zstddeclib.c`](lib/zstd/zstddeclib.c)
 - [`tests/kvm-unit-tests/`](tests/kvm-unit-tests)
-- [`tests/qemutests/`](tests/qemutests)
-- [`src/floppy.js/`](src/floppy.js) contains parts ported from qemu under the MIT license, see LICENSE.MIT.
+- [`tests/qemu/`](tests/qemu)
+- [`src/floppy.js`](src/floppy.js) contains parts ported from qemu under the MIT license, see LICENSE.MIT.
 
 ## Credits
 
+- [v86](https://github.com/copy/v86), which this project is built on
 - CPU test cases via [QEMU](https://wiki.qemu.org/Main_Page)
 - More tests via [kvm-unit-tests](https://www.linux-kvm.org/page/KVM-unit-tests)
 - [zstd](https://github.com/facebook/zstd) support is included for better compression of state images
 - [Berkeley SoftFloat](http://www.jhauser.us/arithmetic/SoftFloat.html) is included to precisely emulate 80-bit floating point numbers
 - [The jor1k project](https://github.com/s-macke/jor1k) for 9p, filesystem and uart drivers
-- [WinWorld](https://winworldpc.com/) sources of some old operating systems
-- [OS/2 Museum](https://www.os2museum.com/) sources of some old operating systems
-- [ArchiveOS](https://archiveos.org/) sources of several operating systems
-
-## More questions?
-
-Shoot me an email to `copy@copy.sh`. Please report bugs on GitHub.
+- [WinWorld](https://winworldpc.com/), [OS/2 Museum](https://www.os2museum.com/) and [ArchiveOS](https://archiveos.org/), sources of several operating systems
