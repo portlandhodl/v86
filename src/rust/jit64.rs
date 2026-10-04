@@ -202,7 +202,7 @@ pub unsafe fn jit64_print_profile() {
 fn gen_call_wrapper(ctx: &mut JitContext, name: &str, mem: Option<&Modrm64>, args: &[A]) {
     gen_profile_count(ctx, name);
     ctx.flags64 = Flags64::Unknown;
-    codegen::gen_move_registers_from_locals_to_memory(ctx);
+    gen_spill_dirty_registers(ctx);
     ctx.builder.const_i32(instruction_ips(ctx));
     ctx.builder.const_i32(ctx.cpu.prefixes as i32);
 
@@ -243,9 +243,23 @@ fn gen_call_wrapper(ctx: &mut JitContext, name: &str, mem: Option<&Modrm64>, arg
 
 /// After a call into the interpreter that may have changed registers: reload them into the
 /// locals, then leave the module if the call returned non-zero (the exit path spills the locals)
+/// Write the registers that may have been changed since the last sync back to memory
+fn gen_spill_dirty_registers(ctx: &mut JitContext) {
+    for i in 0..16 {
+        if ctx.dirty_registers64 & 1 << i != 0 {
+            ctx.builder
+                .const_i32(global_pointers::get_reg64_offset(i) as i32);
+            ctx.builder.get_local_i64(&reg_local(ctx, i));
+            ctx.builder.store_aligned_i64(0);
+        }
+    }
+    ctx.dirty_registers64 = 0;
+}
+
 fn gen_reload_registers_and_exit_if(ctx: &mut JitContext) {
     let exit = ctx.builder.set_new_local();
     codegen::gen_move_registers_from_memory_to_locals(ctx);
+    ctx.dirty_registers64 = 0;
     ctx.builder.get_local(&exit);
     ctx.builder.br_if(ctx.exit_label);
     ctx.builder.free_local(exit);
@@ -263,12 +277,13 @@ pub fn gen_generic_mem(ctx: &mut JitContext, name: &str, m: &Modrm64, args: &[A]
 pub fn gen_interpret_one(ctx: &mut JitContext, instr_flags: &mut u32) {
     gen_profile_count(ctx, "interpret_one");
     ctx.flags64 = Flags64::Unknown;
-    codegen::gen_move_registers_from_locals_to_memory(ctx);
+    gen_spill_dirty_registers(ctx);
     ctx.builder
         .const_i32((ctx.start_of_current_instruction & 0xFFF) as i32);
     ctx.builder.call_fn1_ret("jit64_interpret_one");
     ctx.builder.drop_();
     codegen::gen_move_registers_from_memory_to_locals(ctx);
+    ctx.dirty_registers64 = 0;
     ctx.builder.br(ctx.exit_label);
     *instr_flags |= JIT_INSTR_BLOCK_BOUNDARY_FLAG;
 }
@@ -402,7 +417,7 @@ pub fn instr64_E8_jit64(ctx: &mut JitContext, _imm: i32) {
 /// sti: handle_irqs is called by the block glue one instruction later (interrupt shadow)
 pub fn instr_FB_jit64(ctx: &mut JitContext) {
     // may raise #gp, which changes registers
-    codegen::gen_move_registers_from_locals_to_memory(ctx);
+    gen_spill_dirty_registers(ctx);
     ctx.builder.const_i32(instruction_ips(ctx));
     ctx.builder.call_fn1_ret("jit64_sti");
     gen_reload_registers_and_exit_if(ctx);
@@ -778,6 +793,7 @@ pub fn gen_get_reg(ctx: &mut JitContext, bits: u32, r: u32) {
 /// Write a value to a register. 32-bit writes zero-extend into the full 64-bit register,
 /// 8- and 16-bit writes leave the other bits unchanged
 pub fn gen_set_reg(ctx: &mut JitContext, bits: u32, r: u32, value: &Val) {
+    ctx.dirty_registers64 |= 1 << (if bits == 8 { reg8(ctx, r).0 } else { r });
     match bits {
         8 | 16 => {
             // merge into the register: reg = reg & ~(mask << shift) | (value & mask) << shift
