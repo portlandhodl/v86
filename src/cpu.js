@@ -1113,7 +1113,18 @@ CPU.prototype.create_memory = function(size, minimum_size)
         // zeroed.
         dbg_assert(memory_offset === 0);
         dbg_assert(size % 0x10000 === 0);
-        this.guest_memory.grow(size / 0x10000);
+        // the memory64 JS API takes the page count of 64-bit memories as a BigInt (Chrome);
+        // older engines (Node 22) want a Number
+        const pages = size / 0x10000;
+        try
+        {
+            this.guest_memory.grow(BigInt(pages));
+        }
+        catch(e)
+        {
+            if(!(e instanceof TypeError)) throw e;
+            this.guest_memory.grow(pages);
+        }
         this.mem8 = view(Uint8Array, this.guest_memory, 0, size);
         this.mem32s = view(Uint32Array, this.guest_memory, 0, size / 4);
     }
