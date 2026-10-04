@@ -3486,10 +3486,16 @@ pub unsafe fn switch_seg(reg: i32, selector_raw: i32) -> bool {
         match return_on_pagefault!(lookup_segment_selector(selector), false) {
             Ok(desc) => desc,
             Err(SelectorNullOrInvalid::IsNull) => {
-                // Loading a null selector into SS is permitted on processors
-                // that support Intel 64 (Linux's 32-bit startup relies on
-                // this); the resulting SS is null-but-usable. The stack
-                // size attribute is not changed by a null load.
+                if reg == SS && !(*is_64 && *cpl != 3) {
+                    // a null SS is only permitted in 64-bit mode at cpl < 3
+                    dbg_log!("#GP for loading 0 in SS sel={:x}", selector_raw);
+                    dbg_trace();
+                    trigger_gp(0);
+                    return false;
+                }
+                // In 64-bit mode a null selector in SS is usable (the SS base
+                // is ignored). The stack size attribute is not changed by a
+                // null load.
                 *sreg.offset(reg as isize) = selector_raw as u16;
                 *segment_is_null.offset(reg as isize) = true;
                 update_state_flags();
