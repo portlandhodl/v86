@@ -513,10 +513,8 @@ Tasks:
   to a shell; expect systemd/snapd to take minutes. Find missing 64-bit
   instructions (`unimplemented!()` in instructions_64.rs aborts loudly) and
   CPU bugs the way Alpine was brought up (serial console, `console=ttyS0`).
-- Memory: Ubuntu's live desktop wants >= 4 GiB, server ~1-2 GiB. Guest
-  physical addresses are limited to 4 GiB (the page walk treats bits 32+ as
-  reserved, and wasm32 memory is at most 4 GiB including the VGA memory),
-  so a few GiB is the practical maximum. Measure with memory_size 2-3 GiB.
+- Memory: Ubuntu's live desktop wants >= 4 GiB, server ~1-2 GiB. Work to
+  lift the limit is in progress (branch `guest-ram-64bit`), see §4c.
 - VGA memory: `vga_memory_size` defaults to 8 MiB, enough for 1024x768x32
   and not 1920x1080x32 (8.3 MB); pass 16-32 MiB for larger modes (max 256).
 - Desktop: GNOME Shell needs GL and is likely unusable with llvmpipe at
@@ -530,6 +528,117 @@ Tasks:
   needed for anything beyond a dumb framebuffer.
 
 ---
+
+## 4c. Guest RAM beyond 4 GiB (branch `guest-ram-64bit`, in progress)
+
+Goal: guest RAM up to 16 GiB (V8's limit for 64-bit wasm memories). Design,
+agreed with the user:
+
+- **Two builds.** `v86.wasm` stays as is for guests up to 3 GiB.
+  `v86-mem64.wasm` (cargo feature `mem64`) is loaded when `memory_size` is
+  above 3 GiB. There, guest RAM is a separate 64-bit wasm memory (memory
+  index 1, exported as `guest_memory`), while CPU state, TLBs and the JIT stay
+  in the 32-bit memory 0.
+- **Layout (QEMU-style).** Low RAM is `[0, min(size, 3 GiB))`, the rest at
+  `0x1_0000_0000`. `memory::phys_to_host`/`host_to_phys` map physical
+  addresses to offsets in guest RAM (identity so far).
+- **Rust can't access a second memory.** All guest-RAM accesses go through
+  `src/rust/cpu/guest.rs`. In the mem64 build its functions are exported
+  placeholders (`v86_guest_*`) whose bodies `tools/patch-mem64.mjs` replaces
+  after linking with memory-1 loads/stores. V8 rejects `memory.copy` between a
+  32-bit and a 64-bit memory, so the two cross-memory copies are loops.
+- Node 22 here supports memory64 + multi-memory (memories > 4 GiB and a
+  `Uint8Array` over them work). Bun doesn't; Safari is uncertain.
+
+### Phase 1: 64-bit physical addresses, 3 GiB in the default build (code done, one open bug)
+- Physical addresses are u64 throughout Rust: `Page::page_of(u64)`,
+  `translate_address_*` (via `phys_of_tlb_entry`, which also strips the
+  sign-extension bits of high-half addresses), `do_page_walk` (52-bit
+  `PAE_ENTRY_ADDRESS` masks; `PAE_ENTRY_RSVD` still rejects bits 32+),
+  `string.rs`, jit.rs basic blocks, `CpuContext.eip`, `control_flow.rs`.
+  JS-facing exports keep u32 wrappers (`#[export_name]`); `codegen_finalize`
+  passes the physical address as f64.
+- CR3: new `cr3_high` global at offset 440 (`get_cr3()`); `mov cr3` in 64-bit
+  mode uses all 64 bits. Not yet in the saved state.
+- The real old cap was 2 GiB: Rust allocations are limited to isize::MAX, and
+  several JS shifts went negative at 2^31 (`create_memory`, the `io.js` mmap
+  loop, pack/unpack_memory, CMOS sizes, the `mem32s` length). Guest RAM now
+  comes from `memory.grow` outside the Rust heap; `guest.rs` uses wrapping
+  pointer arithmetic. `create_memory` throws above `MAX_LOW_MEMORY_SIZE`
+  (3 GiB).
+- Virtio descriptor and IDE PRD addresses are read unsigned (`>>> 0`).
+- `tests/api/2g-mem.js` takes `MEMORY_MB` and now fails unless the Lua check
+  prints `ok`.
+- Results against a baseline build of cd1d5cd0 (identical unless noted):
+  longmode 90/90, multiboot64 5/5, nasmtests 15599/15599, expect-tests ok,
+  `cargo test` ok; kvm-unit-tests msr port80 setjmp smptest realmode eventinj
+  apic sieve access pass (memory, idt_test, emulator fail at baseline too);
+  api tests state/reset/floppy/iso9660/reboot fail or hang at baseline too;
+  2g-mem at 2048 MiB passes. bench64: no measurable change (best of 5:
+  130 vs 129 ms 32-bit, 270 vs 264 ms 64-bit). jitpagingtests already hangs
+  at baseline.
+
+**Open bug (blocks Phase 1):** `MEMORY_MB=3072 node tests/api/2g-mem.js`
+boots (`free -m` shows 3023 MB) and the Lua loop runs fast up to ~520000
+pages (~2.1 GB), then slows down about 100x. The guest keeps making progress
+(cr2 of the demand faults advances ~0.6 MB per 10 s). Observations from a
+probe script that prints the cpu state every 10 s:
+- At that point new user pages come from frames around 0x3c000000, i.e.
+  highmem (896 MiB..3 GiB) is used up.
+- eip is always exactly page-aligned (b7ede000, b7f2d000, ...), on a code
+  page whose frame is near the top of RAM (pte be643025).
+- While slow, `jit_get_wasm_table_index_free_list_count() == 0` and
+  `jit_get_cache_size() == 0`: strong lead that the JIT is thrashing (no free
+  wasm table indices, so `jit_clear_cache` on every compile). Same slowdown
+  with `set_jit_config(1, 1)` (MAX_PAGES=1).
+- With `DISABLE_JIT=1` the interpreter reached 370000 pages after 760 s and
+  was still going; not run to the critical point yet.
+
+Next: find out why wasm table indices aren't freed (something keeps
+dirtying and recompiling pages, or modules leak, e.g. a Page/phys mismatch
+between `pages`/`entry_points` and `jit_dirty_page`), check the same
+counters at 2048 MiB, and finish the DISABLE_JIT run.
+
+### Phase 2: mem64 build (started)
+- Done: cargo feature `mem64`; placeholders in `guest.rs`;
+  `tools/patch-mem64.mjs`; Makefile targets `build/v86-mem64.wasm` and
+  `build/v86-mem64-debug.wasm` (build, patch and validate; all 12
+  placeholders survive LTO as separate functions).
+- To do:
+  - `allocate_memory` under mem64: JS grows `guest_memory`, `mem8` = 0.
+  - `tlb_data` becomes u64 under mem64 (host offsets exceed 32 bits).
+  - JIT fast paths (codegen.rs `gen_safe_read`/`_write`/`_read_write`,
+    `gen_get_phys_eip_plus_mem`; jit64.rs `gen_tlb_entry`,
+    `gen_tlb_high_entry`, `gen_pointer_from_entry`, `gen_load`/`gen_store`,
+    `gen_page_switch_check64`): i64 entries, pointer
+    `((entry & !0xFFF) ^ addr) & 0xFFFF_FFFF_FFFF` (strip the sign bits),
+    loads and stores with memarg `0x40|align, 1, offset`. Plan: `*_guest`
+    builder methods that emit today's bytes in the default build.
+  - Slow paths (`safe_*_slow_jit*` in cpu.rs): under mem64 return a 0/1
+    status and store the i64 entry in a fixed global (avoids new function
+    types).
+  - The JIT scratch buffer must live in guest memory: host offset 0xA0000
+    (VGA hole, never accessed as RAM).
+  - wasm_builder: import `"e" "g"` (memory64, limits flag 0x04) after `"m"`
+    and fix the export index. JS: `jit_imports["g"]`, `mem8` over
+    `guest_memory`, pick the wasm in starter.js (with feature detection),
+    zstd worker.
+  - Expect tests and verify-wasmgen-dummy-output need memory64 and
+    multi-memory enabled in wabt if run against the mem64 build.
+
+### Phase 3: RAM above 4 GiB (not started)
+CMOS 0x5b-0x5d (64 KiB units) or fw_cfg `etc/e820` (the shipped SeaBIOS
+reads both); multiboot memory map; CPUID 0x80000008 = 36 physical bits;
+`PAE_ENTRY_RSVD = 0x000F_FFF0_0000_0000`; drop the `load_pdpte` assert; JS
+`phys_to_offset` for read_blob/write_blob, virtio (use `addr_high` and the
+queue registers' high halves) and virtio_balloon; a `high_memory_pages`
+global and `in_mapped_range` for the hole; UI max 16384. Tests: longmode asm
+with page tables and code above 4 GiB, 2g-mem.js at 6 and 15 GiB with a
+64-bit kernel, kvm-unit-tests at 6 GiB, Ubuntu with 8 GiB.
+
+### Phase 4: saved state above 2 GiB (not started)
+pack/unpack_memory chunking, the state.js Int32 header, `cr3_high` and high
+memory in the saved state, bump STATE_VERSION.
 
 ## 5. Hard-won lessons from M1 (read before touching decode)
 

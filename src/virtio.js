@@ -1268,9 +1268,9 @@ VirtQueue.prototype.notify_me_after = function(num_skipped_requests)
 VirtQueue.prototype.get_descriptor = function(table_address, i)
 {
     return {
-        addr_low: this.cpu.read32s(table_address + i * VIRTQ_DESC_ENTRYSIZE),
-        addr_high: this.cpu.read32s(table_address + i * VIRTQ_DESC_ENTRYSIZE + 4),
-        len: this.cpu.read32s(table_address + i * VIRTQ_DESC_ENTRYSIZE + 8),
+        addr_low: this.cpu.read32s(table_address + i * VIRTQ_DESC_ENTRYSIZE) >>> 0,
+        addr_high: this.cpu.read32s(table_address + i * VIRTQ_DESC_ENTRYSIZE + 4) >>> 0,
+        len: this.cpu.read32s(table_address + i * VIRTQ_DESC_ENTRYSIZE + 8) >>> 0,
         flags: this.cpu.read16(table_address + i * VIRTQ_DESC_ENTRYSIZE + 12),
         next: this.cpu.read16(table_address + i * VIRTQ_DESC_ENTRYSIZE + 14),
     };

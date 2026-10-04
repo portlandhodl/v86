@@ -10,13 +10,16 @@ const { V86 } = await import(TEST_RELEASE_BUILD ? "../../build/libv86.mjs" : "..
 
 process.on("unhandledRejection", exn => { throw exn; });
 
+// MEMORY_MB: guest memory size, the test allocates and checks about 90% of it
+const MEMORY_MB = +process.env.MEMORY_MB || 2048;
+
 const config = {
     bios: { url: __dirname + "/../../bios/seabios.bin" },
     vga_bios: { url: __dirname + "/../../bios/vgabios.bin" },
     bzimage: { url: __dirname + "/../../images/buildroot-bzimage68.bin" },
     network_relay_url: "<UNUSED>",
     autostart: true,
-    memory_size: 2 * 1024 * 1024 * 1024,
+    memory_size: MEMORY_MB * 1024 * 1024,
     filesystem: {},
     log_level: 0,
     disable_jit: +process.env.DISABLE_JIT,
@@ -31,7 +34,7 @@ emulator.bus.register("emulator-started", function()
     emulator.create_file("test.lua", Buffer.from(`
 local t = {}
 local m = 1
-while collectgarbage("count") < 1.8 * 1024 * 1024 do
+while collectgarbage("count") < ${MEMORY_MB * 0.88} * 1024 do
     t[m] = string.rep("A", 4096)
     m = m + 1
     if m % 10000 == 0 then
@@ -50,6 +53,7 @@ print("ok")
 
 let ran_command = false;
 let line = "";
+let passed = false;
 
 emulator.add_listener("serial0-output-byte", async function(byte)
 {
@@ -80,8 +84,22 @@ emulator.add_listener("serial0-output-byte", async function(byte)
         emulator.serial0_send("echo test fini''shed\n");
     }
 
+    if(chr === "\n" && new_line === "ok")
+    {
+        passed = true;
+    }
+
     if(chr === "\n" && new_line.startsWith("test finished"))
     {
         emulator.destroy();
+        if(passed)
+        {
+            console.log("[+] Test passed");
+        }
+        else
+        {
+            console.log("[!] Test failed");
+            process.exit(1);
+        }
     }
 });

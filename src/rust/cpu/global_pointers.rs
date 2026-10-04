@@ -109,6 +109,9 @@ pub const eip_phys64: *mut u64 = 376 as *mut u64;
 // for 32-bit paths and JS)
 pub const cr2_64: *mut u64 = 384 as *mut u64;
 
+// bits 32..63 of cr3 (the low half is cr[3]); see cpu::get_cr3
+pub const cr3_high: *mut u32 = 440 as *mut u32;
+
 // gdtr/idtr base as full 64-bit linear addresses (the i32 slots at 568/576 keep
 // low-32 mirrors for JS)
 pub const idtr_offset64: *mut u64 = 392 as *mut u64;

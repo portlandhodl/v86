@@ -5,7 +5,7 @@ import {
     FW_CFG_RAM_SIZE, FW_CFG_NB_CPUS, FW_CFG_MAX_CPUS, FW_CFG_BOOT_MENU,
     FW_CFG_NUMA, FW_CFG_FILE_DIR, FW_CFG_FILE_START,
     FW_CFG_CUSTOM_START, FLAGS_DEFAULT,
-    MMAP_BLOCK_BITS, MMAP_BLOCK_SIZE, MMAP_MAX,
+    MMAP_BLOCK_BITS, MMAP_BLOCK_SIZE, MMAP_MAX, MAX_LOW_MEMORY_SIZE,
     REG_ESP, REG_EBP, REG_ESI, REG_EAX, REG_EBX, REG_ECX, REG_EDX, REG_EDI,
     REG_CS, REG_DS, REG_ES, REG_FS, REG_GS, REG_SS, CR0_PG, CR4_PAE, REG_LDTR,
     FLAG_VM, FLAG_INTERRUPT, FLAG_CARRY, FLAG_ADJUST, FLAG_ZERO, FLAG_SIGN, FLAG_TRAP,
@@ -935,26 +935,26 @@ CPU.prototype.pack_memory = function()
 {
     dbg_assert((this.mem8.length & 0xFFF) === 0);
 
-    const page_count = this.mem8.length >> 12;
+    const page_count = this.mem8.length / 0x1000;
     const nonzero_pages = [];
     for(let page = 0; page < page_count; page++)
     {
-        if(!this.is_memory_zeroed(page << 12, 0x1000))
+        if(!this.is_memory_zeroed(page * 0x1000, 0x1000))
         {
             nonzero_pages.push(page);
         }
     }
 
     const bitmap = new Bitmap(page_count);
-    const packed_memory = new Uint8Array(nonzero_pages.length << 12);
+    const packed_memory = new Uint8Array(nonzero_pages.length * 0x1000);
 
     for(const [i, page] of nonzero_pages.entries())
     {
         bitmap.set(page, 1);
 
-        const offset = page << 12;
+        const offset = page * 0x1000;
         const page_contents = this.mem8.subarray(offset, offset + 0x1000);
-        packed_memory.set(page_contents, i << 12);
+        packed_memory.set(page_contents, i * 0x1000);
     }
 
     return { bitmap, packed_memory };
@@ -964,16 +964,16 @@ CPU.prototype.unpack_memory = function(bitmap, packed_memory)
 {
     this.zero_memory(0, this.memory_size[0]);
 
-    const page_count = this.memory_size[0] >> 12;
+    const page_count = this.memory_size[0] / 0x1000;
     let packed_page = 0;
 
     for(let page = 0; page < page_count; page++)
     {
         if(bitmap.get(page))
         {
-            const offset = packed_page << 12;
+            const offset = packed_page * 0x1000;
             const view = packed_memory.subarray(offset, offset + 0x1000);
-            this.mem8.set(view, page << 12);
+            this.mem8.set(view, page * 0x1000);
             packed_page++;
         }
     }
@@ -1017,24 +1017,23 @@ CPU.prototype.create_memory = function(size, minimum_size)
         size = minimum_size;
         dbg_log("Rounding memory size up to " + size, LOG_CPU);
     }
-    else if((size | 0) < 0)
+    else if(size > MAX_LOW_MEMORY_SIZE)
     {
-        size = Math.pow(2, 31) - MMAP_BLOCK_SIZE;
-        dbg_log("Rounding memory size down to " + size, LOG_CPU);
+        throw new Error("memory_size of " + (size / 1024 / 1024) + " MiB exceeds the maximum of " +
+            (MAX_LOW_MEMORY_SIZE / 1024 / 1024) + " MiB");
     }
 
-    size = ((size - 1) | (MMAP_BLOCK_SIZE - 1)) + 1 | 0;
-    dbg_assert((size | 0) > 0);
-    dbg_assert((size & MMAP_BLOCK_SIZE - 1) === 0);
+    size = Math.ceil(size / MMAP_BLOCK_SIZE) * MMAP_BLOCK_SIZE;
+    dbg_assert(size > 0 && size <= MAX_LOW_MEMORY_SIZE);
 
     console.assert(this.memory_size[0] === 0, "Expected uninitialised memory");
 
     this.memory_size[0] = size;
 
-    const memory_offset = this.allocate_memory(size);
+    const memory_offset = this.allocate_memory(size) >>> 0;
 
     this.mem8 = view(Uint8Array, this.wasm_memory, memory_offset, size);
-    this.mem32s = view(Uint32Array, this.wasm_memory, memory_offset, size >> 2);
+    this.mem32s = view(Uint32Array, this.wasm_memory, memory_offset, size / 4);
 };
 
 /**
@@ -1717,7 +1716,7 @@ CPU.prototype.fill_cmos = function(rtc, settings)
     var memory_above_1m = 0; // in k
     if(this.memory_size[0] >= 1024 * 1024)
     {
-        memory_above_1m = (this.memory_size[0] - 1024 * 1024) >> 10;
+        memory_above_1m = (this.memory_size[0] - 1024 * 1024) / 1024;
         memory_above_1m = Math.min(memory_above_1m, 0xFFFF);
     }
 
@@ -1729,7 +1728,7 @@ CPU.prototype.fill_cmos = function(rtc, settings)
     var memory_above_16m = 0; // in 64k blocks
     if(this.memory_size[0] >= 16 * 1024 * 1024)
     {
-        memory_above_16m = (this.memory_size[0] - 16 * 1024 * 1024) >> 16;
+        memory_above_16m = (this.memory_size[0] - 16 * 1024 * 1024) / 0x10000;
         memory_above_16m = Math.min(memory_above_16m, 0xFFFF);
     }
     rtc.cmos_write(CMOS_MEM_EXTMEM2_LOW, memory_above_16m & 0xFF);

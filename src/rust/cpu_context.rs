@@ -7,7 +7,8 @@ use crate::state_flags::CachedStateFlags;
 
 #[derive(Clone)]
 pub struct CpuContext {
-    pub eip: u32,
+    /// physical address of the next instruction
+    pub eip: u64,
     pub prefixes: u16,
     pub cs_offset: u32,
     pub state_flags: CachedStateFlags,

@@ -231,6 +231,22 @@ build/v86-debug.wasm: $(RUST_FILES) build/softfloat.o build/zstddeclib.o Cargo.t
 	cp build/wasm32-unknown-unknown/debug/v86_64.wasm build/v86-debug.wasm
 	BLOCK_SIZE=K ls -l build/v86-debug.wasm
 
+# Guest RAM in a separate 64-bit memory, used for memory sizes above 3 GiB (see src/rust/cpu/guest.rs)
+build/v86-mem64.wasm: $(RUST_FILES) build/softfloat.o build/zstddeclib.o Cargo.toml tools/patch-mem64.mjs
+	mkdir -p build/
+	cargo rustc --release --features mem64 --target-dir build/mem64 $(CARGO_FLAGS)
+	cp build/mem64/wasm32-unknown-unknown/release/v86_64.wasm build/v86-mem64.wasm
+	-$(WASM_OPT) && wasm-opt -O2 --strip-debug build/v86-mem64.wasm -o build/v86-mem64.wasm
+	./tools/patch-mem64.mjs build/v86-mem64.wasm build/v86-mem64.wasm
+	BLOCK_SIZE=K ls -l build/v86-mem64.wasm
+
+build/v86-mem64-debug.wasm: $(RUST_FILES) build/softfloat.o build/zstddeclib.o Cargo.toml tools/patch-mem64.mjs
+	mkdir -p build/
+	cargo rustc --features mem64 --target-dir build/mem64 $(CARGO_FLAGS)
+	cp build/mem64/wasm32-unknown-unknown/debug/v86_64.wasm build/v86-mem64-debug.wasm
+	./tools/patch-mem64.mjs build/v86-mem64-debug.wasm build/v86-mem64-debug.wasm
+	BLOCK_SIZE=K ls -l build/v86-mem64-debug.wasm
+
 build/v86-fallback.wasm: $(RUST_FILES) build/softfloat.o build/zstddeclib.o Cargo.toml
 	mkdir -p build/
 	cargo rustc --release $(CARGO_FLAGS_SAFE)

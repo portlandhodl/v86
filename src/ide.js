@@ -1958,7 +1958,7 @@ IDEInterface.prototype.do_atapi_dma = function()
     var data = this.data;
 
     do {
-        var addr = this.cpu.read32s(prdt_start);
+        var addr = this.cpu.read32s(prdt_start) >>> 0;
         var count = this.cpu.read16(prdt_start + 4);
         var end = this.cpu.read8(prdt_start + 7) & 0x80;
 
@@ -2364,7 +2364,7 @@ IDEInterface.prototype.do_ata_read_sectors_dma = function()
         dbg_assert(orig_prdt_start === prdt_start);
 
         do {
-            var prd_addr = this.cpu.read32s(prdt_start);
+            var prd_addr = this.cpu.read32s(prdt_start) >>> 0;
             var prd_count = this.cpu.read16(prdt_start + 4);
             var end = this.cpu.read8(prdt_start + 7) & 0x80;
 
@@ -2488,7 +2488,7 @@ IDEInterface.prototype.do_ata_write_sectors_dma = function()
     const buffer = new Uint8Array(byte_count);
 
     do {
-        var prd_addr = this.cpu.read32s(prdt_start);
+        var prd_addr = this.cpu.read32s(prdt_start) >>> 0;
         var prd_count = this.cpu.read16(prdt_start + 4);
         var end = this.cpu.read8(prdt_start + 7) & 0x80;
 
