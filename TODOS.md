@@ -441,18 +441,33 @@ Done:
 - `set_jit_config(4, 1)` disables the 64-bit JIT, `(5, n)` sets the hotness
   threshold (`JIT_THRESHOLD=1 tests/longmode/run.js` in `make longmode-tests`).
 
-Next (measure with `set_jit_config(6, 1)` + `jit64_print_profile()` on a debug
-build, which counts the remaining interpreter calls per instruction):
-- Spills around interpreter calls copy all 16 registers both ways; track
-  dirty/stale registers within a block to spill only what's needed.
-- Remaining hot interpreter calls in the Alpine boot: adc/sbb, bt, cmpxchg/
-  xadd, rep movs/stos, pushf, cli, 8/16-bit shifts, SSE moves.
+Where the time goes now (Alpine ISO boot, `make with-profiler` +
+`emulator.get_instruction_stats()`): 96.5% of the ~6G instructions run
+compiled, at ~43 instructions per module entry (136M entries; 124M exits go
+to a different page, 63M of 81M indirect jumps - mostly ret - have no entry
+in the current module). Module transitions (main loop + dispatch + loading/
+storing 16 register locals) are now the largest overhead, followed by 24M
+TLB misses (page walks; user TLB entries are flushed on every CR3 write).
+Larger modules (`set_jit_config(1, n)`, `JIT_MAX_PAGES` for alpine.js) were
+slower (6 pages: 29s, 12 pages: 34s vs 26s), compile time dominates.
+After login the shell is interactive: `ls -la /usr/bin` 68ms, `apk info`
+270ms, 10 process spawns 84ms (host time).
+
+Next (measure interpreter calls with `set_jit_config(6, 1)` +
+`jit64_print_profile()` on a debug build):
+- Cheaper module transitions: load/store only the registers a module uses
+  (needs the set before code generation, or patching the prologue), avoid
+  the call to jit_find_cache_entry_in_page64 for returns.
+- Remaining interpreter calls: 8/16-bit shifts, cli, rep movs/stos, popf,
+  SSE moves, mov cr, rdtsc.
 - Inline flags for 8/16-bit operations (conditions currently fall back to a
   call for them).
+- A paging-structure cache to make TLB misses cheaper.
 - Low (<4 GiB) addresses always take the slow path in 64-bit code; add the
   flat-TLB check if non-PIE 64-bit user code matters.
-- The wrappers inline each handler: release wasm grew 2.3 -> 3.0 MB. Consider
-  `#[inline(never)]` on large handlers or one dispatcher per signature.
+- Release wasm grew 2.3 -> 2.95 MB (generated 64-bit codegen tables and the
+  2293 exported `jit64_*` wrappers; handlers aren't duplicated). One
+  dispatcher per wrapper signature would shrink it.
 - ~~The 32-bit JIT's fast-path masks include TLB_NOT_EXECUTABLE~~ — fixed:
   data accesses ignore the NX bit (instruction fetches still check it).
 

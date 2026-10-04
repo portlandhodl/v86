@@ -46,6 +46,13 @@ const emulator = new V86({
     disable_jit: +process.env.DISABLE_JIT,
 });
 
+if(process.env.JIT_MAX_PAGES)
+{
+    emulator.bus.register("emulator-started", () => {
+        emulator.v86.cpu.wm.exports["set_jit_config"](1, +process.env.JIT_MAX_PAGES);
+    });
+}
+
 const start = Date.now();
 const elapsed = () => ((Date.now() - start) / 1000).toFixed(0) + "s";
 

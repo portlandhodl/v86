@@ -620,7 +620,7 @@ fn gen_condition_inline(ctx: &mut JitContext, cc: u8) -> bool {
 
 /// Set up the cpu state for running an instruction's interpreter handler from compiled code:
 /// ips packs the instruction's start (bits 0-11) and end (bits 12-23) within the current page
-#[inline(always)]
+#[inline(never)]
 pub unsafe fn jit64_enter(ips: i32, prefixes: i32) {
     let page = *global_pointers::instruction_pointer & !0xFFF;
     *global_pointers::previous_ip = page | (ips & 0xFFF) as u64;
@@ -633,7 +633,7 @@ pub unsafe fn jit64_enter(ips: i32, prefixes: i32) {
     }
 }
 
-#[inline(always)]
+#[inline(never)]
 pub unsafe fn jit64_leave() -> i32 {
     *global_pointers::prefixes = 0;
     #[cfg(debug_assertions)]
