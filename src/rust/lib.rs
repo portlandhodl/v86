@@ -1,5 +1,6 @@
 #[macro_use]
 mod dbg;
+mod fxhash;
 
 #[macro_use]
 mod paging;

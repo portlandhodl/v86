@@ -23,7 +23,7 @@ use crate::profiler::stat;
 use crate::softfloat;
 use crate::state_flags::CachedStateFlags;
 
-use std::collections::HashSet;
+use crate::fxhash::HashSet;
 use std::ptr;
 
 mod wasm {
