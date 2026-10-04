@@ -40,18 +40,20 @@ mod unsafe_jit {
             state_flags: CachedStateFlags,
             ptr: u32,
             len: u32,
-        );
+        ) -> bool;
         pub fn jit_clear_func(wasm_table_index: WasmTableIndex);
     }
 }
 
+/// Returns true if the module was compiled synchronously, in which case the caller must call
+/// finish_compilation. Otherwise codegen_finalize_finished is called asynchronously
 fn codegen_finalize(
     wasm_table_index: WasmTableIndex,
     phys_addr: u32,
     state_flags: CachedStateFlags,
     ptr: u32,
     len: u32,
-) {
+) -> bool {
     unsafe { unsafe_jit::codegen_finalize(wasm_table_index, phys_addr, state_flags, ptr, len) }
 }
 
@@ -882,14 +884,17 @@ pub fn jit_force_generate_unsafe(virt_addr: i32) {
         !is_near_end_of_page(virt_addr as u32),
         "cannot force compile near end of page"
     );
+    let phys_addr = cpu::translate_address_read(virt_addr as u32 as u64).unwrap();
     jit_increase_hotness_and_maybe_compile(
         virt_addr as u32 as u64,
-        cpu::translate_address_read(virt_addr as u32 as u64).unwrap(),
+        phys_addr,
         cpu::get_seg_cs() as u32,
         cpu::get_state_flags(),
         JIT_THRESHOLD,
     );
-    dbg_assert!(get_jit_state().compiling.is_some());
+    // in progress, or already finished (synchronous compilation)
+    let ctx = get_jit_state();
+    dbg_assert!(ctx.compiling.is_some() || ctx.pages.contains_key(&Page::page_of(phys_addr)));
 }
 
 #[inline(never)]
@@ -1111,14 +1116,17 @@ fn jit_analyze_and_generate(
 
     let phys_addr = page.to_address();
 
-    // will call codegen_finalize_finished asynchronously when finished
-    codegen_finalize(
+    // either compiles synchronously, or calls codegen_finalize_finished asynchronously when
+    // finished
+    if codegen_finalize(
         wasm_table_index,
         phys_addr,
         state_flags,
         ctx.wasm_builder.get_output_ptr() as u32,
         ctx.wasm_builder.get_output_len(),
-    );
+    ) {
+        finish_compilation(ctx, wasm_table_index, phys_addr, state_flags);
+    }
 
     check_jit_state_invariants(ctx);
 }
@@ -1129,8 +1137,20 @@ pub fn codegen_finalize_finished(
     phys_addr: u32,
     state_flags: CachedStateFlags,
 ) {
-    let mut ctx = get_jit_state();
+    finish_compilation(
+        &mut get_jit_state(),
+        wasm_table_index,
+        phys_addr,
+        state_flags,
+    )
+}
 
+fn finish_compilation(
+    ctx: &mut JitState,
+    wasm_table_index: WasmTableIndex,
+    phys_addr: u32,
+    state_flags: CachedStateFlags,
+) {
     dbg_assert!(wasm_table_index != WasmTableIndex(0));
 
     dbg_log!(
@@ -1147,8 +1167,8 @@ pub fn codegen_finalize_finished(
             dbg_assert!(wasm_table_index == in_progress_wasm_table_index);
 
             profiler::stat_increment(stat::INVALIDATE_MODULE_WRITTEN_WHILE_COMPILED);
-            free_wasm_table_index(&mut ctx, wasm_table_index);
-            check_jit_state_invariants(&mut ctx);
+            free_wasm_table_index(ctx, wasm_table_index);
+            check_jit_state_invariants(ctx);
             return;
         },
         Some((in_progress_wasm_table_index, CompilingPageState::Compiling { pages })) => {
@@ -1202,10 +1222,10 @@ pub fn codegen_finalize_finished(
 
         dbg_log!("unused after overwrite {}", index.to_u16());
         profiler::stat_increment(stat::INVALIDATE_MODULE_UNUSED_AFTER_OVERWRITE);
-        free_wasm_table_index(&mut ctx, index);
+        free_wasm_table_index(ctx, index);
     }
 
-    check_jit_state_invariants(&mut ctx);
+    check_jit_state_invariants(ctx);
 }
 
 /// virt_page: the (up to 36-bit) page number of the virtual page

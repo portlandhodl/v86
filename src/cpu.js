@@ -69,6 +69,9 @@ export function CPU(bus, wm, stop_idling)
     this.wasm_patch();
     this.create_jit_imports();
 
+    // see codegen_finalize
+    this.jit_sync_compilation = true;
+
     const memory = this.wm.exports.memory;
 
     this.wasm_memory = memory;
@@ -1860,23 +1863,51 @@ CPU.prototype.codegen_finalize = function(wasm_table_index, start, state_flags, 
         }
     }
 
-    const SYNC_COMPILATION = false;
-
-    if(SYNC_COMPILATION)
+    // Compile synchronously if the host allows it: asynchronous compilation takes from a few
+    // milliseconds to hundreds of milliseconds (it waits for the browser's/v8's background
+    // compile jobs, e.g. tiering up of other modules), during which the code runs in the
+    // interpreter and no other module can be compiled. With lazy function compilation (v8),
+    // synchronous compilation is cheap. Chrome doesn't allow it for modules larger than 4 KB on
+    // the main thread (RangeError), use asynchronous compilation from then on.
+    if(this.jit_sync_compilation)
     {
-        const module = new WebAssembly.Module(code);
-        const result = new WebAssembly.Instance(module, { "e": this.jit_imports });
-        const f = result.exports["f"];
-
-        this.wm.wasm_table.set(wasm_table_index + WASM_TABLE_OFFSET, f);
-        this.codegen_finalize_finished(wasm_table_index, start, state_flags);
-
-        if(this.test_hook_did_finalize_wasm)
+        let module = null;
+        try
         {
-            this.test_hook_did_finalize_wasm(code);
+            module = new WebAssembly.Module(code);
+        }
+        catch(e)
+        {
+            if(!(e instanceof RangeError))
+            {
+                throw e;
+            }
+            dbg_log("Synchronous wasm compilation not allowed, using asynchronous compilation", LOG_CPU);
+            this.jit_sync_compilation = false;
         }
 
-        return;
+        if(module)
+        {
+            const result = new WebAssembly.Instance(module, { "e": this.jit_imports });
+            const f = result.exports["f"];
+
+            this.wm.wasm_table.set(wasm_table_index + WASM_TABLE_OFFSET, f);
+
+            if(this.test_hook_did_finalize_wasm)
+            {
+                // called asynchronously, like for asynchronous compilation (the hook may call
+                // into the jit)
+                Promise.resolve().then(() => {
+                    if(this.test_hook_did_finalize_wasm)
+                    {
+                        this.test_hook_did_finalize_wasm(code);
+                    }
+                });
+            }
+
+            // the caller finishes the compilation (codegen_finalize_finished isn't called)
+            return true;
+        }
     }
 
     const result = WebAssembly.instantiate(code, { "e": this.jit_imports }).then(result => {
@@ -1899,6 +1930,8 @@ CPU.prototype.codegen_finalize = function(wasm_table_index, start, state_flags, 
             throw e;
         });
     }
+
+    return false;
 };
 
 CPU.prototype.log_uncompiled_code = function(start, end)
