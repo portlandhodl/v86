@@ -472,18 +472,43 @@ slower (6 pages: 29s, 12 pages: 34s vs 26s), compile time dominates.
 After login the shell is interactive: `ls -la /usr/bin` 68ms, `apk info`
 270ms, 10 process spawns 84ms (host time).
 
-Next (measure interpreter calls with `set_jit_config(6, 1)` +
-`jit64_print_profile()` on a debug build):
-- Cheaper module transitions: load/store only the registers a module uses
-  (needs the set before code generation, or patching the prologue), avoid
-  the call to jit_find_cache_entry_in_page64 for returns.
-- Remaining interpreter calls: 8/16-bit shifts, cli, rep movs/stos, popf,
-  SSE moves, mov cr, rdtsc.
+Done since (branch jit-perf, bench64 64-bit 508 -> ~620-685 MIPS):
+- imul inline; tlb lookup inline for addresses below 4 GiB (non-PIE layout
+  348 -> 592 MIPS) and for page switches; dead cf saves skipped for inc/dec
+  after known flags; reload after interpreter calls only of the registers
+  the instruction can write.
+- Module chaining: 64-bit modules get the registers as arguments and, at
+  their exit, look up the next entry point inline and continue through a
+  wasm tail call (or branch back to their own dispatcher). Needs tail call
+  support (detected in cpu.js, `set_jit_config(7, 0)` disables it).
+- Release build with codegen-units = 1; `make WASM_OPT=true` (-O3) makes
+  the interpreter ~11% faster.
+
+Where the Alpine boot time goes now (6.1G instructions; note that
+`get_instruction_counter` is u32 and wraps): host profile ~55% jitted code,
+~13% interpreter (177M interpreted instructions, 3% of all, at ~10x the
+cost per instruction), ~8% main loop/dispatch, ~4% interpreter wrappers,
+~2.5% compilation. The guest RIP distribution is a long tail (kernel entry
+code, syscalls, many short processes); TLB misses (0.8M) are not an issue.
+Chaining cut cycle_internal calls 158M -> 30M and makes cross-module calls
+~50% faster in a microbenchmark, but the boot time didn't change
+measurably (+-10% noise on this host). A lower JIT_THRESHOLD is slower
+(compilation: 72 MB of wasm for 459 modules, ~60 KB per page).
+
+Next:
+- Generated code size: 64-bit memory accesses are ~40 wasm instructions
+  inline. Smaller code would make compilation cheaper, which would allow a
+  lower hotness threshold (less interpreted code). E.g. one shared slow
+  path call per module, or per-block reuse of the tlb entry for rsp.
+- Lazy flags in wasm locals with a liveness pass per block (flags are 3-4
+  stores to memory per arithmetic instruction), cmp+jcc fused on locals.
+- Remaining interpreter calls: 8/16-bit shifts, mul/div, cli, rep movs/stos
+  (could be memory.copy/fill within a page), popf, SSE moves, mov cr, rdtsc.
 - Inline flags for 8/16-bit operations (conditions currently fall back to a
   call for them).
+- Code in the last 16 bytes of a page always runs interpreted (5.6M
+  interpreted runs during the Alpine boot).
 - A paging-structure cache to make TLB misses cheaper.
-- Low (<4 GiB) addresses always take the slow path in 64-bit code; add the
-  flat-TLB check if non-PIE 64-bit user code matters.
 - Release wasm grew 2.3 -> 2.95 MB (generated 64-bit codegen tables and the
   2293 exported `jit64_*` wrappers; handlers aren't duplicated). One
   dispatcher per wrapper signature would shrink it.
