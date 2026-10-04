@@ -117,6 +117,11 @@ const expected = [
     50000n,              // 82: inc at a block start preserves cf for adc
     0x4f2ab3636643714n,  // 83: adc/sbb/bt*/cmpxchg/xadd/pushf in a hot loop
     0x200n,              // 84: sysret loads IF from r11 (it was ignored at cpl 3)
+    0x31f72987e3c9ac08n, // 85: imul cf/of (32/64-bit, operands in and out of 32-bit range)
+    0n,                  // 86: scratch slot of test 85, cleared
+    0x941949e38be6f2b0n, // 87: hot loop with blocks on two pages
+    0x254113b2en,        // 88: cf around inc/dec after add/sub
+    0xe4c1f3ac2n,        // 89: registers written by string/sse/x87 instructions
 ];
 
 const emulator = new V86({
@@ -126,6 +131,14 @@ const emulator = new V86({
     log_level: 0,
     disable_jit: +process.env.DISABLE_JIT,
 });
+
+// JIT64_CHAINING=0: don't chain modules (as on hosts without wasm tail calls)
+if(process.env.JIT64_CHAINING === "0")
+{
+    emulator.bus.register("emulator-started", () => {
+        emulator.v86.cpu.wm.exports["set_jit_config"](7, 0);
+    });
+}
 
 // JIT_THRESHOLD=<n>: compile code after n executed instructions instead of the default
 // (a low value exercises the jit on all of the test's code)

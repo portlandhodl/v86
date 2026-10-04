@@ -70,6 +70,9 @@ enum FunctionType {
     FN3_I64_I32_I32_RET,
     FN3_I64_I64_I32_RET,
     FN2_I64_I64_RET_I64,
+
+    // the function of a module for 64-bit code: initial state and the 16 registers
+    FN_JIT64,
     // When adding at the end, update LAST below
 }
 
@@ -79,10 +82,12 @@ impl FunctionType {
         unsafe { transmute(x) }
     }
     pub fn to_u8(self: FunctionType) -> u8 { self as u8 }
-    pub const LAST: FunctionType = FunctionType::FN2_I64_I64_RET_I64;
+    pub const LAST: FunctionType = FunctionType::FN_JIT64;
 }
 
 pub const WASM_MODULE_ARGUMENT_COUNT: u8 = 1;
+/// Parameters of a module for 64-bit code: the initial state and the 16 registers
+pub const WASM_MODULE_ARGUMENT_COUNT_JIT64: u8 = 17;
 
 pub struct WasmBuilder {
     output: Vec<u8>,
@@ -106,6 +111,10 @@ pub struct WasmBuilder {
     free_locals_i64: Vec<WasmLocalI64>,
     local_count: u8,
     pub arg_local_initial_state: WasmLocal,
+    /// number of parameters of the module's function (locals are numbered after them)
+    arg_count: u8,
+    /// whether the module imports the function table (for return_call_indirect)
+    import_function_table: bool,
 }
 
 #[derive(Eq, PartialEq)]
@@ -154,6 +163,8 @@ impl WasmBuilder {
             free_locals_i64: Vec::with_capacity(8),
             local_count: 0,
             arg_local_initial_state: WasmLocal(0),
+            arg_count: WASM_MODULE_ARGUMENT_COUNT,
+            import_function_table: false,
         };
         b.init();
         b
@@ -183,6 +194,8 @@ impl WasmBuilder {
         self.free_locals_i32.clear();
         self.free_locals_i64.clear();
         self.local_count = 0;
+        self.arg_count = WASM_MODULE_ARGUMENT_COUNT;
+        self.import_function_table = false;
 
         dbg_assert!(self.label_to_depth.is_empty());
         dbg_assert!(self.label_stack.is_empty());
@@ -224,7 +237,7 @@ impl WasmBuilder {
         let free_locals_i64 = &self.free_locals_i64;
 
         let locals = (0..self.local_count).map(|i| {
-            let local_index = WASM_MODULE_ARGUMENT_COUNT + i;
+            let local_index = self.arg_count + i;
             if free_locals_i64.iter().any(|v| v.idx() == local_index) {
                 op::TYPE_I64
             }
@@ -291,6 +304,13 @@ impl WasmBuilder {
                 FunctionType::FN3_I64_I32_I32_RET => Some((&[I64, I32, I32], &[I32])),
                 FunctionType::FN3_I64_I64_I32_RET => Some((&[I64, I64, I32], &[I32])),
                 FunctionType::FN2_I64_I64_RET_I64 => Some((&[I64, I64], &[I64])),
+                FunctionType::FN_JIT64 => Some((
+                    &[
+                        I32, I64, I64, I64, I64, I64, I64, I64, I64, I64, I64, I64, I64, I64, I64,
+                        I64, I64,
+                    ],
+                    &[],
+                )),
                 _ => None,
             };
             if let Some((params, results)) = generic {
@@ -555,6 +575,48 @@ impl WasmBuilder {
 
         let new_table_size = self.import_table_size + 7;
         self.set_import_table_size(new_table_size);
+
+        if self.import_function_table {
+            // the table with the compiled modules (for return_call_indirect)
+            let start = self.output.len();
+            self.output.push(1);
+            self.output.push('e' as u8);
+            self.output.push(1);
+            self.output.push('t' as u8);
+            self.output.push(op::EXT_TABLE);
+            self.output.push(op::TYPE_ANYFUNC);
+            self.output.push(0); // no maximum
+            write_leb_u32(&mut self.output, 0); // minimum size
+            let new_import_count = self.import_count + 1;
+            self.set_import_count(new_import_count);
+            let new_table_size = self.import_table_size + (self.output.len() - start);
+            self.set_import_table_size(new_table_size);
+        }
+    }
+
+    /// Generate the function of a module for 64-bit code (type FN_JIT64): the registers are
+    /// passed as parameters 1 to 16. If import_function_table is set, the module can tail-call
+    /// other modules (return_call_indirect_jit64). Call after reset.
+    pub fn set_jit64_function(&mut self, import_function_table: bool) {
+        dbg_assert!(self.local_count == 0);
+        self.arg_count = WASM_MODULE_ARGUMENT_COUNT_JIT64;
+        self.import_function_table = import_function_table;
+    }
+
+    /// The parameter holding register r of a module for 64-bit code
+    pub fn arg_local_reg64(&self, r: u32) -> WasmLocalI64 {
+        dbg_assert!(self.arg_count == WASM_MODULE_ARGUMENT_COUNT_JIT64 && r < 16);
+        WasmLocalI64(1 + r as u8)
+    }
+
+    /// Tail call of the module function in the table at the index on top of the stack, with
+    /// the arguments below it (the initial state and the 16 registers)
+    pub fn return_call_indirect_jit64(&mut self) {
+        dbg_assert!(self.import_function_table);
+        self.instruction_body.push(op::OP_RETURNCALLINDIRECT);
+        self.instruction_body
+            .push(FunctionType::FN_JIT64.to_u8());
+        self.instruction_body.push(0); // table index
     }
 
     fn write_import_entry(&mut self, fn_name: &str, type_index: FunctionType) -> u16 {
@@ -578,7 +640,12 @@ impl WasmBuilder {
         self.output.push(op::SC_FUNCTION);
         self.output.push(2); // length of this section
         self.output.push(1); // count of signature indices
-        self.output.push(FunctionType::FN1.to_u8());
+        self.output.push(if self.arg_count == WASM_MODULE_ARGUMENT_COUNT_JIT64 {
+            FunctionType::FN_JIT64.to_u8()
+        }
+        else {
+            FunctionType::FN1.to_u8()
+        });
     }
 
     pub fn write_export_section(&mut self) {
@@ -592,11 +659,16 @@ impl WasmBuilder {
 
         // index of the exported function
         // function space starts with imports. index of last import is import count - 1
-        // the last import however is a memory, so we subtract one from that
+        // the last import(s) however are the memory (and table), so we subtract those
+        let non_function_imports = if self.import_function_table { 2 } else { 1 };
         let next_op_idx = self.output.len();
         self.output.push(0);
         self.output.push(0); // add 2 bytes for writing 16 byte val
-        write_fixed_leb16_at_idx(&mut self.output, next_op_idx, self.import_count - 1);
+        write_fixed_leb16_at_idx(
+            &mut self.output,
+            next_op_idx,
+            self.import_count - non_function_imports,
+        );
     }
 
     fn get_fn_idx(&mut self, fn_name: &str, type_index: FunctionType) -> u16 {
@@ -631,7 +703,7 @@ impl WasmBuilder {
         match self.free_locals_i32.pop() {
             Some(local) => local,
             None => {
-                let new_idx = self.local_count + WASM_MODULE_ARGUMENT_COUNT;
+                let new_idx = self.local_count + self.arg_count;
                 self.local_count = self.local_count.checked_add(1).unwrap();
                 WasmLocal(new_idx)
             },
@@ -639,7 +711,7 @@ impl WasmBuilder {
     }
     pub fn free_local(&mut self, local: WasmLocal) {
         dbg_assert!(
-            (WASM_MODULE_ARGUMENT_COUNT..self.local_count + WASM_MODULE_ARGUMENT_COUNT)
+            (self.arg_count..self.local_count + self.arg_count)
                 .contains(&local.0)
         );
         self.free_locals_i32.push(local)
@@ -680,7 +752,7 @@ impl WasmBuilder {
         match self.free_locals_i64.pop() {
             Some(local) => local,
             None => {
-                let new_idx = self.local_count + WASM_MODULE_ARGUMENT_COUNT;
+                let new_idx = self.local_count + self.arg_count;
                 self.local_count += 1;
                 WasmLocalI64(new_idx)
             },
@@ -688,7 +760,7 @@ impl WasmBuilder {
     }
     pub fn free_local_i64(&mut self, local: WasmLocalI64) {
         dbg_assert!(
-            (WASM_MODULE_ARGUMENT_COUNT..self.local_count + WASM_MODULE_ARGUMENT_COUNT)
+            (self.arg_count..self.local_count + self.arg_count)
                 .contains(&local.0)
         );
         self.free_locals_i64.push(local)

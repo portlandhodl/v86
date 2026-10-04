@@ -155,11 +155,7 @@ pub fn gen_page_switch_check(
     // After switching a page while in jitted code, check if the page mapping still holds
 
     if ctx.cpu.is_64() {
-        // the tlb lookup for 64-bit addresses isn't inlined (yet)
-        ctx.builder.const_i32(next_block_addr as i32);
-        ctx.builder.call_fn1_ret("jit_page_switch_check64");
-        ctx.builder.br_if(ctx.exit_label);
-        return;
+        return crate::jit64::gen_page_switch_check64(ctx, next_block_addr);
     }
 
     gen_get_eip(ctx.builder);

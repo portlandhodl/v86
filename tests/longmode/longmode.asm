@@ -764,6 +764,144 @@ t83_loop:
     dec ecx
     jnz t83_loop
     mov [r15 + 83*8], r13
+
+    ; ======== test 85: imul cf/of for 32/64-bit, small and large operands, memory
+    ; operand at a low address, jitted (hot loop) ========
+    xor r13, r13
+    mov ecx, 100000
+    mov r14, 0x9E3779B97F4A7C15
+t85_loop:
+    mov eax, ecx
+    imul eax, eax, 0x10001       ; overflows once ecx >= 0x8000
+    pushfq
+    pop rbx
+    and ebx, 0x801
+    add r13, rbx
+    add r13, rax
+    mov [r15 + 86*8], rcx
+    mov eax, 0x7FFF
+    imul eax, [r15 + 86*8]
+    seto bl
+    movzx ebx, bl
+    add r13, rbx
+    add r13, rax
+    mov rax, rcx
+    imul rax, rcx                ; both fit into 32 bits: no overflow
+    seto bl
+    movzx ebx, bl
+    add r13, rbx
+    add r13, rax
+    mov rax, rcx
+    imul rax, r14                ; large operand: overflows
+    jno t85_1
+    add r13, 7
+t85_1:
+    add r13, rax
+    mov rdx, rcx
+    shl rdx, 31                  ; doesn't fit into 32 bits, overflows for large rcx
+    imul rdx, rdx, 3
+    jc t85_2
+    add r13, 11
+t85_2:
+    add r13, rdx
+    mov rdx, rcx
+    neg rdx
+    imul rdx, [r15 + 86*8]       ; negative * positive, fits
+    pushfq
+    pop rbx
+    and ebx, 0x801
+    add r13, rbx
+    add r13, rdx
+    dec ecx
+    jnz t85_loop
+    mov [r15 + 85*8], r13
+    mov qword [r15 + 86*8], 0
+
+    ; ======== test 87: hot loop whose blocks are on two pages (jumps between them
+    ; check the page mapping), jitted ========
+    xor r13, r13
+    mov ecx, 100000
+    jmp t87_a
+t87_done:
+    mov [r15 + 87*8], r13
+
+    ; ======== test 88: cf around inc/dec after add/sub (dead when cmp follows, live
+    ; across mov reg/mem and lea), jitted ========
+    xor r13, r13
+    mov ecx, 100000
+    mov [r15 + 88*8], rcx
+t88_loop:
+    mov eax, ecx
+    add eax, 0xFFFF0000          ; cf set for ecx >= 0x10000
+    inc ebx
+    cmp ebx, ecx                 ; overwrites cf: the inc's saved cf is dead
+    adc r13, 1
+    mov edx, ecx
+    sub edx, 50000               ; cf set for ecx < 50000
+    dec ebx
+    mov rax, [r15 + 88*8]        ; can fault: cf must be saved before it
+    lea rsi, [rax + 1]
+    mov rdi, rsi
+    adc r13, rdi
+    add r13, rbx
+    dec ecx
+    jnz t88_loop
+    mov [r15 + 88*8], r13
+
+    ; ======== test 89: registers written by string, sse and x87 instructions (which
+    ; are interpreter calls in jitted code), jitted (hot loop) ========
+    xor r13, r13
+    mov ecx, 20000
+    lea r12, [r15 + 0x2000]      ; scratch buffer at 0x92000
+    fninit
+t89_loop:
+    mov r14, rcx
+    mov rdi, r12
+    mov rax, r14
+    mov ecx, 4
+    rep stosq                    ; rdi, rcx
+    add r13, rdi
+    add r13, rcx
+    mov rsi, r12
+    lea rdi, [r12 + 64]
+    mov ecx, 32
+    rep movsb                    ; rsi, rdi, rcx
+    add r13, rsi
+    add r13, rdi
+    add r13, rcx
+    lea rsi, [r12 + 64]
+    lodsq                        ; rax, rsi
+    add r13, rax
+    add r13, rsi
+    mov rdi, r12
+    mov al, 0x55
+    mov ecx, 16
+    repne scasb                  ; rdi, rcx
+    add r13, rcx
+    add r13, rdi
+    movq xmm0, r14
+    paddq xmm0, xmm0
+    movdqu [r12 + 128], xmm0
+    movq rbx, xmm0               ; gpr destination
+    add r13, rbx
+    pmovmskb edx, xmm0
+    add r13, rdx
+    cvtsi2sd xmm1, r14
+    cvttsd2si rsi, xmm1
+    add r13, rsi
+    mov [r12 + 192], r14
+    fild qword [r12 + 192]
+    fadd st0, st0
+    fistp qword [r12 + 200]
+    add r13, [r12 + 200]
+    fnstsw ax
+    and eax, 0x4700
+    add r13, rax
+    add r13, [r12 + 128]
+    mov rcx, r14
+    dec ecx
+    jnz t89_loop
+    mov [r15 + 89*8], r13
     jmp t81_done
 t81_func:
     add rax, 1
@@ -912,6 +1050,20 @@ idt_ptr:
 gdt_ptr:
     dw 0x17                      ; 3 entries - 1
     dd 0x800
+
+[bits 64]
+    ; test 87: t87_a is at the end of one page, t87_b at the start of the next
+    times 0x1F00 - ($ - $$) db 0xCC
+t87_a:
+    add r13, rcx
+    imul r13, r13, 3
+    jmp t87_b
+    times 0x2000 - ($ - $$) db 0xCC
+t87_b:
+    xor r13, 0x55
+    dec ecx
+    jnz t87_a
+    jmp t87_done
 
 [bits 16]
     ; reset vector at file offset 0xFFF0

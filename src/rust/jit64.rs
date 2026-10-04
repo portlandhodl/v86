@@ -1,3 +1,4 @@
+
 #![allow(non_snake_case)]
 
 //! Code generation for 64-bit (long mode) code.
@@ -238,11 +239,59 @@ fn gen_call_wrapper(ctx: &mut JitContext, name: &str, mem: Option<&Modrm64>, arg
             dbg_assert!(false, "unsupported wrapper signature");
         },
     }
-    gen_reload_registers_and_exit_if(ctx);
+    let written = gpr_writes_of_current_instruction(ctx);
+    gen_reload_registers_and_exit_if(ctx, written);
 }
 
-/// After a call into the interpreter that may have changed registers: reload them into the
-/// locals, then leave the module if the call returned non-zero (the exit path spills the locals)
+/// The general purpose registers that the interpreter's handler for the current instruction may
+/// write, unless it raises an exception. Conservative: all registers for anything not listed.
+fn gpr_writes_of_current_instruction(ctx: &JitContext) -> u16 {
+    const RAX: u16 = 1 << 0;
+    const RCX: u16 = 1 << 1;
+    const RSI: u16 = 1 << 6;
+    const RDI: u16 = 1 << 7;
+    let mut cpu = ctx.cpu.clone();
+    cpu.eip = ctx.start_of_current_instruction;
+    let mut opcode;
+    loop {
+        opcode = cpu.read_imm8() as u32;
+        match opcode {
+            0x26 | 0x2E | 0x36 | 0x3E | 0x64 | 0x65 | 0x66 | 0x67 | 0xF0 | 0xF2 | 0xF3 => {},
+            0x40..=0x4F => {},
+            _ => break,
+        }
+    }
+    if opcode == 0x0F {
+        opcode = 0x0F00 | cpu.read_imm8() as u32;
+    }
+    match opcode {
+        // x87; only fnstsw ax (DF E0) writes a general purpose register
+        0xD8..=0xDE => 0,
+        0xDF => RAX,
+        // string instructions (also with rep)
+        0xA4..=0xA7 => RCX | RSI | RDI,
+        0xAA | 0xAB | 0xAE | 0xAF => RCX | RDI,
+        0xAC | 0xAD => RAX | RCX | RSI,
+        // sse/mmx with an xmm/mm register or memory as the destination. Not included because
+        // they can write general purpose registers: 0F 2C/2D (cvt to integer), 50 (movmsk),
+        // 78/79, 7E (movd r/m, xmm), AE (rdfsbase etc.), C5 (pextrw), D7 (pmovmskb)
+        0x0F10..=0x0F17
+        | 0x0F28..=0x0F2B
+        | 0x0F2E
+        | 0x0F2F
+        | 0x0F51..=0x0F77
+        | 0x0F7C
+        | 0x0F7D
+        | 0x0F7F
+        | 0x0FC2
+        | 0x0FC4
+        | 0x0FC6
+        | 0x0FD0..=0x0FD6
+        | 0x0FD8..=0x0FFF => 0,
+        _ => 0xFFFF,
+    }
+}
+
 /// Write the registers that may have been changed since the last sync back to memory
 fn gen_spill_dirty_registers(ctx: &mut JitContext) {
     for i in 0..16 {
@@ -256,13 +305,22 @@ fn gen_spill_dirty_registers(ctx: &mut JitContext) {
     ctx.dirty_registers64 = 0;
 }
 
-fn gen_reload_registers_and_exit_if(ctx: &mut JitContext) {
-    let exit = ctx.builder.set_new_local();
+/// After a call into the interpreter (with all registers synced to memory): leave the module if
+/// the call returned non-zero, reloading all registers first since an exception may have changed
+/// any of them (the exit path spills the locals). Otherwise reload the registers in `written`.
+fn gen_reload_registers_and_exit_if(ctx: &mut JitContext, written: u16) {
+    dbg_assert!(ctx.dirty_registers64 == 0);
+    ctx.builder.if_void();
     codegen::gen_move_registers_from_memory_to_locals(ctx);
-    ctx.dirty_registers64 = 0;
-    ctx.builder.get_local(&exit);
-    ctx.builder.br_if(ctx.exit_label);
-    ctx.builder.free_local(exit);
+    ctx.builder.br(ctx.exit_label);
+    ctx.builder.block_end();
+    for i in 0..16 {
+        if written & 1 << i != 0 {
+            ctx.builder
+                .load_fixed_i64(global_pointers::get_reg64_offset(i));
+            ctx.builder.set_local_i64(&reg_local(ctx, i));
+        }
+    }
 }
 
 pub fn gen_generic(ctx: &mut JitContext, name: &str, args: &[A]) {
@@ -420,7 +478,8 @@ pub fn instr_FB_jit64(ctx: &mut JitContext) {
     gen_spill_dirty_registers(ctx);
     ctx.builder.const_i32(instruction_ips(ctx));
     ctx.builder.call_fn1_ret("jit64_sti");
-    gen_reload_registers_and_exit_if(ctx);
+    // registers only change if it raises an exception
+    gen_reload_registers_and_exit_if(ctx, 0);
 }
 
 /// pop r/m: the address is computed after rsp has been incremented, leave it to the interpreter
@@ -698,6 +757,191 @@ pub unsafe fn jit64_test_cc(condition: i32) -> i32 {
     r as i32
 }
 
+/// At the (normal) exit of a module: continue directly with the entry point for the instruction
+/// pointer, like cycle_internal would: by branching to reenter_label (which dispatches on the
+/// initial state) if it's in this module, otherwise through a tail call of the other module that
+/// passes the registers. Falls through if there is none, the cpu halted or the instruction budget
+/// of the current do_many_cycles is used up (so that timers and interrupts are handled). The
+/// instruction counter must have been updated.
+pub fn gen_chain_to_next_module(ctx: &mut JitContext, reenter_label: Label) {
+    use crate::cpu::cpu::{Code, WASM_TABLE_OFFSET};
+    use std::mem::offset_of;
+
+    // !in_hlt && (int)(jit_chain_instruction_limit - instruction_counter) > 0
+    ctx.builder.load_fixed_u8(global_pointers::in_hlt as u32);
+    ctx.builder.eqz_i32();
+    ctx.builder
+        .load_fixed_i32(&raw const cpu::jit_chain_instruction_limit as u32);
+    ctx.builder
+        .load_fixed_i32(global_pointers::instruction_counter as u32);
+    ctx.builder.sub_i32();
+    ctx.builder.const_i32(0);
+    ctx.builder.gt_i32();
+    ctx.builder.and_i32();
+    ctx.builder.if_void();
+    {
+        codegen::gen_get_eip64(ctx.builder);
+        let eip = ctx.builder.set_new_local_i64();
+
+        // code = tlb_code_get(canonicalize(eip) >> 12), a pointer to the page's Code or 0
+        ctx.builder.get_local_i64(&eip);
+        ctx.builder.const_i64(32);
+        ctx.builder.shr_u_i64();
+        ctx.builder.eqz_i64();
+        ctx.builder.if_i32();
+        {
+            ctx.builder.get_local_i64(&eip);
+            ctx.builder.wrap_i64_to_i32();
+            ctx.builder.const_i32(12);
+            ctx.builder.shr_u_i32();
+            ctx.builder.const_i32(2);
+            ctx.builder.shl_i32();
+            ctx.builder
+                .load_aligned_i32(&raw const cpu::tlb_code as u32);
+        }
+        ctx.builder.else_();
+        {
+            ctx.builder.get_local_i64(&eip);
+            ctx.builder.const_i64(16);
+            ctx.builder.shl_i64();
+            ctx.builder.const_i64(28);
+            ctx.builder.shr_u_i64();
+            let page = ctx.builder.tee_new_local_i64();
+            // slot index: tlb_high_index(page)
+            ctx.builder.const_i64(0x9E37_79B9_7F4A_7C15u64 as i64);
+            ctx.builder.mul_i64();
+            ctx.builder.const_i64(25);
+            ctx.builder.shr_u_i64();
+            ctx.builder.wrap_i64_to_i32();
+            ctx.builder.const_i32((TLB_HIGH_SIZE - 1) as i32);
+            ctx.builder.and_i32();
+            let slot = ctx.builder.set_new_local();
+
+            ctx.builder.get_local(&slot);
+            ctx.builder.const_i32(2);
+            ctx.builder.shl_i32();
+            ctx.builder
+                .load_aligned_i32(&raw const cpu::tlb_code_high as u32);
+            ctx.builder.const_i32(0);
+            ctx.builder.get_local(&slot);
+            ctx.builder.const_i32(3);
+            ctx.builder.shl_i32();
+            ctx.builder
+                .load_aligned_i64(&raw const cpu::tlb_high_page as u32);
+            ctx.builder.get_local_i64(&page);
+            ctx.builder.eq_i64();
+            ctx.builder.select();
+            ctx.builder.free_local(slot);
+            ctx.builder.free_local_i64(page);
+        }
+        ctx.builder.block_end();
+        let code = ctx.builder.tee_new_local();
+
+        // code != 0 && code.state_flags == *state_flags
+        ctx.builder.if_void();
+        {
+            ctx.builder.get_local(&code);
+            ctx.builder.load_u8(offset_of!(Code, state_flags) as u32);
+            ctx.builder
+                .load_fixed_u8(global_pointers::state_flags as u32);
+            ctx.builder.eq_i32();
+            ctx.builder.if_void();
+            {
+                // state = code.state_table[eip & 0xFFF]
+                ctx.builder.get_local(&code);
+                ctx.builder.get_local_i64(&eip);
+                ctx.builder.wrap_i64_to_i32();
+                ctx.builder.const_i32(0xFFF);
+                ctx.builder.and_i32();
+                ctx.builder.const_i32(1);
+                ctx.builder.shl_i32();
+                ctx.builder.add_i32();
+                ctx.builder
+                    .load_aligned_u16(offset_of!(Code, state_table) as u32);
+                let state = ctx.builder.tee_new_local();
+                ctx.builder.const_i32(u16::MAX as i32);
+                ctx.builder.ne_i32();
+                ctx.builder.if_void();
+                {
+                    // in this module?
+                    ctx.builder.get_local(&code);
+                    ctx.builder
+                        .load_aligned_u16(offset_of!(Code, wasm_table_index) as u32);
+                    ctx.builder
+                        .const_i32(ctx.wasm_table_index.to_u16() as i32);
+                    ctx.builder.eq_i32();
+                    ctx.builder.if_void();
+                    {
+                        ctx.builder.get_local(&state);
+                        ctx.builder
+                            .set_local(&ctx.builder.arg_local_initial_state.unsafe_clone());
+                        // counted in the instruction counter already
+                        ctx.builder.const_i32(0);
+                        ctx.builder.set_local(&ctx.instruction_counter);
+                        ctx.builder.br(reenter_label);
+                    }
+                    ctx.builder.block_end();
+
+                    codegen::gen_profiler_stat_increment(
+                        ctx.builder,
+                        crate::profiler::stat::RUN_FROM_CACHE,
+                    );
+                    ctx.builder.get_local(&state);
+                    for r in 0..16 {
+                        ctx.builder.get_local_i64(&reg_local(ctx, r));
+                    }
+                    ctx.builder.get_local(&code);
+                    ctx.builder
+                        .load_aligned_u16(offset_of!(Code, wasm_table_index) as u32);
+                    ctx.builder.const_i32(WASM_TABLE_OFFSET as i32);
+                    ctx.builder.add_i32();
+                    ctx.builder.return_call_indirect_jit64();
+                }
+                ctx.builder.block_end();
+                ctx.builder.free_local(state);
+            }
+            ctx.builder.block_end();
+        }
+        ctx.builder.block_end();
+        ctx.builder.free_local(code);
+        ctx.builder.free_local_i64(eip);
+    }
+    ctx.builder.block_end();
+}
+
+/// After jumping to another page within a module: leave the module unless the instruction
+/// pointer still maps to next_block_phys. Checked inline if the page is in the tlb, by
+/// jit_page_switch_check64 otherwise.
+pub fn gen_page_switch_check64(ctx: &mut JitContext, next_block_phys: u32) {
+    let cont = ctx.builder.block_void();
+    codegen::gen_get_eip64(ctx.builder);
+    let address = ctx.builder.set_new_local_i64();
+    let entry = ctx.builder.new_local();
+    gen_tlb_entry(ctx, &address);
+    ctx.builder.tee_local(&entry);
+    let user = if ctx.cpu.cpl3() { TLB_NO_USER } else { 0 };
+    ctx.builder
+        .const_i32(TLB_VALID | TLB_NOT_EXECUTABLE | user | crate::cpu::cpu::TLB_IN_MAPPED_RANGE);
+    ctx.builder.and_i32();
+    ctx.builder.const_i32(TLB_VALID);
+    ctx.builder.eq_i32();
+    gen_pointer_from_entry(ctx, &address, &entry);
+    ctx.builder.const_i32(!0xFFF);
+    ctx.builder.and_i32();
+    ctx.builder
+        .const_i32((next_block_phys & !0xFFF) as i32 + unsafe { crate::cpu::memory::mem8 } as i32);
+    ctx.builder.eq_i32();
+    ctx.builder.and_i32();
+    ctx.builder.br_if(cont);
+    ctx.builder.free_local(entry);
+    ctx.builder.free_local_i64(address);
+
+    ctx.builder.const_i32(next_block_phys as i32);
+    ctx.builder.call_fn1_ret("jit_page_switch_check64");
+    ctx.builder.br_if(ctx.exit_label);
+    ctx.builder.block_end();
+}
+
 /// After jumping to another page within compiled code: returns 1 if the new page isn't mapped
 /// to the physical page the code was compiled for
 #[no_mangle]
@@ -717,7 +961,7 @@ use crate::cpu::cpu::{
     TLB_READONLY, TLB_VALID,
 };
 use crate::prefix::PREFIX_REX_PRESENT as REX_PRESENT;
-use crate::wasmgen::wasm_builder::{WasmLocal, WasmLocalI64};
+use crate::wasmgen::wasm_builder::{Label, WasmLocal, WasmLocalI64};
 
 /// A value in a wasm local: i32 for operand sizes up to 32 bits, i64 for 64 bits
 pub enum Val {
@@ -845,8 +1089,6 @@ fn eip_and_wasm_table_index(ctx: &JitContext) -> i32 {
 
 /// Generate the fast path tlb check for a 64-bit address: sets entry (the low 32 bits of the
 /// tlb entry) and leaves 1 on the stack if the fast path can be used.
-/// Only the tlb for pages at or above 4 GiB (tlb_high_*) is checked inline; accesses to lower
-/// addresses take the slow path.
 fn gen_tlb_fast_path_check(
     ctx: &mut JitContext,
     bits: u32,
@@ -854,6 +1096,62 @@ fn gen_tlb_fast_path_check(
     for_writing: bool,
     entry: &WasmLocal,
 ) {
+    gen_tlb_entry(ctx, address);
+    ctx.builder.tee_local(entry);
+
+    // flags that must be clear (or set) for the fast path
+    let user = if ctx.cpu.cpl3() { TLB_NO_USER } else { 0 };
+    let mask = if for_writing {
+        TLB_VALID | TLB_READONLY | TLB_HAS_CODE | user | crate::cpu::cpu::TLB_IN_MAPPED_RANGE
+    }
+    else {
+        TLB_VALID | user | crate::cpu::cpu::TLB_IN_MAPPED_RANGE
+    };
+    dbg_assert!(mask & (TLB_GLOBAL | TLB_NOT_EXECUTABLE) == 0);
+    ctx.builder.const_i32(mask);
+    ctx.builder.and_i32();
+    ctx.builder.const_i32(TLB_VALID);
+    ctx.builder.eq_i32();
+
+    if bits != 8 {
+        ctx.builder.get_local_i64(address);
+        ctx.builder.wrap_i64_to_i32();
+        ctx.builder.const_i32(0xFFF);
+        ctx.builder.and_i32();
+        ctx.builder.const_i32(0x1000 - (bits / 8) as i32);
+        ctx.builder.le_i32();
+        ctx.builder.and_i32();
+    }
+}
+
+/// Push the low 32 bits of the tlb entry for the page of a 64-bit address (0 if there is none).
+/// Addresses below 4 GiB use the flat tlb (tlb_data), higher ones the hashed tlb (tlb_high_*);
+/// both have the same entry format.
+fn gen_tlb_entry(ctx: &mut JitContext, address: &WasmLocalI64) {
+    ctx.builder.get_local_i64(address);
+    ctx.builder.const_i64(32);
+    ctx.builder.shr_u_i64();
+    ctx.builder.eqz_i64();
+    ctx.builder.if_i32();
+    {
+        // entry = tlb_data[address >> 12]
+        ctx.builder.get_local_i64(address);
+        ctx.builder.wrap_i64_to_i32();
+        ctx.builder.const_i32(12);
+        ctx.builder.shr_u_i32();
+        ctx.builder.const_i32(2);
+        ctx.builder.shl_i32();
+        ctx.builder
+            .load_aligned_i32(&raw const cpu::tlb_data as u32);
+    }
+    ctx.builder.else_();
+    gen_tlb_high_entry(ctx, address);
+    ctx.builder.block_end();
+}
+
+/// Push the low 32 bits of the hashed tlb's entry for the page of a 64-bit address, or 0 (not
+/// valid) if the slot holds a different page
+fn gen_tlb_high_entry(ctx: &mut JitContext, address: &WasmLocalI64) {
     // page = canonicalize(address) >> 12
     ctx.builder.get_local_i64(address);
     ctx.builder.const_i64(16);
@@ -870,45 +1168,21 @@ fn gen_tlb_fast_path_check(
     ctx.builder.wrap_i64_to_i32();
     ctx.builder.const_i32(((TLB_HIGH_SIZE - 1) << 3) as i32);
     ctx.builder.and_i32();
-    let slot = ctx.builder.tee_new_local();
-
-    ctx.builder
-        .load_aligned_i64(&raw const cpu::tlb_high_page as u32);
-    ctx.builder.get_local_i64(&page);
-    ctx.builder.eq_i64();
-    ctx.builder.free_local_i64(page);
+    let slot = ctx.builder.set_new_local();
 
     ctx.builder.get_local(&slot);
     ctx.builder
         .load_aligned_i64(&raw const cpu::tlb_high_entry as u32);
-    ctx.builder.free_local(slot);
     ctx.builder.wrap_i64_to_i32();
-    ctx.builder.tee_local(entry);
-
-    // flags that must be clear (or set) for the fast path
-    let user = if ctx.cpu.cpl3() { TLB_NO_USER } else { 0 };
-    let mask = if for_writing {
-        TLB_VALID | TLB_READONLY | TLB_HAS_CODE | user | crate::cpu::cpu::TLB_IN_MAPPED_RANGE
-    }
-    else {
-        TLB_VALID | user | crate::cpu::cpu::TLB_IN_MAPPED_RANGE
-    };
-    dbg_assert!(mask & (TLB_GLOBAL | TLB_NOT_EXECUTABLE) == 0);
-    ctx.builder.const_i32(mask);
-    ctx.builder.and_i32();
-    ctx.builder.const_i32(TLB_VALID);
-    ctx.builder.eq_i32();
-    ctx.builder.and_i32();
-
-    if bits != 8 {
-        ctx.builder.get_local_i64(address);
-        ctx.builder.wrap_i64_to_i32();
-        ctx.builder.const_i32(0xFFF);
-        ctx.builder.and_i32();
-        ctx.builder.const_i32(0x1000 - (bits / 8) as i32);
-        ctx.builder.le_i32();
-        ctx.builder.and_i32();
-    }
+    ctx.builder.const_i32(0);
+    ctx.builder.get_local(&slot);
+    ctx.builder
+        .load_aligned_i64(&raw const cpu::tlb_high_page as u32);
+    ctx.builder.get_local_i64(&page);
+    ctx.builder.eq_i64();
+    ctx.builder.select();
+    ctx.builder.free_local(slot);
+    ctx.builder.free_local_i64(page);
 }
 
 /// pointer = (entry & ~0xFFF) ^ address
@@ -1101,14 +1375,13 @@ fn gen_set_last_result(ctx: &mut JitContext, bits: u32, value: &Val) {
     }
 }
 fn gen_set_op_size_and_flags_changed(ctx: &mut JitContext, bits: u32, flags_changed: i32) {
+    // last_op_size and flags_changed are adjacent: write both with one store
+    dbg_assert!(global_pointers::flags_changed as u32 == global_pointers::last_op_size as u32 + 4);
     ctx.builder
         .const_i32(global_pointers::last_op_size as i32);
-    ctx.builder.const_i32(opsize(bits));
-    ctx.builder.store_aligned_i32(0);
     ctx.builder
-        .const_i32(global_pointers::flags_changed as i32);
-    ctx.builder.const_i32(flags_changed);
-    ctx.builder.store_aligned_i32(0);
+        .const_i64((flags_changed as u32 as i64) << 32 | opsize(bits) as u32 as i64);
+    ctx.builder.store_aligned_i64(0);
 }
 fn gen_clear_flags(ctx: &mut JitContext, clear: i32) {
     ctx.builder.const_i32(global_pointers::flags as i32);
@@ -1616,26 +1889,90 @@ pub fn gen_shift(ctx: &mut JitContext, kind: u32, bits: u32, dst: Opnd, count: S
     ctx.builder.free_local(count_local);
 }
 
-/// imul r, r/m[, imm]: the flags are computed by a helper (cf/of need the full product)
+/// imul r, r/m[, imm]. cf and of are set if the full product doesn't fit into the destination.
+/// 32-bit: the product of two sign-extended 32-bit values always fits into an i64, so it's
+/// computed inline. 64-bit: inline if both operands fit into 32 bits (then there's no
+/// overflow), otherwise a helper computes the 128-bit product.
 pub fn gen_imul(ctx: &mut JitContext, bits: u32, r: u32, src: Opnd, imm: Option<i64>) {
     dbg_assert!(bits == 32 || bits == 64);
     gen_get_operand(ctx, bits, &src);
+    let a = set_new_val(ctx, bits);
     match imm {
         Some(i) => gen_const(ctx, bits, i),
         None => gen_get_reg(ctx, bits, r),
     }
-    if bits == 64 {
-        ctx.builder.call_fn2_i64_i64_ret_i64("jit64_imul64");
+    let b = set_new_val(ctx, bits);
+
+    if bits == 32 {
+        a.get(ctx);
+        ctx.builder.extend_signed_i32_to_i64();
+        b.get(ctx);
+        ctx.builder.extend_signed_i32_to_i64();
+        ctx.builder.mul_i64();
+        let product = ctx.builder.tee_new_local_i64();
+        ctx.builder.wrap_i64_to_i32();
+        let result = set_new_val(ctx, 32);
+
+        gen_set_last_result(ctx, 32, &result);
+        // flags = flags & ~(cf | of) | (product != sign_extend(result) ? cf | of : 0)
+        ctx.builder.const_i32(global_pointers::flags as i32);
+        ctx.builder.load_fixed_i32(global_pointers::flags as u32);
+        ctx.builder.const_i32(!(FLAG_CARRY | FLAG_OVERFLOW));
+        ctx.builder.and_i32();
+        ctx.builder.const_i32(FLAG_CARRY | FLAG_OVERFLOW);
+        ctx.builder.const_i32(0);
+        ctx.builder.get_local_i64(&product);
+        result.get(ctx);
+        ctx.builder.extend_signed_i32_to_i64();
+        ctx.builder.ne_i64();
+        ctx.builder.select();
+        ctx.builder.or_i32();
+        ctx.builder.store_aligned_i32(0);
+        gen_set_op_size_and_flags_changed(ctx, 32, FLAGS_ALL & !FLAG_CARRY & !FLAG_OVERFLOW);
+        ctx.builder.free_local_i64(product);
+
+        gen_set_reg(ctx, 32, r, &result);
+        result.free(ctx);
     }
     else {
-        ctx.builder.call_fn2_ret("jit64_imul32");
+        let fits_in_32 = |ctx: &mut JitContext, x: &Val| {
+            x.get(ctx);
+            x.get(ctx);
+            ctx.builder.wrap_i64_to_i32();
+            ctx.builder.extend_signed_i32_to_i64();
+            ctx.builder.eq_i64();
+        };
+        fits_in_32(ctx, &a);
+        if imm.map_or(true, |i| i as i32 as i64 != i) {
+            fits_in_32(ctx, &b);
+            ctx.builder.and_i32();
+        }
+        ctx.builder.if_i64();
+        {
+            a.get(ctx);
+            b.get(ctx);
+            ctx.builder.mul_i64();
+            let result = set_new_val(ctx, 64);
+            gen_set_last_result(ctx, 64, &result);
+            gen_clear_flags(ctx, FLAG_CARRY | FLAG_OVERFLOW);
+            gen_set_op_size_and_flags_changed(ctx, 64, FLAGS_ALL & !FLAG_CARRY & !FLAG_OVERFLOW);
+            result.get(ctx);
+            result.free(ctx);
+        }
+        ctx.builder.else_();
+        {
+            a.get(ctx);
+            b.get(ctx);
+            ctx.builder.call_fn2_i64_i64_ret_i64("jit64_imul64");
+        }
+        ctx.builder.block_end();
+        gen_set_reg_from_stack(ctx, 64, r);
     }
-    gen_set_reg_from_stack(ctx, bits, r);
+    b.free(ctx);
+    a.free(ctx);
     ctx.flags64 = Flags64::Unknown;
 }
 
-#[no_mangle]
-pub unsafe fn jit64_imul32(a: i32, b: i32) -> i32 { crate::cpu::arith::imul_reg32(a, b) }
 #[no_mangle]
 pub unsafe fn jit64_imul64(a: u64, b: u64) -> u64 { crate::cpu::arith::imul_reg64(a, b) }
 
@@ -1689,7 +2026,7 @@ fn gen_save_cf(ctx: &mut JitContext) {
         Flags64::Sub(b) | Flags64::Add(b) | Flags64::Logic(b) => b >= 32,
         Flags64::Unknown => false,
     };
-    if !known && next_instructions_overwrite_flags(ctx) {
+    if next_instructions_overwrite_flags(ctx) {
         // the saved cf would be dead
         return;
     }
@@ -1957,8 +2294,12 @@ fn next_instructions_overwrite_flags(ctx: &JitContext) -> bool {
         if writes_all {
             return true;
         }
-        let neutral = matches!(opcode,
-            0x88..=0x8D | 0xC6 | 0xC7 | 0xB0..=0xBF | 0x50..=0x5F | 0x63 | 0x90 | 0x0FB6 | 0x0FB7 | 0x0FBE | 0x0FBF);
+        // instructions that don't use the flags and can't fault (no memory or stack access)
+        let neutral = match opcode {
+            0x88..=0x8B | 0x63 | 0x0FB6 | 0x0FB7 | 0x0FBE | 0x0FBF => cpu.read_imm8() >= 0xC0,
+            0x8D | 0xB0..=0xBF | 0x90 => true,
+            _ => false,
+        };
         if !neutral {
             return false;
         }
