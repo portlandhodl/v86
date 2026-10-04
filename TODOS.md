@@ -369,6 +369,13 @@ Run `grep -n unimplemented src/rust/cpu/instructions_64.rs`. Notable groups:
 - Leaving long mode (clearing PG with LMA set): currently only partially
   handled (see `set_cr0`); real kernels may do this on kexec/panic paths.
 - Task switches, VM86: not needed for a Linux boot; leave.
+- **Compatibility mode (long mode with a 32-bit code segment) is largely
+  unimplemented**: 32-bit binaries under a 64-bit kernel don't work. The page
+  walk keys on EFER.LMA, but interrupt/exception delivery, iret, far
+  transfers and syscall paths key on `is_64` (CS.L), so an interrupt from
+  compat mode goes through the legacy path (`get_tss_ss_esp`), page-faults
+  and recurses until the JS stack overflows. Repro: run the 32-bit
+  `tests/api/memhog` on Alpine x86_64 (found 2026-10-04).
 
 ### 2.7 Validation for M2
 - Extend `tests/longmode/` with: page faults in long mode, syscall/sysret
@@ -639,15 +646,41 @@ frames above 2 GiB with no cliff.
 - Open: expect tests and verify-wasmgen-dummy-output need memory64 and
   multi-memory enabled in wabt to run against the mem64 build.
 
-### Phase 3: RAM above 4 GiB (not started)
-CMOS 0x5b-0x5d (64 KiB units) or fw_cfg `etc/e820` (the shipped SeaBIOS
-reads both); multiboot memory map; CPUID 0x80000008 = 36 physical bits;
-`PAE_ENTRY_RSVD = 0x000F_FFF0_0000_0000`; drop the `load_pdpte` assert; JS
-`phys_to_offset` for read_blob/write_blob, virtio (use `addr_high` and the
-queue registers' high halves) and virtio_balloon; a `high_memory_pages`
-global and `in_mapped_range` for the hole; UI max 16384. Tests: longmode asm
-with page tables and code above 4 GiB, 2g-mem.js at 6 and 15 GiB with a
-64-bit kernel, kvm-unit-tests at 6 GiB, Ubuntu with 8 GiB.
+### Phase 3: RAM above 4 GiB (DONE, some tests open)
+- Layout: low RAM is `[0, min(size, 3 GiB))` (`memory_size`), the rest at
+  `0x1_0000_0000` (`high_memory_size`, u64 global at offset 448, always 0 in
+  the default build). In guest memory, high RAM follows low RAM.
+  `memory::phys_to_host`/`host_to_phys` must be a **bijection on all
+  physical addresses**, not only RAM: tlb entries encode the host address of
+  mmio pages too and `phys_of_tlb_entry` decodes it. Under mem64 the hole
+  `[memory_size, 4 GiB)` therefore maps to `phys + 2^40`. (With a plain
+  "high RAM follows low RAM" mapping, the LFB at 0xE0000000 decoded as high
+  RAM at 0x1_2000_0000: fbcon's `memcpy_toio` overwrote user pages. memhog
+  caught it as 32 zero bytes per page.)
+- `in_mapped_range` covers the hole and everything above the high RAM.
+- Firmware: CMOS 0x5b-0x5d (64 KiB units; SeaBIOS adds the e820 entry),
+  `FW_CFG_RAM_SIZE` is the total, the multiboot memory map gets a high entry
+  (untested).
+- CPUID 0x80000008 reports 36 physical bits (`PHYSICAL_ADDRESS_BITS`) and
+  `PAE_ENTRY_RSVD` follows it, in both builds. The `load_pdpte` assert only
+  rejects bits 52+, so it stays.
+- JS: `cpu.phys_to_offset` for `read_blob`/`write_blob` (64-bit physical
+  addresses as numbers), `jit_dirty_cache` takes f64, `*_phys64` exports
+  (f64 addresses) for virtio: the queue registers' high dwords and
+  descriptor `addr_high` are used (`desc.addr`), as does virtio_balloon.
+  IDE PRDs and ISA DMA stay 32-bit (the guest bounces).
+- `create_memory` accepts up to 16 GiB (`MAX_MEMORY_SIZE`) in the mem64
+  build; starter.js now also resolves the mem64 wasm path like the default
+  one; `make all` builds `v86-mem64.wasm`; UI max 16384.
+- Tests: `tests/api/high-mem.js` (Alpine x86_64 ISO + 9p + parallel 64-bit
+  memhogs over 85% of RAM; `make tests/api/memhog64`) passes at 6 GiB
+  (debug and release) and 12 GiB; 16 GiB boots (16008 MiB in the guest).
+  9p at 6 GiB uses descriptors and rings above 4 GiB (checked).
+- Open: a longmode asm test with page tables and code above 4 GiB (needs a
+  >3 GiB config in tests/longmode), the multiboot high entry, kvm-unit-tests
+  at 6 GiB, Ubuntu with 8 GiB, a 32-bit PAE guest with RAM above 4 GiB
+  (needs a PAE kernel image; the 32-bit memhog can't run on the 64-bit
+  kernel, see §2.6 compatibility mode).
 
 ### Phase 4: saved state above 2 GiB (not started)
 pack/unpack_memory chunking, the state.js Int32 header, `cr3_high` and high

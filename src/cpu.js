@@ -5,7 +5,7 @@ import {
     FW_CFG_RAM_SIZE, FW_CFG_NB_CPUS, FW_CFG_MAX_CPUS, FW_CFG_BOOT_MENU,
     FW_CFG_NUMA, FW_CFG_FILE_DIR, FW_CFG_FILE_START,
     FW_CFG_CUSTOM_START, FLAGS_DEFAULT,
-    MMAP_BLOCK_BITS, MMAP_BLOCK_SIZE, MMAP_MAX, MAX_LOW_MEMORY_SIZE,
+    MMAP_BLOCK_BITS, MMAP_BLOCK_SIZE, MMAP_MAX, MAX_LOW_MEMORY_SIZE, HIGH_MEMORY_START, MAX_MEMORY_SIZE,
     REG_ESP, REG_EBP, REG_ESI, REG_EAX, REG_EBX, REG_ECX, REG_EDX, REG_EDI,
     REG_CS, REG_DS, REG_ES, REG_FS, REG_GS, REG_SS, CR0_PG, CR4_PAE, REG_LDTR,
     FLAG_VM, FLAG_INTERRUPT, FLAG_CARRY, FLAG_ADJUST, FLAG_ZERO, FLAG_SIGN, FLAG_TRAP,
@@ -80,7 +80,12 @@ export function CPU(bus, wm, stop_idling)
     // when present, guest RAM lives there instead of in wasm_memory
     this.guest_memory = this.wm.exports["guest_memory"] || null;
 
+    // RAM below the PCI hole (physical [0, memory_size))
     this.memory_size = view(Uint32Array, memory, 812, 1);
+
+    // mem64 build: RAM above 4 GiB (physical [HIGH_MEMORY_START, HIGH_MEMORY_START + size)),
+    // stored after the low RAM in guest_memory; a u64 as two u32
+    this.high_memory_size = view(Uint32Array, memory, 448, 2);
 
     this.mem8 = new Uint8Array(0);
     this.mem32s = new Int32Array(this.mem8.buffer);
@@ -317,8 +322,27 @@ CPU.prototype.mmap_write128 = function(addr, value0, value1, value2, value3)
 };
 
 /**
+ * The size of RAM above 4 GiB (see high_memory_size)
+ * @return {number}
+ */
+CPU.prototype.get_high_memory_size = function()
+{
+    return this.high_memory_size[0] + this.high_memory_size[1] * 0x100000000;
+};
+
+/**
+ * The offset in mem8 of a physical address in RAM (see memory::phys_to_host)
+ * @param {number} addr
+ * @return {number}
+ */
+CPU.prototype.phys_to_offset = function(addr)
+{
+    return addr < HIGH_MEMORY_START ? addr : addr - HIGH_MEMORY_START + this.memory_size[0];
+};
+
+/**
  * @param {Array.<number>|Uint8Array} blob
- * @param {number} offset
+ * @param {number} offset physical address, may be above 4 GiB
  */
 CPU.prototype.write_blob = function(blob, offset)
 {
@@ -326,22 +350,27 @@ CPU.prototype.write_blob = function(blob, offset)
 
     if(blob.length)
     {
-        dbg_assert(!this.in_mapped_range(offset));
-        dbg_assert(!this.in_mapped_range(offset + blob.length - 1));
+        dbg_assert(!this.in_mapped_range_phys64(offset));
+        dbg_assert(!this.in_mapped_range_phys64(offset + blob.length - 1));
 
         this.jit_dirty_cache(offset, offset + blob.length);
-        this.mem8.set(blob, offset);
+        this.mem8.set(blob, this.phys_to_offset(offset));
     }
 };
 
+/**
+ * @param {number} offset physical address, may be above 4 GiB
+ * @param {number} length
+ */
 CPU.prototype.read_blob = function(offset, length)
 {
     if(length)
     {
-        dbg_assert(!this.in_mapped_range(offset));
-        dbg_assert(!this.in_mapped_range(offset + length - 1));
+        dbg_assert(!this.in_mapped_range_phys64(offset));
+        dbg_assert(!this.in_mapped_range_phys64(offset + length - 1));
     }
-    return this.mem8.subarray(offset, offset + length);
+    const start = this.phys_to_offset(offset);
+    return this.mem8.subarray(start, start + length);
 };
 
 CPU.prototype.clear_opstats = function()
@@ -406,6 +435,15 @@ CPU.prototype.wasm_patch = function()
     this.write16 = get_import("write16");
     this.write32 = get_import("write32");
     this.in_mapped_range = get_import("in_mapped_range");
+
+    // the same with physical addresses that may be above 4 GiB (passed as f64), for devices that
+    // do 64-bit dma (virtio)
+    this.read16_phys64 = get_import("read16_phys64");
+    this.read32s_phys64 = get_import("read32s_phys64");
+    this.write16_phys64 = get_import("write16_phys64");
+    this.write32_phys64 = get_import("write32_phys64");
+    this.in_mapped_range_phys64 = get_import("in_mapped_range_phys64");
+    this.zero_memory_phys64 = get_import("zero_memory_phys64");
 
     // used by nasmtests
     this.fpu_load_tag_word = get_import("fpu_load_tag_word");
@@ -1027,25 +1065,36 @@ CPU.prototype.create_memory = function(size, minimum_size)
         size = minimum_size;
         dbg_log("Rounding memory size up to " + size, LOG_CPU);
     }
-    else if(size > MAX_LOW_MEMORY_SIZE)
+
+    // only the mem64 build can hold RAM above 4 GiB
+    const max_size = this.guest_memory ? MAX_MEMORY_SIZE : MAX_LOW_MEMORY_SIZE;
+
+    if(size > max_size)
     {
         throw new Error("memory_size of " + (size / 1024 / 1024) + " MiB exceeds the maximum of " +
-            (MAX_LOW_MEMORY_SIZE / 1024 / 1024) + " MiB");
+            (max_size / 1024 / 1024) + " MiB");
     }
 
     size = Math.ceil(size / MMAP_BLOCK_SIZE) * MMAP_BLOCK_SIZE;
-    dbg_assert(size > 0 && size <= MAX_LOW_MEMORY_SIZE);
+    dbg_assert(size > 0 && size <= max_size);
 
     console.assert(this.memory_size[0] === 0, "Expected uninitialised memory");
 
-    this.memory_size[0] = size;
+    // QEMU-style layout: RAM up to the PCI hole, the rest at 4 GiB
+    const low_size = Math.min(size, MAX_LOW_MEMORY_SIZE);
+    const high_size = size - low_size;
 
-    const memory_offset = this.allocate_memory(size) >>> 0;
+    this.memory_size[0] = low_size;
+    this.high_memory_size[0] = high_size % 0x100000000;
+    this.high_memory_size[1] = Math.floor(high_size / 0x100000000);
+
+    const memory_offset = this.allocate_memory(low_size) >>> 0;
 
     if(this.guest_memory)
     {
-        // mem64 build: guest RAM is the 64-bit guest_memory, offset 0; grow it here
-        // (rust can't address the second memory). Freshly grown pages are zeroed.
+        // mem64 build: guest RAM is the 64-bit guest_memory, offset 0, low RAM followed by high
+        // RAM; grow it here (rust can't address the second memory). Freshly grown pages are
+        // zeroed.
         dbg_assert(memory_offset === 0);
         dbg_assert(size % 0x10000 === 0);
         this.guest_memory.grow(size / 0x10000);
@@ -1169,7 +1218,8 @@ CPU.prototype.init = function(settings, device_bus)
         }
         else if(value === FW_CFG_RAM_SIZE)
         {
-            this.fw_value = i64(this.memory_size[0], 0);
+            const ram_size = this.memory_size[0] + this.get_high_memory_size();
+            this.fw_value = i64(ram_size % 0x100000000, Math.floor(ram_size / 0x100000000));
         }
         else if(value === FW_CFG_NB_CPUS)
         {
@@ -1475,6 +1525,19 @@ CPU.prototype.load_multiboot_option_rom = function(buffer, initrd, cmdline)
                     }
                 }
                 dbg_assert (!was_memory, "top of 4GB shouldn't have memory");
+
+                const high_memory_size = cpu.get_high_memory_size();
+                if(high_memory_size)
+                {
+                    cpu.write32(multiboot_data, 20); // size
+                    cpu.write32(multiboot_data + 4, 0); // addr (64-bit): HIGH_MEMORY_START
+                    cpu.write32(multiboot_data + 8, HIGH_MEMORY_START / 0x100000000);
+                    cpu.write32(multiboot_data + 12, high_memory_size % 0x100000000); // len (64-bit)
+                    cpu.write32(multiboot_data + 16, Math.floor(high_memory_size / 0x100000000));
+                    cpu.write32(multiboot_data + 20, 1); // type (MULTIBOOT_MEMORY_AVAILABLE)
+                    multiboot_data += 24;
+                    multiboot_mmap_count += 24;
+                }
                 cpu.write32(multiboot_info_addr + 44, multiboot_mmap_count);
             }
 
@@ -1757,10 +1820,12 @@ CPU.prototype.fill_cmos = function(rtc, settings)
     rtc.cmos_write(CMOS_MEM_EXTMEM2_LOW, memory_above_16m & 0xFF);
     rtc.cmos_write(CMOS_MEM_EXTMEM2_HIGH, memory_above_16m >> 8 & 0xFF);
 
-    // memory above 4G (not supported by this emulator)
-    rtc.cmos_write(CMOS_MEM_HIGHMEM_LOW, 0);
-    rtc.cmos_write(CMOS_MEM_HIGHMEM_MID, 0);
-    rtc.cmos_write(CMOS_MEM_HIGHMEM_HIGH, 0);
+    // memory above 4G, in 64k blocks (mem64 build only; read by SeaBIOS into its e820 map)
+    const memory_above_4g = this.get_high_memory_size() / 0x10000;
+    dbg_assert(memory_above_4g < 0x1000000);
+    rtc.cmos_write(CMOS_MEM_HIGHMEM_LOW, memory_above_4g & 0xFF);
+    rtc.cmos_write(CMOS_MEM_HIGHMEM_MID, memory_above_4g >> 8 & 0xFF);
+    rtc.cmos_write(CMOS_MEM_HIGHMEM_HIGH, memory_above_4g >> 16 & 0xFF);
 
     rtc.cmos_write(CMOS_EQUIPMENT_INFO, 0x2F);
 

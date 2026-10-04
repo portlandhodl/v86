@@ -167,10 +167,11 @@ pub const PAGE_TABLE_DIRTY_MASK: i32 = 1 << 6;
 pub const PAGE_TABLE_PSE_MASK: i32 = 1 << 7;
 pub const PAGE_TABLE_GLOBAL_MASK: i32 = 1 << 8;
 // Reserved bits in 64-bit paging-structure entries (PAE/long mode): physical
-// address bits 32..51 — v86 only maps guest memory below 4 GiB. Bits 52..62
-// are ignored (available to software on real hardware), bit 63 is NX (handled
-// separately against EFER.NXE)
-pub const PAE_ENTRY_RSVD: u64 = 0x000F_FFFF_0000_0000;
+// address bits PHYSICAL_ADDRESS_BITS..51. Bits 52..62 are ignored (available to
+// software on real hardware), bit 63 is NX (handled separately against
+// EFER.NXE)
+pub const PHYSICAL_ADDRESS_BITS: u32 = 36;
+pub const PAE_ENTRY_RSVD: u64 = 0x000F_FFFF_FFFF_FFFF & !((1 << PHYSICAL_ADDRESS_BITS) - 1);
 // The address field (bits 12..51) of 64-bit paging-structure entries
 pub const PAE_ENTRY_ADDRESS: u64 = 0x000F_FFFF_FFFF_F000;
 // Reserved bits 20:13 in 2 MiB PDEs (PAE/long mode); 4 MiB PDEs in legacy

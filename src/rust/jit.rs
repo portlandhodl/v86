@@ -2465,8 +2465,9 @@ pub fn jit_dirty_cache(start_addr: u64, end_addr: u64) {
         jit_dirty_page_ctx(&mut get_jit_state(), Page::of_u32(page));
     }
 }
+/// Physical addresses as f64: may exceed 32 bits (and end_addr may be exactly 4 GiB)
 #[export_name = "jit_dirty_cache"]
-pub fn jit_dirty_cache_js(start_addr: u32, end_addr: u32) {
+pub fn jit_dirty_cache_js(start_addr: f64, end_addr: f64) {
     jit_dirty_cache(start_addr as u64, end_addr as u64)
 }
 

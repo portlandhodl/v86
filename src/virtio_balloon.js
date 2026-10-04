@@ -131,7 +131,7 @@ export function VirtioBalloon(cpu, bus)
                             for(let i = 0; i < bufchain.write_buffers.length; ++i) {
                                 let b = bufchain.write_buffers[i];
                                 this.zeroed += b.len;
-                                this.virtio.cpu.zero_memory(b.addr_low, b.len);
+                                this.virtio.cpu.zero_memory_phys64(b.addr, b.len);
                             }
                         }
                         this.virtio.queues[queue_id].push_reply(bufchain);

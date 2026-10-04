@@ -501,7 +501,7 @@ after_nx:
     mov eax, 0x80000008
     cpuid
     and eax, 0xFFFF
-    mov [r15 + 70*8], rax                     ; 0x3020 (48 linear, 32 physical)
+    mov [r15 + 70*8], rax                     ; 0x3024 (48 linear, 36 physical)
 
     ; ======== test 71: write to a page with jit entry points through an alias above 4 GiB ========
     ; PML4[1] aliases the low 1 GiB at 0x8000000000. Dirtying the jit page walks

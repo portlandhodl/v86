@@ -1,8 +1,9 @@
 //! memhog: allocate <MiB> of anonymous memory via brk, fill every word with a
-//! per-page pattern, then verify it. Freestanding (no_std, no libc) 32-bit
-//! program, used by tests/api/2g-mem.js to stress guest RAM.
+//! per-page pattern, then verify it. Freestanding (no_std, no libc) program,
+//! used by tests/api/2g-mem.js to stress guest RAM. Builds as a 32-bit (i686)
+//! or a 64-bit (x86_64) Linux binary.
 //!
-//! Build (no cargo needed): make tests/api/memhog
+//! Build (no cargo needed): make tests/api/memhog tests/api/memhog64
 //!   (two steps: rustc --emit=obj, then link with the bundled rust-lld —
 //!   the stock musl target pulls a crt that conflicts with our _start)
 
@@ -11,12 +12,21 @@
 
 use core::arch::asm;
 
-const SYS_EXIT: u32 = 1;
-const SYS_WRITE: u32 = 4;
-const SYS_BRK: u32 = 45;
+#[cfg(target_arch = "x86")]
+mod nr {
+    pub const EXIT: usize = 1;
+    pub const WRITE: usize = 4;
+    pub const BRK: usize = 45;
+}
+#[cfg(target_arch = "x86_64")]
+mod nr {
+    pub const EXIT: usize = 60;
+    pub const WRITE: usize = 1;
+    pub const BRK: usize = 12;
+}
 
-const PAGE: u32 = 4096;
-const CHUNK: u32 = 16 * 1024 * 1024;
+const PAGE: usize = 4096;
+const CHUNK: usize = 16 * 1024 * 1024;
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! { exit(5) }
@@ -69,22 +79,10 @@ pub unsafe extern "C" fn memcmp(mut a: *const u8, mut b: *const u8, mut n: usize
     0
 }
 
+#[cfg(target_arch = "x86")]
 #[inline(always)]
-fn syscall2(nr: u32, a: u32, b: u32) -> i32 {
-    let ret: i32;
-    unsafe {
-        asm!("int $$0x80",
-             inout("eax") nr => ret,
-             in("ebx") a,
-             in("ecx") b,
-             options(nostack));
-    }
-    ret
-}
-
-#[inline(always)]
-fn syscall3(nr: u32, a: u32, b: u32, c: u32) -> i32 {
-    let ret: i32;
+fn syscall3(nr: usize, a: usize, b: usize, c: usize) -> usize {
+    let ret: usize;
     unsafe {
         asm!("int $$0x80",
              inout("eax") nr => ret,
@@ -96,21 +94,38 @@ fn syscall3(nr: u32, a: u32, b: u32, c: u32) -> i32 {
     ret
 }
 
-fn exit(code: u32) -> ! {
-    syscall2(SYS_EXIT, code, 0);
-    // should not return; make sure we never fall through
-    loop { syscall2(SYS_EXIT, code, 0); }
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn syscall3(nr: usize, a: usize, b: usize, c: usize) -> usize {
+    let ret: usize;
+    unsafe {
+        asm!("syscall",
+             inout("rax") nr => ret,
+             in("rdi") a,
+             in("rsi") b,
+             in("rdx") c,
+             out("rcx") _,
+             out("r11") _,
+             options(nostack));
+    }
+    ret
 }
 
-fn brk(p: u32) -> u32 { syscall2(SYS_BRK, p, 0) as u32 }
+fn exit(code: usize) -> ! {
+    syscall3(nr::EXIT, code, 0, 0);
+    // should not return; make sure we never fall through
+    loop { syscall3(nr::EXIT, code, 0, 0); }
+}
 
-fn write_bytes(p: *const u8, n: usize) { syscall3(SYS_WRITE, 1, p as u32, n as u32); }
+fn brk(p: usize) -> usize { syscall3(nr::BRK, p, 0, 0) }
+
+fn write_bytes(p: *const u8, n: usize) { syscall3(nr::WRITE, 1, p as usize, n); }
 
 fn write_str(s: &str) { write_bytes(s.as_ptr(), s.len()); }
 
-fn print_u32(mut v: u32) {
-    let mut buf = [0u8; 10];
-    let mut i = 10;
+fn print_usize(mut v: usize) {
+    let mut buf = [0u8; 20];
+    let mut i = 20;
     if v == 0 {
         write_str("0");
         return;
@@ -120,7 +135,18 @@ fn print_u32(mut v: u32) {
         buf[i] = b'0' + (v % 10) as u8;
         v /= 10;
     }
-    unsafe { write_bytes(buf.as_ptr().add(i), 10 - i) };
+    unsafe { write_bytes(buf.as_ptr().add(i), 20 - i) };
+}
+
+fn print_hex(v: u32) {
+    let mut buf = [0u8; 10];
+    buf[0] = b'0';
+    buf[1] = b'x';
+    for i in 0..8 {
+        let d = (v >> (28 - 4 * i)) & 0xF;
+        buf[2 + i] = if d < 10 { b'0' + d as u8 } else { b'a' + d as u8 - 10 };
+    }
+    write_bytes(buf.as_ptr(), 10);
 }
 
 fn parse_u32(mut p: *const u8) -> Option<u32> {
@@ -138,11 +164,11 @@ fn parse_u32(mut p: *const u8) -> Option<u32> {
     Some(v)
 }
 
-fn pattern(page_index: u32) -> u32 {
-    page_index.wrapping_mul(2654435761) ^ 0xA5A5A5A5
+fn pattern(page_index: usize) -> u32 {
+    (page_index as u32).wrapping_mul(2654435761) ^ 0xA5A5A5A5
 }
 
-fn c_start(argc: u32, argv: *const *const u8) -> ! {
+fn c_start(argc: usize, argv: *const *const u8) -> ! {
     if argc < 2 {
         write_str("usage: memhog <MiB>\n");
         exit(2);
@@ -158,13 +184,13 @@ fn c_start(argc: u32, argv: *const *const u8) -> ! {
         write_str("too small\n");
         exit(2);
     }
-    let target_bytes = target_mib << 20;
+    let target_bytes = (target_mib as usize) << 20;
 
     let base = brk(0);
     let mut end = base;
 
     write_str("memhog: growing to MiB ");
-    print_u32(target_mib);
+    print_usize(target_mib as usize);
     write_str("\n");
     while end - base < target_bytes {
         let mut want = end + CHUNK;
@@ -172,7 +198,7 @@ fn c_start(argc: u32, argv: *const *const u8) -> ! {
         if remain < CHUNK { want = end + remain; }
         if brk(want) != want {
             write_str("brk failed at MiB ");
-            print_u32((end - base) >> 20);
+            print_usize((end - base) >> 20);
             write_str("\n");
             exit(3);
         }
@@ -192,47 +218,111 @@ fn c_start(argc: u32, argv: *const *const u8) -> ! {
         if (end - base) & 0x3FF_FFFF == 0 {
             // every 64 MiB
             write_str("filled MiB ");
-            print_u32((end - base) >> 20);
+            print_usize((end - base) >> 20);
             write_str("\n");
         }
     }
 
     let mut p = base;
+    let mut bad_pages = 0;
     while p < end {
         let w = p as *const u32;
         let pat = pattern(p >> 12);
         const WORDS: usize = (PAGE / 4) as usize;
         let mut i = 0;
+        let mut bad_words = 0;
+        let mut first_bad = 0;
+        let mut last_bad = 0;
+        let mut first_found = 0;
         while i < WORDS {
-            if unsafe { w.add(i).read_volatile() } != pat {
-                write_str("MISMATCH at byte ");
-                print_u32(p - base);
-                write_str("\n");
-                exit(4);
+            let found = unsafe { w.add(i).read_volatile() };
+            if found != pat {
+                if bad_words == 0 {
+                    first_bad = i;
+                    first_found = found;
+                }
+                last_bad = i;
+                bad_words += 1;
             }
             i += 1;
         }
+        if bad_words != 0 {
+            write_str("MISMATCH at byte ");
+            print_usize(p - base + 4 * first_bad);
+            write_str(" found ");
+            print_hex(first_found);
+            write_str(" expected ");
+            print_hex(pat);
+            // a value of another page of ours: a write landed in the wrong page
+            let mut q = base;
+            while q < end {
+                if pattern(q >> 12) == first_found {
+                    write_str(" (the pattern of byte ");
+                    print_usize(q - base);
+                    write_str(")");
+                    break;
+                }
+                q += PAGE;
+            }
+            write_str("; bad words in page: ");
+            print_usize(bad_words);
+            write_str(" up to page offset ");
+            print_usize(4 * last_bad);
+            if bad_pages == 0 {
+                write_str("; at");
+                let mut j = 0;
+                let mut n = 0;
+                while j < WORDS && n < 32 {
+                    if unsafe { w.add(j).read_volatile() } != pat {
+                        write_str(" ");
+                        print_usize(4 * j);
+                        n += 1;
+                    }
+                    j += 1;
+                }
+            }
+            write_str("\n");
+            bad_pages += 1;
+            if bad_pages == 8 {
+                break;
+            }
+        }
         p += PAGE;
+    }
+    if bad_pages != 0 {
+        exit(4);
     }
 
     write_str("verified MiB ");
-    print_u32((end - base) >> 20);
+    print_usize((end - base) >> 20);
     write_str("\nok\n");
     exit(0);
 }
 
+#[cfg(target_arch = "x86")]
 core::arch::global_asm!(
     ".global _start",
     "_start:",
     "  mov eax, [esp]",        // argc
     "  lea ebx, [esp + 4]",    // argv
     "  and esp, -16",
+    "  sub esp, 8",            // 16-byte aligned at the call (two pushes follow)
     "  push ebx",
     "  push eax",
     "  call c_start_entry",
 );
 
+#[cfg(target_arch = "x86_64")]
+core::arch::global_asm!(
+    ".global _start",
+    "_start:",
+    "  mov rdi, [rsp]",        // argc
+    "  lea rsi, [rsp + 8]",    // argv
+    "  and rsp, -16",
+    "  call c_start_entry",
+);
+
 #[no_mangle]
-unsafe extern "C" fn c_start_entry(argc: u32, argv: *const *const u8) -> ! {
+unsafe extern "C" fn c_start_entry(argc: usize, argv: *const *const u8) -> ! {
     c_start(argc, argv)
 }

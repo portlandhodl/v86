@@ -3772,11 +3772,12 @@ pub unsafe fn instr_0FA2() {
 
         0x80000008 => {
             // address sizes: eax[7:0] = physical, eax[15:8] = linear.
-            // Physical is 32 bits, matching the page walk, which treats entry
-            // bits 32..51 as reserved (PAE_ENTRY_RSVD). Linux derives
+            // Physical matches the page walk, which treats the entry bits
+            // above it as reserved (PAE_ENTRY_RSVD); 36 bits cover the
+            // largest guest (16 GiB, the rest above 4 GiB). Linux derives
             // x86_virt_bits from the linear width; getting it wrong makes
             // copy_from_kernel_nofault reject every kernel address.
-            eax = 32 | 48 << 8;
+            eax = PHYSICAL_ADDRESS_BITS as i32 | 48 << 8;
         },
 
         0x40000000 => {

@@ -121,12 +121,7 @@ export function V86(options)
                 let v86_bin = DEBUG ? "v86-debug.wasm" : "v86.wasm";
                 let v86_bin_fallback = "v86-fallback.wasm";
 
-                if(options.wasm_path)
-                {
-                    v86_bin = options.wasm_path;
-                    v86_bin_fallback = v86_bin.replace("v86.wasm", "v86-fallback.wasm");
-                }
-                else if(options.memory_size > MAX_LOW_MEMORY_SIZE)
+                if(options.memory_size > MAX_LOW_MEMORY_SIZE)
                 {
                     // guest RAM above 3 GiB needs the mem64 build (a separate
                     // 64-bit wasm memory); requires memory64 + multi-memory
@@ -134,15 +129,21 @@ export function V86(options)
                     v86_bin = DEBUG ? "v86-mem64-debug.wasm" : "v86-mem64.wasm";
                     v86_bin_fallback = null;
                 }
+
+                if(options.wasm_path)
+                {
+                    v86_bin = options.wasm_path;
+                    v86_bin_fallback = v86_bin_fallback && v86_bin.replace("v86.wasm", "v86-fallback.wasm");
+                }
                 else if(typeof window === "undefined" && typeof __dirname === "string")
                 {
                     v86_bin = __dirname + "/" + v86_bin;
-                    v86_bin_fallback = __dirname + "/" + v86_bin_fallback;
+                    v86_bin_fallback = v86_bin_fallback && __dirname + "/" + v86_bin_fallback;
                 }
                 else
                 {
                     v86_bin = "build/" + v86_bin;
-                    v86_bin_fallback = "build/" + v86_bin_fallback;
+                    v86_bin_fallback = v86_bin_fallback && "build/" + v86_bin_fallback;
                 }
 
                 load_file(v86_bin, {
