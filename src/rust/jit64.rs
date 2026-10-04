@@ -160,6 +160,7 @@ fn instruction_ips(ctx: &JitContext) -> i32 {
 /// handler, and leave the compiled code if it raised an exception.
 /// mem: the memory operand, passed as the first argument
 fn gen_call_wrapper(ctx: &mut JitContext, name: &str, mem: Option<&Modrm64>, args: &[A]) {
+    ctx.flags64 = Flags64::Unknown;
     ctx.builder.const_i32(instruction_ips(ctx));
     ctx.builder.const_i32(ctx.cpu.prefixes as i32);
 
@@ -208,6 +209,7 @@ pub fn gen_generic_mem(ctx: &mut JitContext, name: &str, m: &Modrm64, args: &[A]
 /// Run the current instruction in the interpreter (for encodings that the 64-bit jit doesn't
 /// decode itself), then leave the compiled code. Its bytes must have been consumed by the caller.
 pub fn gen_interpret_one(ctx: &mut JitContext, instr_flags: &mut u32) {
+    ctx.flags64 = Flags64::Unknown;
     ctx.builder
         .const_i32((ctx.start_of_current_instruction & 0xFFF) as i32);
     ctx.builder.call_fn1_ret("jit64_interpret_one");
@@ -363,10 +365,190 @@ pub fn instr_8F_jit64(ctx: &mut JitContext, modrm_byte: u8, instr_flags: &mut u3
     gen_interpret_one(ctx, instr_flags);
 }
 
+/// What last set the lazy flags (within the current basic block), which allows conditions to
+/// be computed inline
+#[derive(Copy, Clone, PartialEq)]
+pub enum Flags64 {
+    Unknown,
+    /// sub/cmp with the operand size: last_op1 and last_result hold the operands
+    Sub(u32),
+    Add(u32),
+    /// and/or/xor/test: cf=of=0
+    Logic(u32),
+}
+
+/// Push the lazy flag operand slots for an operation of the given size
+fn gen_get_last_op1(ctx: &mut JitContext, bits: u32) {
+    if bits == 64 {
+        ctx.builder.load_fixed_i64(global_pointers::last_op1_64 as u32)
+    }
+    else {
+        ctx.builder.load_fixed_i32(global_pointers::last_op1 as u32)
+    }
+}
+fn gen_get_last_result(ctx: &mut JitContext, bits: u32) {
+    if bits == 64 {
+        ctx.builder.load_fixed_i64(global_pointers::last_result_64 as u32)
+    }
+    else {
+        ctx.builder.load_fixed_i32(global_pointers::last_result as u32)
+    }
+}
+
 pub fn gen_condition_fn(ctx: &mut JitContext, condition: u8) {
     dbg_assert!(condition & 0xF0 == 0x70 || condition & 0xF0 == 0x80);
-    ctx.builder.const_i32((condition & 0xF) as i32);
+    let cc = condition & 0xF;
+    if gen_condition_inline(ctx, cc & !1) {
+        if cc & 1 != 0 {
+            ctx.builder.eqz_i32();
+        }
+        return;
+    }
+    ctx.builder.const_i32(cc as i32);
     ctx.builder.call_fn1_ret("jit64_test_cc");
+}
+
+/// Generate a (non-negated) condition from the known lazy flags state, false if not possible.
+/// cc: o=0, b=2, z=4, be=6, s=8, p=10, l=12, le=14
+fn gen_condition_inline(ctx: &mut JitContext, cc: u8) -> bool {
+    let (bits, is_logic, is_add) = match ctx.flags64 {
+        Flags64::Sub(b) if b >= 32 => (b, false, false),
+        Flags64::Add(b) if b >= 32 => (b, false, true),
+        Flags64::Logic(b) if b >= 32 => (b, true, false),
+        _ => return false,
+    };
+    let w = bits == 64;
+    macro_rules! op {
+        ($i32:ident, $i64:ident) => {
+            if w {
+                ctx.builder.$i64()
+            }
+            else {
+                ctx.builder.$i32()
+            }
+        };
+    }
+    macro_rules! zero {
+        () => {
+            if w {
+                ctx.builder.const_i64(0)
+            }
+            else {
+                ctx.builder.const_i32(0)
+            }
+        };
+    }
+
+    // the zero and sign flags only depend on the result
+    match cc {
+        4 => {
+            gen_get_last_result(ctx, bits);
+            op!(eqz_i32, eqz_i64);
+            return true;
+        },
+        8 => {
+            gen_get_last_result(ctx, bits);
+            zero!();
+            op!(lt_i32, lt_i64);
+            return true;
+        },
+        _ => {},
+    }
+
+    if is_logic {
+        match cc {
+            // of=cf=0
+            0 | 2 => ctx.builder.const_i32(0),
+            // be: zf
+            6 => {
+                gen_get_last_result(ctx, bits);
+                op!(eqz_i32, eqz_i64);
+            },
+            // l: sf != of = sf
+            12 => {
+                gen_get_last_result(ctx, bits);
+                zero!();
+                op!(lt_i32, lt_i64);
+            },
+            // le: zf || sf
+            14 => {
+                gen_get_last_result(ctx, bits);
+                zero!();
+                op!(le_i32, le_i64);
+            },
+            _ => return false,
+        }
+        return true;
+    }
+
+    if is_add {
+        match cc {
+            // b: result <u op1
+            2 => {
+                gen_get_last_result(ctx, bits);
+                gen_get_last_op1(ctx, bits);
+                op!(ltu_i32, ltu_i64);
+            },
+            // be: result <u op1 || result == 0
+            6 => {
+                gen_get_last_result(ctx, bits);
+                gen_get_last_op1(ctx, bits);
+                op!(ltu_i32, ltu_i64);
+                gen_get_last_result(ctx, bits);
+                op!(eqz_i32, eqz_i64);
+                ctx.builder.or_i32();
+            },
+            _ => return false,
+        }
+        return true;
+    }
+
+    // sub/cmp: op2 = op1 - result
+    let gen_op1_op2 = |ctx: &mut JitContext| {
+        gen_get_last_op1(ctx, bits);
+        gen_get_last_op1(ctx, bits);
+        gen_get_last_result(ctx, bits);
+        if w {
+            ctx.builder.sub_i64()
+        }
+        else {
+            ctx.builder.sub_i32()
+        }
+    };
+    match cc {
+        // o: ((op1 ^ op2) & (op1 ^ result)) < 0
+        0 => {
+            gen_get_last_op1(ctx, bits);
+            gen_get_last_op1(ctx, bits);
+            gen_get_last_result(ctx, bits);
+            op!(sub_i32, sub_i64);
+            op!(xor_i32, xor_i64);
+            gen_get_last_op1(ctx, bits);
+            gen_get_last_result(ctx, bits);
+            op!(xor_i32, xor_i64);
+            op!(and_i32, and_i64);
+            zero!();
+            op!(lt_i32, lt_i64);
+        },
+        2 => {
+            gen_op1_op2(ctx);
+            op!(ltu_i32, ltu_i64);
+        },
+        6 => {
+            gen_op1_op2(ctx);
+            op!(leu_i32, leu_i64);
+        },
+        12 => {
+            gen_op1_op2(ctx);
+            op!(lt_i32, lt_i64);
+        },
+        14 => {
+            gen_op1_op2(ctx);
+            op!(le_i32, le_i64);
+        },
+        _ => return false,
+    }
+    true
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -947,9 +1129,18 @@ fn gen_alu_value(ctx: &mut JitContext, op: u32, bits: u32, op1: &Val, src: &Val)
     gen_binop(ctx, op, bits);
     let result = set_new_val(ctx, bits);
     match op {
-        OP_ADD => gen_flags_arith(ctx, bits, op1, &result, false),
-        OP_SUB | OP_CMP => gen_flags_arith(ctx, bits, op1, &result, true),
-        _ => gen_flags_logic(ctx, bits, &result),
+        OP_ADD => {
+            gen_flags_arith(ctx, bits, op1, &result, false);
+            ctx.flags64 = Flags64::Add(bits);
+        },
+        OP_SUB | OP_CMP => {
+            gen_flags_arith(ctx, bits, op1, &result, true);
+            ctx.flags64 = Flags64::Sub(bits);
+        },
+        _ => {
+            gen_flags_logic(ctx, bits, &result);
+            ctx.flags64 = Flags64::Logic(bits);
+        },
     }
     result
 }
@@ -1039,6 +1230,7 @@ pub fn gen_movx(ctx: &mut JitContext, signed: bool, src_bits: u32, dst_bits: u32
 pub fn gen_incdec(ctx: &mut JitContext, is_dec: bool, bits: u32, dst: Opnd) {
     // materialise cf into flags before the lazy state is overwritten
     ctx.builder.call_fn0("jit64_save_cf");
+    ctx.flags64 = Flags64::Unknown;
     let one = set_new_val_const(ctx, bits, 1);
     let flags_changed =
         FLAGS_ALL & !FLAG_CARRY | if is_dec { FLAG_SUB } else { 0 };

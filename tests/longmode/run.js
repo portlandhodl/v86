@@ -111,6 +111,7 @@ const expected = [
     0xFFFFFFFFFFFFFF44n, // 76: mov r9b, imm8
     8n,                  // 77: bsf (0F BC) in jitted code
     9n,                  // 78: cmpxchg (0F B1) in jitted code
+    0x30a348d26a2889an,  // 79: jl/jbe/js/jo/jb/jle after cmp/test/add/and in a hot loop
 ];
 
 const emulator = new V86({

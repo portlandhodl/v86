@@ -356,6 +356,8 @@ pub struct JitContext<'a> {
     pub previous_instruction: Instruction,
     pub instruction_counter: WasmLocal,
     pub wasm_table_index: WasmTableIndex,
+    /// 64-bit jit: the operation that last set the lazy flags in the current block, if known
+    pub flags64: crate::jit64::Flags64,
 }
 impl<'a> JitContext<'a> {
     pub fn reg(&self, i: u32) -> WasmLocal {
@@ -1313,6 +1315,7 @@ fn jit_generate_module(
         previous_instruction: Instruction::Other,
         instruction_counter,
         wasm_table_index,
+        flags64: crate::jit64::Flags64::Unknown,
     };
 
     let entry_blocks = {
@@ -2146,6 +2149,7 @@ fn jit_generate_basic_block(ctx: &mut JitContext, block: &BasicBlock) {
     ctx.cpu.eip = start_addr;
     ctx.current_instruction = Instruction::Other;
     ctx.previous_instruction = Instruction::Other;
+    ctx.flags64 = crate::jit64::Flags64::Unknown;
 
     loop {
         let mut instruction = 0;

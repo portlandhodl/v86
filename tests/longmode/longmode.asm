@@ -540,11 +540,50 @@ t72_loop:
     jnz t72_loop
     mov [r15 + 77*8], r11                     ; 8
     mov [r15 + 78*8], r13                     ; 9
+
     mov [r15 + 72*8], rax                     ; 0x5A78 in the low word: 0x12345A78
     mov [r15 + 73*8], rbx
     mov [r15 + 74*8], rdx                     ; 0xFFFFFFFFFFFFBEEF
     mov [r15 + 75*8], rsi                     ; 0xFFFFFFFFFFFFFF33
     mov [r15 + 76*8], r9                      ; 0xFFFFFFFFFFFFFF44
+
+    ; ======== test 79: conditional jumps after cmp/test/add/and, jitted (hot loop) ========
+    xor r13, r13
+    mov ecx, 200000
+t79_loop:
+    mov rax, rcx
+    sub rax, 100000
+    cmp rax, 7
+    jl t79_1
+    add r13, 1
+t79_1:
+    cmp eax, -3
+    jbe t79_2
+    add r13, 0x100
+t79_2:
+    test rax, rax
+    js t79_3
+    add r13, 0x10000
+t79_3:
+    mov rdx, 0x8000000000000000
+    cmp rdx, rax
+    jo t79_4
+    add r13, 0x1000000
+t79_4:
+    add rax, -5
+    jb t79_5
+    mov rdx, 1 << 32
+    add r13, rdx
+t79_5:
+    mov r8d, eax
+    and r8d, 0xff
+    jle t79_6
+    mov rdx, 1 << 40
+    add r13, rdx
+t79_6:
+    dec ecx
+    jnz t79_loop
+    mov [r15 + 79*8], r13
 
     ; set DF before the syscall: r11 must carry it, rflags must lose it
     pushfq
