@@ -106,7 +106,9 @@ export const
     // The minimum number of bytes that can be memory-mapped by one device.
     MMAP_BLOCK_BITS = 17,
     MMAP_BLOCK_SIZE = 1 << MMAP_BLOCK_BITS,
-    MMAP_MAX = 0x100000000;
+    MMAP_MAX = 0x100000000,
+    // RAM below 4 GiB ends here; the space above is reserved for memory-mapped devices
+    MAX_LOW_MEMORY_SIZE = 0xC0000000;
 
 export const CR0_PG = 1 << 31;
 export const CR4_PAE = 1 << 5;

@@ -24,13 +24,14 @@ use crate::cpu::memory;
 use crate::jit;
 use crate::page::Page;
 
-fn count_until_end_of_page(direction: i32, size: i32, addr: u32) -> u32 {
-    (if direction == 1 {
-        (0x1000 - (addr & 0xFFF)) / size as u32
+fn count_until_end_of_page(direction: i32, size: i32, addr: u64) -> u32 {
+    let offset = (addr & 0xFFF) as u32;
+    if direction == 1 {
+        (0x1000 - offset) / size as u32
     }
     else {
-        (addr & 0xFFF) / size as u32 + 1
-    }) as u32
+        offset / size as u32 + 1
+    }
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -192,8 +193,8 @@ unsafe fn string_instruction(
             Rep::None => false,
         };
 
-    let mut phys_dst = 0u32;
-    let mut phys_src = 0u32;
+    let mut phys_dst = 0u64;
+    let mut phys_src = 0u64;
     let mut skip_dirty_page = false;
 
     let mut movs_into_svga_lfb = false;
@@ -254,7 +255,7 @@ unsafe fn string_instruction(
 
         match instruction {
             Instruction::Movs => {
-                let c = count_until_end_of_page * size_bytes as u32;
+                let c = count_until_end_of_page as u64 * size_bytes as u64;
 
                 let overlap_interferes = if phys_src < phys_dst {
                     // backward moves may overlap at the front of the destination string
@@ -273,8 +274,8 @@ unsafe fn string_instruction(
                 // one iteration of the slow path
                 movs_reenter_fast_path = rep_fast;
                 rep_fast = rep_fast
-                    && (phys_src & 0xFFF <= 0x1000 - size_bytes as u32)
-                    && (phys_dst & 0xFFF <= 0x1000 - size_bytes as u32);
+                    && (phys_src & 0xFFF <= 0x1000 - size_bytes as u64)
+                    && (phys_dst & 0xFFF <= 0x1000 - size_bytes as u64);
             },
             _ => {},
         }
@@ -347,8 +348,8 @@ unsafe fn string_instruction(
                 },
                 Instruction::Movs => {
                     if direction == -1 {
-                        phys_src -= (count_until_end_of_page - 1) * size_bytes as u32;
-                        phys_dst -= (count_until_end_of_page - 1) * size_bytes as u32;
+                        phys_src -= (count_until_end_of_page - 1) as u64 * size_bytes as u64;
+                        phys_dst -= (count_until_end_of_page - 1) as u64 * size_bytes as u64;
                     }
                     if movs_into_svga_lfb {
                         memory::memcpy_into_svga_lfb(
@@ -370,7 +371,7 @@ unsafe fn string_instruction(
                 Instruction::Stos => match size {
                     Size::B => {
                         if direction == -1 {
-                            phys_dst -= count_until_end_of_page - 1
+                            phys_dst -= (count_until_end_of_page - 1) as u64
                         }
                         memory::memset_no_mmap_or_dirty_check(
                             phys_dst,
@@ -392,13 +393,13 @@ unsafe fn string_instruction(
                 | Instruction::Stos
                 | Instruction::Scas
                 | Instruction::Ins => {
-                    phys_dst = phys_dst.wrapping_add(increment as u64 as u32);
+                    phys_dst = phys_dst.wrapping_add(increment as i64 as u64);
                 },
                 _ => {},
             }
             match instruction {
                 Instruction::Movs | Instruction::Cmps | Instruction::Lods | Instruction::Outs => {
-                    phys_src = phys_src.wrapping_add(increment as u64 as u32);
+                    phys_src = phys_src.wrapping_add(increment as i64 as u64);
                 },
                 _ => {},
             };

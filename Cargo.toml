@@ -7,6 +7,8 @@ edition = "2021"
 [features]
 default = []
 profiler = []
+# guest RAM in a separate 64-bit memory (up to 16 GiB), see src/rust/cpu/guest.rs
+mem64 = []
 
 [lib]
 crate-type = ["cdylib"]

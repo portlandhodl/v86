@@ -912,7 +912,7 @@ pub fn gen_chain_to_next_module(ctx: &mut JitContext, reenter_label: Label) {
 /// After jumping to another page within a module: leave the module unless the instruction
 /// pointer still maps to next_block_phys. Checked inline if the page is in the tlb, by
 /// jit_page_switch_check64 otherwise.
-pub fn gen_page_switch_check64(ctx: &mut JitContext, next_block_phys: u32) {
+pub fn gen_page_switch_check64(ctx: &mut JitContext, next_block_phys: u64) {
     let cont = ctx.builder.block_void();
     codegen::gen_get_eip64(ctx.builder);
     let address = ctx.builder.set_new_local_i64();
@@ -929,7 +929,7 @@ pub fn gen_page_switch_check64(ctx: &mut JitContext, next_block_phys: u32) {
     ctx.builder.const_i32(!0xFFF);
     ctx.builder.and_i32();
     ctx.builder
-        .const_i32((next_block_phys & !0xFFF) as i32 + unsafe { crate::cpu::memory::mem8 } as i32);
+        .const_i32(crate::cpu::memory::tlb_host_base(next_block_phys & !0xFFF) as i32);
     ctx.builder.eq_i32();
     ctx.builder.and_i32();
     ctx.builder.br_if(cont);
@@ -937,7 +937,8 @@ pub fn gen_page_switch_check64(ctx: &mut JitContext, next_block_phys: u32) {
     ctx.builder.free_local_i64(address);
 
     ctx.builder.const_i32(next_block_phys as i32);
-    ctx.builder.call_fn1_ret("jit_page_switch_check64");
+    ctx.builder.const_i32((next_block_phys >> 32) as i32);
+    ctx.builder.call_fn2_ret("jit_page_switch_check64");
     ctx.builder.br_if(ctx.exit_label);
     ctx.builder.block_end();
 }
@@ -945,7 +946,8 @@ pub fn gen_page_switch_check64(ctx: &mut JitContext, next_block_phys: u32) {
 /// After jumping to another page within compiled code: returns 1 if the new page isn't mapped
 /// to the physical page the code was compiled for
 #[no_mangle]
-pub unsafe fn jit_page_switch_check64(next_block_phys: u32) -> i32 {
+pub unsafe fn jit_page_switch_check64(next_block_phys_low: u32, next_block_phys_high: u32) -> i32 {
+    let next_block_phys = next_block_phys_low as u64 | (next_block_phys_high as u64) << 32;
     match cpu::translate_address_read_no_side_effects(*global_pointers::instruction_pointer) {
         Ok(phys) => (phys != next_block_phys) as i32,
         Err(()) => 1,

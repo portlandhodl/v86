@@ -5,13 +5,13 @@ use std::iter;
 use crate::jit::{BasicBlock, BasicBlockType, MAX_EXTRA_BASIC_BLOCKS};
 use crate::profiler;
 
-const ENTRY_NODE_ID: u32 = 0xffff_ffff;
+const ENTRY_NODE_ID: u64 = u64::MAX;
 
 // this code works fine with either BTree or Hash Maps/Sets
 // - HashMap / HashSet: slightly faster
 // - BTreeMap / BTreeSet: stable iteration order (graphs don't change between rust versions, required for expect tests)
-type Set = BTreeSet<u32>;
-type Graph = BTreeMap<u32, Set>;
+type Set = BTreeSet<u64>;
+type Graph = BTreeMap<u64, Set>;
 
 /// Reverse the direction of all edges in the graph
 fn rev_graph_edges(nodes: &Graph) -> Graph {
@@ -78,8 +78,8 @@ pub fn make_graph(basic_blocks: &Vec<BasicBlock>) -> Graph {
 }
 
 pub enum WasmStructure {
-    BasicBlock(u32),
-    Dispatcher(Vec<u32>),
+    BasicBlock(u64),
+    Dispatcher(Vec<u64>),
     Loop(Vec<WasmStructure>),
     Block(Vec<WasmStructure>),
 }
@@ -112,8 +112,8 @@ impl WasmStructure {
         }
     }
 
-    fn branches(&self, edges: &Graph) -> HashSet<u32> {
-        fn handle(block: &WasmStructure, edges: &Graph, result: &mut HashSet<u32>) {
+    fn branches(&self, edges: &Graph) -> HashSet<u64> {
+        fn handle(block: &WasmStructure, edges: &Graph, result: &mut HashSet<u64>) {
             match block {
                 WasmStructure::BasicBlock(addr) => result.extend(edges.get(&addr).unwrap()),
                 WasmStructure::Dispatcher(entries) => result.extend(entries),
@@ -130,7 +130,7 @@ impl WasmStructure {
         result
     }
 
-    pub fn head(&self) -> Box<dyn iter::Iterator<Item = u32> + '_> {
+    pub fn head(&self) -> Box<dyn iter::Iterator<Item = u64> + '_> {
         match self {
             Self::BasicBlock(addr) => Box::new(iter::once(*addr)),
             Self::Dispatcher(entries) => Box::new(entries.iter().copied()),
@@ -183,13 +183,13 @@ pub fn assert_invariants(blocks: &Vec<WasmStructure>) {
 }
 
 /// Strongly connected components via Kosaraju's algorithm
-fn scc(edges: &Graph, rev_edges: &Graph) -> Vec<Vec<u32>> {
+fn scc(edges: &Graph, rev_edges: &Graph) -> Vec<Vec<u64>> {
     fn visit(
-        node: u32,
+        node: u64,
         edges: &Graph,
         rev_edges: &Graph,
-        visited: &mut HashSet<u32>,
-        l: &mut Vec<u32>,
+        visited: &mut HashSet<u64>,
+        l: &mut Vec<u64>,
     ) {
         if visited.contains(&node) {
             return;
@@ -208,11 +208,11 @@ fn scc(edges: &Graph, rev_edges: &Graph) -> Vec<Vec<u32>> {
     }
 
     fn assign(
-        node: u32,
+        node: u64,
         edges: &Graph,
         rev_edges: &Graph,
-        assigned: &mut HashSet<u32>,
-        group: &mut Vec<u32>,
+        assigned: &mut HashSet<u64>,
+        group: &mut Vec<u64>,
     ) {
         if assigned.contains(&node) {
             return;
@@ -262,7 +262,7 @@ pub fn loopify(nodes: &Graph) -> Vec<WasmStructure> {
                 }
             }
 
-            let entries_to_group: Vec<u32> = group
+            let entries_to_group: Vec<u64> = group
                 .iter()
                 .filter(|addr| {
                     // reachable from outside of the group
@@ -345,7 +345,7 @@ pub fn loopify(nodes: &Graph) -> Vec<WasmStructure> {
 }
 
 pub fn blockify(blocks: &mut Vec<WasmStructure>, edges: &Graph) {
-    let mut cached_branches: Vec<HashSet<u32>> = Vec::new();
+    let mut cached_branches: Vec<HashSet<u64>> = Vec::new();
     for i in 0..blocks.len() {
         cached_branches.push(blocks[i].branches(edges));
     }
@@ -408,7 +408,7 @@ pub fn blockify(blocks: &mut Vec<WasmStructure>, edges: &Graph) {
 
         {
             let replacement = HashSet::default();
-            let children: Vec<HashSet<u32>> = cached_branches
+            let children: Vec<HashSet<u64>> = cached_branches
                 .splice(source..i, iter::once(replacement))
                 .collect();
             dbg_assert!(cached_branches[source].len() == 0);

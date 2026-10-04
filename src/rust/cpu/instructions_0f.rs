@@ -972,7 +972,12 @@ pub unsafe fn instr_0F20(r: i32, creg: i32) {
             }
         },
         3 => {
-            write_reg32(r, *cr.offset(3));
+            if *is_64 {
+                write_reg64(r, get_cr3());
+            }
+            else {
+                write_reg32(r, *cr.offset(3));
+            }
         },
         4 => {
             write_reg32(r, *cr.offset(4));
@@ -1033,7 +1038,7 @@ pub unsafe fn instr_0F22(r: i32, creg: i32) {
             *cr.offset(2) = v as u32 as i32;
             *cr2_64 = v;
         },
-        3 => set_cr3(data),
+        3 => set_cr3(if *is_64 { read_reg64(r) } else { data as u32 as u64 }),
         4 => {
             dbg_log!("cr4 <- {:x}", data);
             if 0 != data as u32
@@ -1053,7 +1058,7 @@ pub unsafe fn instr_0F22(r: i32, creg: i32) {
                     && *efer & EFER_LME == 0
                     && 0 != (*cr.offset(4) ^ data) & (CR4_PGE | CR4_PSE | CR4_SMEP)
                 {
-                    load_pdpte(*cr.offset(3));
+                    load_pdpte(get_cr3());
                 }
                 *cr.offset(4) = data;
             }

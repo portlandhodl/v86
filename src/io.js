@@ -30,7 +30,7 @@ export function IO(cpu)
 
     var memory_size = cpu.memory_size[0];
 
-    for(var i = 0; (i << MMAP_BLOCK_BITS) < memory_size; i++)
+    for(var i = 0; i * MMAP_BLOCK_SIZE < memory_size; i++)
     {
         // avoid sparse arrays
         cpu.memory_map_read8[i] = cpu.memory_map_write8[i] = undefined;

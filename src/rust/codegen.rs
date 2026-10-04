@@ -149,8 +149,8 @@ pub fn gen_set_previous_eip_offset_from_eip_with_low_bits_ctx(
 
 pub fn gen_page_switch_check(
     ctx: &mut JitContext,
-    next_block_addr: u32,
-    last_instruction_addr: u32,
+    next_block_addr: u64,
+    last_instruction_addr: u64,
 ) {
     // After switching a page while in jitted code, check if the page mapping still holds
 
@@ -164,7 +164,7 @@ pub fn gen_page_switch_check(
     ctx.builder.free_local(address_local);
 
     ctx.builder
-        .const_i32(next_block_addr as i32 + unsafe { memory::mem8 } as i32);
+        .const_i32(memory::tlb_host_base(next_block_addr) as i32);
     ctx.builder.ne_i32();
 
     if cfg!(debug_assertions) {
@@ -1526,7 +1526,7 @@ pub fn gen_task_switch_test(ctx: &mut JitContext) {
         gen_fn1_const(
             ctx.builder,
             "task_switch_test_jit",
-            ctx.start_of_current_instruction & 0xFFF,
+            (ctx.start_of_current_instruction & 0xFFF) as u32,
         );
         ctx.builder.br(ctx.exit_with_fault_label);
     }
@@ -1548,7 +1548,7 @@ pub fn gen_task_switch_test_mmx(ctx: &mut JitContext) {
         gen_fn1_const(
             ctx.builder,
             "task_switch_test_mmx_jit",
-            ctx.start_of_current_instruction & 0xFFF,
+            (ctx.start_of_current_instruction & 0xFFF) as u32,
         );
         ctx.builder.br(ctx.exit_with_fault_label);
     }
@@ -2619,7 +2619,7 @@ pub fn gen_trigger_de(ctx: &mut JitContext) {
     gen_fn1_const(
         ctx.builder,
         "trigger_de_jit",
-        ctx.start_of_current_instruction & 0xFFF,
+        (ctx.start_of_current_instruction & 0xFFF) as u32,
     );
     gen_debug_track_jit_exit(ctx.builder, ctx.start_of_current_instruction);
     ctx.builder.br(ctx.exit_with_fault_label);
@@ -2629,7 +2629,7 @@ pub fn gen_trigger_ud(ctx: &mut JitContext) {
     gen_fn1_const(
         ctx.builder,
         "trigger_ud_jit",
-        ctx.start_of_current_instruction & 0xFFF,
+        (ctx.start_of_current_instruction & 0xFFF) as u32,
     );
     gen_debug_track_jit_exit(ctx.builder, ctx.start_of_current_instruction);
     ctx.builder.br(ctx.exit_with_fault_label);
@@ -2640,7 +2640,7 @@ pub fn gen_trigger_gp(ctx: &mut JitContext, error_code: u32) {
         ctx.builder,
         "trigger_gp_jit",
         error_code,
-        ctx.start_of_current_instruction & 0xFFF,
+        (ctx.start_of_current_instruction & 0xFFF) as u32,
     );
     gen_debug_track_jit_exit(ctx.builder, ctx.start_of_current_instruction);
     ctx.builder.br(ctx.exit_with_fault_label);
@@ -2784,8 +2784,16 @@ pub fn gen_profiler_stat_increment(builder: &mut WasmBuilder, stat: profiler::st
     builder.increment_fixed_i64(addr, 1)
 }
 
-pub fn gen_debug_track_jit_exit(builder: &mut WasmBuilder, address: u32) {
+#[cfg(debug_assertions)]
+pub fn gen_check_page_switch(builder: &mut WasmBuilder, block_addr: u64, next_block_addr: u64) {
+    builder.const_i64(block_addr as i64);
+    builder.const_i64(next_block_addr as i64);
+    builder.call_fn2_i64_i64("check_page_switch");
+}
+
+pub fn gen_debug_track_jit_exit(builder: &mut WasmBuilder, address: u64) {
     if cfg!(feature = "profiler") {
-        gen_fn1_const(builder, "track_jit_exit", address);
+        builder.const_i64(address as i64);
+        builder.call_fn1_i64("track_jit_exit");
     }
 }
