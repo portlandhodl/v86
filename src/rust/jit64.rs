@@ -20,7 +20,7 @@ use crate::cpu::cpu;
 use crate::cpu::global_pointers;
 use crate::cpu_context::CpuContext;
 use crate::gen;
-use crate::jit::{JitContext, JIT_INSTR_BLOCK_BOUNDARY_FLAG};
+use crate::jit::{is_near_end_of_page, JitContext, JIT_INSTR_BLOCK_BOUNDARY_FLAG};
 use crate::prefix::{
     PREFIX_66, PREFIX_67, PREFIX_F2, PREFIX_F3, PREFIX_MASK_REX, PREFIX_MASK_SEGMENT,
     PREFIX_REX_PRESENT, PREFIX_REX_W,
@@ -1689,6 +1689,10 @@ fn gen_save_cf(ctx: &mut JitContext) {
         Flags64::Sub(b) | Flags64::Add(b) | Flags64::Logic(b) => b >= 32,
         Flags64::Unknown => false,
     };
+    if !known && next_instructions_overwrite_flags(ctx) {
+        // the saved cf would be dead
+        return;
+    }
     if !known {
         gen_profile_count(ctx, "save_cf (inc/dec)");
         ctx.builder.call_fn0("jit64_save_cf");
@@ -1899,4 +1903,66 @@ pub fn gen_xchg(ctx: &mut JitContext, bits: u32, r: u32, other: Opnd) {
         Opnd::Imm(_) => dbg_assert!(false),
     }
     reg_value.free(ctx);
+}
+
+/// Whether the following instructions (within the current block) overwrite all arithmetic
+/// flags before anything reads them. Looks at a few instructions, skipping those that neither
+/// read nor write flags.
+fn next_instructions_overwrite_flags(ctx: &JitContext) -> bool {
+    let mut cpu = ctx.cpu.clone();
+    for _ in 0..4 {
+        if cpu.eip >= ctx.block_end || is_near_end_of_page(cpu.eip) {
+            return false;
+        }
+        let start = cpu.eip;
+        // prefixes
+        let mut opcode;
+        loop {
+            opcode = cpu.read_imm8() as u32;
+            match opcode {
+                0x26 | 0x2E | 0x36 | 0x3E | 0x64 | 0x65 | 0x66 | 0x67 | 0xF0 | 0xF2 | 0xF3 => {},
+                0x40..=0x4F => {},
+                _ => break,
+            }
+        }
+        if opcode == 0x0F {
+            opcode = 0x0F00 | cpu.read_imm8() as u32;
+        }
+        // only forms without memory operands: a fault in a memory access would deliver the
+        // exception with the (unsaved) carry flag of the inc/dec
+        let writes_all = match opcode {
+            0x00..=0x3F => {
+                let op = opcode >> 3;
+                op != 2 && op != 3 && (opcode & 7 == 4 || opcode & 7 == 5 || opcode & 7 < 4 && cpu.read_imm8() >= 0xC0)
+            },
+            0x80 | 0x81 | 0x83 => {
+                let modrm = cpu.read_imm8();
+                let g = modrm >> 3 & 7;
+                modrm >= 0xC0 && g != 2 && g != 3
+            },
+            0x84 | 0x85 => cpu.read_imm8() >= 0xC0,
+            0xA8 | 0xA9 => true,
+            0xF6 | 0xF7 => {
+                let modrm = cpu.read_imm8();
+                modrm >= 0xC0 && modrm >> 3 & 7 == 0
+            },
+            _ => false,
+        };
+        if writes_all {
+            return true;
+        }
+        let neutral = matches!(opcode,
+            0x88..=0x8D | 0xC6 | 0xC7 | 0xB0..=0xBF | 0x50..=0x5F | 0x63 | 0x90 | 0x0FB6 | 0x0FB7 | 0x0FBE | 0x0FBF);
+        if !neutral {
+            return false;
+        }
+        // skip the rest of the instruction
+        let mut analysis_cpu = ctx.cpu.clone();
+        analysis_cpu.eip = start;
+        analysis_cpu.prefixes = 0;
+        let _ = crate::analysis::analyze_step(&mut analysis_cpu);
+        cpu.eip = analysis_cpu.eip;
+        cpu.prefixes = 0;
+    }
+    false
 }

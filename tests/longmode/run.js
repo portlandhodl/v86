@@ -114,6 +114,7 @@ const expected = [
     0x30a348d26a2889an,  // 79: jl/jbe/js/jo/jb/jle after cmp/test/add/and in a hot loop
     0xb6bf6aaa379b26f0n, // 80: imul/shifts/setcc/cmovcc in a hot loop
     0x154690ceac782d0n,  // 81: rotates/shift by cl/inc cf/not/neg/movsxd/cdqe/cqo/bswap/xchg/call r
+    50000n,              // 82: inc at a block start preserves cf for adc
 ];
 
 const emulator = new V86({

@@ -689,6 +689,27 @@ t81_after_jmp:
     dec ecx
     jnz t81_loop
     mov [r15 + 81*8], r13
+
+    ; ======== test 82: inc at a block start keeps cf for a following adc (hot loop) ========
+    xor r13, r13
+    mov ecx, 100000
+t82_loop:
+    mov eax, ecx
+    and eax, 1
+    jz t82_clear
+    stc
+    jmp t82_inc
+t82_clear:
+    clc
+    jmp t82_inc
+t82_inc:
+    inc r8
+    adc r13, 0                                ; +1 for odd counts
+    inc r9
+    cmp r9, 0                                 ; inc's cf is dead here
+    dec ecx
+    jnz t82_loop
+    mov [r15 + 82*8], r13
     jmp t81_done
 t81_func:
     add rax, 1

@@ -362,6 +362,8 @@ pub struct JitContext<'a> {
     pub register_locals64: Vec<WasmLocalI64>,
     /// 64-bit jit: registers whose local may differ from memory (bitmask, within a block)
     pub dirty_registers64: u16,
+    /// 64-bit jit: the (physical) end address of the current basic block
+    pub block_end: u32,
 }
 impl<'a> JitContext<'a> {
     pub fn reg(&self, i: u32) -> WasmLocal {
@@ -1333,6 +1335,7 @@ fn jit_generate_module(
         flags64: crate::jit64::Flags64::Unknown,
         register_locals64,
         dirty_registers64: 0xFFFF,
+        block_end: 0,
     };
 
     let entry_blocks = {
@@ -2171,6 +2174,7 @@ fn jit_generate_basic_block(ctx: &mut JitContext, block: &BasicBlock) {
     ctx.previous_instruction = Instruction::Other;
     ctx.flags64 = crate::jit64::Flags64::Unknown;
     ctx.dirty_registers64 = 0xFFFF;
+    ctx.block_end = stop_addr;
 
     loop {
         let mut instruction = 0;
