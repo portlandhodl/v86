@@ -1695,7 +1695,13 @@ fn gen_save_cf(ctx: &mut JitContext) {
     }
     if !known {
         gen_profile_count(ctx, "save_cf (inc/dec)");
-        ctx.builder.call_fn0("jit64_save_cf");
+        ctx.builder.const_i32(global_pointers::flags as i32);
+        ctx.builder.load_fixed_i32(global_pointers::flags as u32);
+        ctx.builder.const_i32(!FLAG_CARRY);
+        ctx.builder.and_i32();
+        gen_getcf_generic(ctx);
+        ctx.builder.or_i32();
+        ctx.builder.store_aligned_i32(0);
         return;
     }
     ctx.builder.const_i32(global_pointers::flags as i32);
@@ -1970,8 +1976,69 @@ fn next_instructions_overwrite_flags(ctx: &JitContext) -> bool {
 /// Push cf (i32 0/1) for the current lazy flags state, without changing it
 fn gen_getcf(ctx: &mut JitContext) {
     if !gen_condition_inline(ctx, 2) {
-        ctx.builder.call_fn0_ret("jit64_getcf");
+        gen_getcf_generic(ctx);
     }
+}
+
+/// Push cf (i32 0/1) from the lazy flags state at runtime (see misc_instr::getcf)
+fn gen_getcf_generic(ctx: &mut JitContext) {
+    ctx.builder
+        .load_fixed_i32(global_pointers::flags_changed as u32);
+    ctx.builder.const_i32(1);
+    ctx.builder.and_i32();
+    ctx.builder.if_i32();
+    {
+        // sub: last_op1 < last_result, add: last_result < last_op1 (unsigned), via a mask
+        ctx.builder
+            .load_fixed_i32(global_pointers::last_op_size as u32);
+        ctx.builder.const_i32(OPSIZE_64);
+        ctx.builder.eq_i32();
+        ctx.builder.if_i32();
+        {
+            let mask = ctx.builder.new_local_i64();
+            ctx.builder
+                .load_fixed_i32(global_pointers::flags_changed as u32);
+            ctx.builder.const_i32(31);
+            ctx.builder.shr_s_i32();
+            ctx.builder.extend_signed_i32_to_i64();
+            ctx.builder.tee_local_i64(&mask);
+            ctx.builder
+                .load_fixed_i64(global_pointers::last_result_64 as u32);
+            ctx.builder.xor_i64();
+            ctx.builder.get_local_i64(&mask);
+            ctx.builder
+                .load_fixed_i64(global_pointers::last_op1_64 as u32);
+            ctx.builder.xor_i64();
+            ctx.builder.ltu_i64();
+            ctx.builder.free_local_i64(mask);
+        }
+        ctx.builder.else_();
+        {
+            let mask = ctx.builder.new_local();
+            ctx.builder
+                .load_fixed_i32(global_pointers::flags_changed as u32);
+            ctx.builder.const_i32(31);
+            ctx.builder.shr_s_i32();
+            ctx.builder.tee_local(&mask);
+            ctx.builder
+                .load_fixed_i32(global_pointers::last_result as u32);
+            ctx.builder.xor_i32();
+            ctx.builder.get_local(&mask);
+            ctx.builder
+                .load_fixed_i32(global_pointers::last_op1 as u32);
+            ctx.builder.xor_i32();
+            ctx.builder.ltu_i32();
+            ctx.builder.free_local(mask);
+        }
+        ctx.builder.block_end();
+    }
+    ctx.builder.else_();
+    {
+        ctx.builder.load_fixed_i32(global_pointers::flags as u32);
+        ctx.builder.const_i32(1);
+        ctx.builder.and_i32();
+    }
+    ctx.builder.block_end();
 }
 #[no_mangle]
 pub unsafe fn jit64_getcf() -> i32 { crate::cpu::misc_instr::getcf() as i32 }
