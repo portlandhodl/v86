@@ -846,8 +846,8 @@ fn eip_and_wasm_table_index(ctx: &JitContext) -> i32 {
 
 /// Generate the fast path tlb check for a 64-bit address: sets entry (the low 32 bits of the
 /// tlb entry) and leaves 1 on the stack if the fast path can be used.
-/// Only the tlb for pages at or above 4 GiB (tlb_high_*) is checked inline; accesses to lower
-/// addresses take the slow path.
+/// Addresses below 4 GiB use the flat tlb (tlb_data), higher ones the hashed tlb (tlb_high_*);
+/// both have the same entry format.
 fn gen_tlb_fast_path_check(
     ctx: &mut JitContext,
     bits: u32,
@@ -855,6 +855,55 @@ fn gen_tlb_fast_path_check(
     for_writing: bool,
     entry: &WasmLocal,
 ) {
+    ctx.builder.get_local_i64(address);
+    ctx.builder.const_i64(32);
+    ctx.builder.shr_u_i64();
+    ctx.builder.eqz_i64();
+    ctx.builder.if_i32();
+    {
+        // entry = tlb_data[address >> 12]
+        ctx.builder.get_local_i64(address);
+        ctx.builder.wrap_i64_to_i32();
+        ctx.builder.const_i32(12);
+        ctx.builder.shr_u_i32();
+        ctx.builder.const_i32(2);
+        ctx.builder.shl_i32();
+        ctx.builder
+            .load_aligned_i32(&raw const cpu::tlb_data as u32);
+    }
+    ctx.builder.else_();
+    gen_tlb_high_entry(ctx, address);
+    ctx.builder.block_end();
+    ctx.builder.tee_local(entry);
+
+    // flags that must be clear (or set) for the fast path
+    let user = if ctx.cpu.cpl3() { TLB_NO_USER } else { 0 };
+    let mask = if for_writing {
+        TLB_VALID | TLB_READONLY | TLB_HAS_CODE | user | crate::cpu::cpu::TLB_IN_MAPPED_RANGE
+    }
+    else {
+        TLB_VALID | user | crate::cpu::cpu::TLB_IN_MAPPED_RANGE
+    };
+    dbg_assert!(mask & (TLB_GLOBAL | TLB_NOT_EXECUTABLE) == 0);
+    ctx.builder.const_i32(mask);
+    ctx.builder.and_i32();
+    ctx.builder.const_i32(TLB_VALID);
+    ctx.builder.eq_i32();
+
+    if bits != 8 {
+        ctx.builder.get_local_i64(address);
+        ctx.builder.wrap_i64_to_i32();
+        ctx.builder.const_i32(0xFFF);
+        ctx.builder.and_i32();
+        ctx.builder.const_i32(0x1000 - (bits / 8) as i32);
+        ctx.builder.le_i32();
+        ctx.builder.and_i32();
+    }
+}
+
+/// Push the low 32 bits of the hashed tlb's entry for the page of a 64-bit address, or 0 (not
+/// valid) if the slot holds a different page
+fn gen_tlb_high_entry(ctx: &mut JitContext, address: &WasmLocalI64) {
     // page = canonicalize(address) >> 12
     ctx.builder.get_local_i64(address);
     ctx.builder.const_i64(16);
@@ -871,45 +920,21 @@ fn gen_tlb_fast_path_check(
     ctx.builder.wrap_i64_to_i32();
     ctx.builder.const_i32(((TLB_HIGH_SIZE - 1) << 3) as i32);
     ctx.builder.and_i32();
-    let slot = ctx.builder.tee_new_local();
-
-    ctx.builder
-        .load_aligned_i64(&raw const cpu::tlb_high_page as u32);
-    ctx.builder.get_local_i64(&page);
-    ctx.builder.eq_i64();
-    ctx.builder.free_local_i64(page);
+    let slot = ctx.builder.set_new_local();
 
     ctx.builder.get_local(&slot);
     ctx.builder
         .load_aligned_i64(&raw const cpu::tlb_high_entry as u32);
-    ctx.builder.free_local(slot);
     ctx.builder.wrap_i64_to_i32();
-    ctx.builder.tee_local(entry);
-
-    // flags that must be clear (or set) for the fast path
-    let user = if ctx.cpu.cpl3() { TLB_NO_USER } else { 0 };
-    let mask = if for_writing {
-        TLB_VALID | TLB_READONLY | TLB_HAS_CODE | user | crate::cpu::cpu::TLB_IN_MAPPED_RANGE
-    }
-    else {
-        TLB_VALID | user | crate::cpu::cpu::TLB_IN_MAPPED_RANGE
-    };
-    dbg_assert!(mask & (TLB_GLOBAL | TLB_NOT_EXECUTABLE) == 0);
-    ctx.builder.const_i32(mask);
-    ctx.builder.and_i32();
-    ctx.builder.const_i32(TLB_VALID);
-    ctx.builder.eq_i32();
-    ctx.builder.and_i32();
-
-    if bits != 8 {
-        ctx.builder.get_local_i64(address);
-        ctx.builder.wrap_i64_to_i32();
-        ctx.builder.const_i32(0xFFF);
-        ctx.builder.and_i32();
-        ctx.builder.const_i32(0x1000 - (bits / 8) as i32);
-        ctx.builder.le_i32();
-        ctx.builder.and_i32();
-    }
+    ctx.builder.const_i32(0);
+    ctx.builder.get_local(&slot);
+    ctx.builder
+        .load_aligned_i64(&raw const cpu::tlb_high_page as u32);
+    ctx.builder.get_local_i64(&page);
+    ctx.builder.eq_i64();
+    ctx.builder.select();
+    ctx.builder.free_local(slot);
+    ctx.builder.free_local_i64(page);
 }
 
 /// pointer = (entry & ~0xFFF) ^ address
