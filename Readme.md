@@ -1,24 +1,115 @@
 # v86_64
 
-**v86_64 is a 64-bit fork of [v86](https://github.com/copy/v86).** It adds
-x86-64 (long mode) support to the emulator and its x86-to-wasm JIT, so that
-modern 64-bit operating systems can boot in the browser. 32-bit guests keep
-working exactly as they do in upstream v86.
+**x86-64 in the browser.** v86_64 is a 64-bit fork of
+[v86](https://github.com/copy/v86): a PC emulator and x86-to-WebAssembly JIT
+that boots modern **64-bit (long mode)** operating systems in a web page or
+in Node.js. 64-bit Linux kernels, 64-bit userspace, 64-bit JIT, all running in
+wasm. 32-bit guests keep working exactly as they do in upstream v86.
 
-Status:
+## x86-64 status
 
-- Alpine Linux 3.19 x86_64 boots from its ISO (SeaBIOS + ISOLINUX) to an
-  interactive root shell, with 64-bit code running in the JIT.
-- Graphical 64-bit distributions (Xubuntu 24.04) are being brought up, see
-  [examples/xubuntu.html](examples/xubuntu.html).
-- The roadmap, design notes and test status are in [TODOS.md](TODOS.md).
+| | |
+|---|---|
+| Alpine Linux 3.19 x86_64 | Boots from its ISO (SeaBIOS + ISOLINUX) to an interactive root shell in ~28 s, 64-bit code running in the JIT |
+| Linux x86_64 kernels | Full early init, arch selftests, userspace; direct bzImage and ISO boot both work |
+| ELF64 multiboot kernels | Higher-half ELF64 entry points are loaded and run |
+| Xubuntu 24.04 (amd64 live ISO) | Being brought up: [examples/xubuntu.html](examples/xubuntu.html) |
+| kvm-unit-tests (x86_64) | `access`, `eventinj`, `apic`, `msr`, `vmexit`, `realmode`, `smptest`, `port80`, `setjmp` pass |
+| 64-bit JIT throughput | ~530 MIPS for 64-bit code (vs ~80 interpreted), measured with `tests/benchmark/bench64.js` |
 
-The JavaScript API, the build outputs (`libv86.js`, `v86.wasm`) and the
+The roadmap, design notes, milestone history and the bugs found along the
+way are in [TODOS.md](TODOS.md).
+
+## What the 64-bit CPU implements
+
+- **Long mode**: EFER.LME/LMA/SCE/NXE, 64-bit and compatibility code
+  segments (CS.L), canonical 48-bit linear addresses, 4-level paging with
+  4 KiB / 2 MiB pages, NX, SMEP, and a TLB that covers the full 48-bit address
+  space (flat for the low 4 GiB, hashed above).
+- **The 64-bit instruction set**: REX prefixes and 16 GPRs, RIP-relative
+  addressing, 64-bit operand size with default-64 opcodes, `movsxd`,
+  `cmpxchg16b`, qword string ops including `rep` forms, `moffs64`, `rdrand`,
+  64-bit far calls/jumps/returns.
+- **SSE with REX**: all 16 xmm registers, REX.W GPR<->XMM moves and
+  conversions, `fxsave`/`fxrstor` in 64-bit format.
+- **System**: 16-byte IDT gates, 64-bit interrupt frames, TSS RSP0-2 and IST
+  stack switches, `iretq`, `syscall`/`sysret`, `swapgs`, FS/GS/KERNEL_GS_BASE
+  MSRs, NMI delivery, local APIC + IOAPIC.
+- **CPUID**: x86-64-v1 baseline plus SSE3, POPCNT, RDRAND, NX, LAHF/SAHF,
+  SMEP, 48 linear / 32 physical address bits.
+- **A 64-bit JIT**: hot 64-bit code is compiled to wasm with its own
+  instruction table (`gen/generate_jit64.js`). Registers live in i64 wasm
+  locals; the common integer instructions, conditions, branches and memory
+  accesses (with an inline high-TLB lookup) are native.
+
+Current limits: guest physical memory is at most 4 GiB (wasm32), there are no
+1 GiB pages, no x2APIC, no SSSE3/SSE4/AVX, and only a single CPU.
+
+## Running a 64-bit guest
+
+```sh
+make all                          # build/libv86.js, build/v86.wasm
+./tools/serve.mjs --port 8000     # static server with HTTP range requests
+```
+
+- **Xubuntu 24.04 in the browser**: download the ISO into `images/` (see the
+  comment at the top of [examples/xubuntu.html](examples/xubuntu.html)) and
+  open http://localhost:8000/examples/xubuntu.html. Large ISOs are streamed
+  with range requests, which `make run` (Python's http.server) doesn't
+  support, so use `tools/serve.mjs`.
+- **Alpine x86_64 in Node.js**, boots, logs in on ttyS0 and checks `uname -m`:
+
+  ```sh
+  ALPINE_ISO=images/alpine-virt-3.19.1-x86_64.iso ./tests/longmode/alpine.js
+  ```
+
+- **Your own 64-bit guest**: nothing changes in the API. Pass a 64-bit ISO as
+  `cdrom` (with `async: true` if it's large), or a 64-bit `bzimage` +
+  `initrd`. Set `acpi: true` for kernels that use the IOAPIC, and a larger
+  `vga_memory_size` (16-32 MiB) for 1080p framebuffers.
+
+## 64-bit tests
+
+```sh
+make longmode-tests      # long-mode integration tests, interpreter and JIT_THRESHOLD=1
+make nasmtests           # 32-bit tests, must stay bit-identical to upstream
+make nasmtests-force-jit
+```
+
+`tests/longmode/longmode.asm` enters long mode from the reset vector and
+checks 70+ results, each a regression test for a long-mode bug.
+kvm-unit-tests for x86_64 build from `tests/kvm-unit-tests/`
+(`./configure --arch=x86_64 && make`) and run with
+`node tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/<test>.flat`.
+
+## Contributing: generative AI submissions required
+
+**All contributions to v86_64 must be made with generative AI.** Code, tests,
+documentation and debugging work are expected to be produced by an AI coding
+agent (for example [Claude Code](https://claude.com/claude-code)), with a human
+directing and reviewing it. Hand-written submissions will not be accepted.
+
+- Say which tool and model produced the change in the pull request, and keep
+  the `Co-Authored-By` trailer the agent adds to commits.
+- [TODOS.md](TODOS.md) is written to be handed to an agent with no prior
+  context: it contains the orientation, the patterns for adding 64-bit
+  instructions, and the hard-won lessons about decoding. Point your agent at
+  it first.
+- Every CPU fix needs a regression test (usually a new check in
+  `tests/longmode/`), and 32-bit behaviour must stay bit-identical: run
+  `make nasmtests nasmtests-force-jit longmode-tests` before submitting.
+
+## Relationship to upstream
+
+v86_64 tracks [copy/v86](https://github.com/copy/v86). The JavaScript API
+(`new V86({...})`), the build outputs (`libv86.js`, `v86.wasm`) and the
 documentation below are inherited from upstream and still use the name v86.
-For upstream releases, demos and support, see
+For upstream releases, the 32-bit demos and support, see
 [copy/v86](https://github.com/copy/v86) and [copy.sh/v86](https://copy.sh/v86/).
 
 ---
+
+# Upstream v86 documentation
 
 v86 emulates an x86-compatible CPU and hardware. Machine code is translated to
 WebAssembly modules at runtime in order to achieve decent performance. Here's a
@@ -226,8 +317,11 @@ See [v86.d.ts](v86.d.ts) for TypeScript definitions. You can use `make doc` (Typ
 
 ## Generative AI
 
-At this time, v86 does not accept pull requests or issues written partially or entirely by generative AI tools.
-Exceptions may be made on a case-by-case basis.
+v86_64 requires generative AI submissions, see
+[Contributing](#contributing-generative-ai-submissions-required). Note that
+upstream v86 has the opposite policy and does not accept pull requests or
+issues written partially or entirely by generative AI tools, so changes made
+here aren't submitted upstream.
 
 ## License
 
@@ -254,4 +348,6 @@ repository under their own licenses:
 
 ## More questions?
 
-Shoot me an email to `copy@copy.sh`. Please report bugs on GitHub.
+For v86_64 and anything 64-bit, open an issue at
+[portlandhodl/v86_64](https://github.com/portlandhodl/v86_64/issues). For
+upstream v86, see [copy/v86](https://github.com/copy/v86).
