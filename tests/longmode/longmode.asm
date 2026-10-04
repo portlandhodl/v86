@@ -770,13 +770,23 @@ t81_func:
     ret
 t81_done:
 
+    ; mask all PIC interrupts: user mode runs with IF set below (test 84)
+    mov al, 0xFF
+    out 0x21, al
+    out 0xA1, al
+
     ; set DF before the syscall: r11 must carry it, rflags must lose it
     pushfq
     or  qword [rsp], 0x400
     popfq
     syscall
 after_syscall1:
-    ; we are now at cpl 3 (sysret); immediately syscall back
+    ; we are now at cpl 3 (sysret); rflags were loaded from r11, including IF
+    pushfq
+    pop rax
+    and rax, 0x200
+    mov [r15 + 84*8], rax        ; 0x200
+    ; immediately syscall back
     syscall
 after_syscall2:
     ; we are at cpl 3 again; the third syscall makes the handler write 'K'
@@ -830,6 +840,8 @@ syscall_handler:
     pop rax
     and rax, 0x400
     mov [r15 + 41*8], rax        ; 0
+    ; return to user mode with interrupts enabled
+    or r11, 0x200
     swapgs
     mov rcx, r14
     sysret

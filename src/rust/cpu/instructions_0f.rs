@@ -646,12 +646,14 @@ pub unsafe fn instr_0F07() {
     *segment_access_bytes.offset(SS as isize) = 0x80 | (3 << 5) | 0x10 | 0x02; // P dpl3 S RW
     *stack_size_32 = true;
 
+    // rflags are loaded from r11 unconditionally: update them while still at cpl 0, where
+    // update_eflags may change all flags (at cpl 3 it would keep if and iopl)
+    update_eflags(return_rflags & !FLAG_RF & !FLAG_VM);
+
     *cpl = 3;
     cpl_changed();
     update_cs_size(false, true);
     update_state_flags();
-
-    update_eflags(return_rflags & !FLAG_RF & !FLAG_VM);
 
     *instruction_pointer = return_rip;
 }

@@ -794,6 +794,10 @@ pub unsafe fn iret64() {
 
         // no exceptions below
 
+        // rflags are updated with the permissions of the old cpl (at cpl 3,
+        // update_eflags would keep if and iopl, like popf), as in iret32
+        update_eflags(new_flags);
+
         // switch_seg(SS) checks the descriptor against cpl; the checks in
         // switch_seg must see the *target* cpl (same order as iret32)
         *cpl = new_cpl;
@@ -812,11 +816,11 @@ pub unsafe fn iret64() {
         // left alone
         let new_rsp = return_on_pagefault!(safe_read64s(rsp + 24));
         write_reg64(ESP, new_rsp);
+
+        update_eflags(new_flags);
     }
 
     // no exceptions below
-
-    update_eflags(new_flags);
 
     *cpl = new_cpl;
     cpl_changed();
