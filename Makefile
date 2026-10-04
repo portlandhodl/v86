@@ -328,6 +328,7 @@ nasmtests-force-jit: build/v86-debug.wasm
 longmode-tests: build/v86-debug.wasm
 	./tests/longmode/run.js
 	JIT_THRESHOLD=1 ./tests/longmode/run.js
+	JIT_THRESHOLD=1 JIT64_CHAINING=0 ./tests/longmode/run.js
 	./tests/longmode/multiboot64.js
 
 jitpagingtests: build/v86-debug.wasm
