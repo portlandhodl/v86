@@ -29,6 +29,7 @@ use std::ptr;
 mod wasm {
     extern "C" {
         pub fn call_indirect1(f: i32, x: u16);
+        pub fn call_indirect_jit64(f: i32, x: u16);
     }
 }
 
@@ -361,6 +362,8 @@ pub static mut tsc_speed: u64 = 1;
 // used for restoring the state
 pub static mut tsc_offset: u64 = 0;
 
+// repr(C): compiled 64-bit code reads it (jit64::gen_chain_to_next_module)
+#[repr(C)]
 pub struct Code {
     pub wasm_table_index: jit::WasmTableIndex,
     pub state_flags: CachedStateFlags,
@@ -4131,10 +4134,19 @@ pub unsafe fn cycle_internal() {
         {
             in_jit = true;
         }
-        wasm::call_indirect1(
-            wasm_table_index as i32 + WASM_TABLE_OFFSET as i32,
-            initial_state,
-        );
+        if initial_state_flags.is_64() {
+            // modules for 64-bit code get the registers as arguments
+            wasm::call_indirect_jit64(
+                wasm_table_index as i32 + WASM_TABLE_OFFSET as i32,
+                initial_state,
+            );
+        }
+        else {
+            wasm::call_indirect1(
+                wasm_table_index as i32 + WASM_TABLE_OFFSET as i32,
+                initial_state,
+            );
+        }
         #[cfg(debug_assertions)]
         {
             in_jit = false;
@@ -4447,9 +4459,14 @@ pub unsafe fn main_loop() -> f64 {
     return 0.0;
 }
 
+/// Compiled 64-bit code may continue directly with the next module (instead of returning to
+/// cycle_internal) while the instruction counter is below this value
+pub static mut jit_chain_instruction_limit: u32 = 0;
+
 pub unsafe fn do_many_cycles_native() {
     profiler::stat_increment(stat::DO_MANY_CYCLES);
     let initial_instruction_counter = *instruction_counter;
+    jit_chain_instruction_limit = initial_instruction_counter.wrapping_add(LOOP_COUNTER as u32);
     while (*instruction_counter).wrapping_sub(initial_instruction_counter) < LOOP_COUNTER as u32
         && !*in_hlt
     {

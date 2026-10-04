@@ -757,6 +757,158 @@ pub unsafe fn jit64_test_cc(condition: i32) -> i32 {
     r as i32
 }
 
+/// At the (normal) exit of a module: continue directly with the entry point for the instruction
+/// pointer, like cycle_internal would: by branching to reenter_label (which dispatches on the
+/// initial state) if it's in this module, otherwise through a tail call of the other module that
+/// passes the registers. Falls through if there is none, the cpu halted or the instruction budget
+/// of the current do_many_cycles is used up (so that timers and interrupts are handled). The
+/// instruction counter must have been updated.
+pub fn gen_chain_to_next_module(ctx: &mut JitContext, reenter_label: Label) {
+    use crate::cpu::cpu::{Code, WASM_TABLE_OFFSET};
+    use std::mem::offset_of;
+
+    // !in_hlt && (int)(jit_chain_instruction_limit - instruction_counter) > 0
+    ctx.builder.load_fixed_u8(global_pointers::in_hlt as u32);
+    ctx.builder.eqz_i32();
+    ctx.builder
+        .load_fixed_i32(&raw const cpu::jit_chain_instruction_limit as u32);
+    ctx.builder
+        .load_fixed_i32(global_pointers::instruction_counter as u32);
+    ctx.builder.sub_i32();
+    ctx.builder.const_i32(0);
+    ctx.builder.gt_i32();
+    ctx.builder.and_i32();
+    ctx.builder.if_void();
+    {
+        codegen::gen_get_eip64(ctx.builder);
+        let eip = ctx.builder.set_new_local_i64();
+
+        // code = tlb_code_get(canonicalize(eip) >> 12), a pointer to the page's Code or 0
+        ctx.builder.get_local_i64(&eip);
+        ctx.builder.const_i64(32);
+        ctx.builder.shr_u_i64();
+        ctx.builder.eqz_i64();
+        ctx.builder.if_i32();
+        {
+            ctx.builder.get_local_i64(&eip);
+            ctx.builder.wrap_i64_to_i32();
+            ctx.builder.const_i32(12);
+            ctx.builder.shr_u_i32();
+            ctx.builder.const_i32(2);
+            ctx.builder.shl_i32();
+            ctx.builder
+                .load_aligned_i32(&raw const cpu::tlb_code as u32);
+        }
+        ctx.builder.else_();
+        {
+            ctx.builder.get_local_i64(&eip);
+            ctx.builder.const_i64(16);
+            ctx.builder.shl_i64();
+            ctx.builder.const_i64(28);
+            ctx.builder.shr_u_i64();
+            let page = ctx.builder.tee_new_local_i64();
+            // slot index: tlb_high_index(page)
+            ctx.builder.const_i64(0x9E37_79B9_7F4A_7C15u64 as i64);
+            ctx.builder.mul_i64();
+            ctx.builder.const_i64(25);
+            ctx.builder.shr_u_i64();
+            ctx.builder.wrap_i64_to_i32();
+            ctx.builder.const_i32((TLB_HIGH_SIZE - 1) as i32);
+            ctx.builder.and_i32();
+            let slot = ctx.builder.set_new_local();
+
+            ctx.builder.get_local(&slot);
+            ctx.builder.const_i32(2);
+            ctx.builder.shl_i32();
+            ctx.builder
+                .load_aligned_i32(&raw const cpu::tlb_code_high as u32);
+            ctx.builder.const_i32(0);
+            ctx.builder.get_local(&slot);
+            ctx.builder.const_i32(3);
+            ctx.builder.shl_i32();
+            ctx.builder
+                .load_aligned_i64(&raw const cpu::tlb_high_page as u32);
+            ctx.builder.get_local_i64(&page);
+            ctx.builder.eq_i64();
+            ctx.builder.select();
+            ctx.builder.free_local(slot);
+            ctx.builder.free_local_i64(page);
+        }
+        ctx.builder.block_end();
+        let code = ctx.builder.tee_new_local();
+
+        // code != 0 && code.state_flags == *state_flags
+        ctx.builder.if_void();
+        {
+            ctx.builder.get_local(&code);
+            ctx.builder.load_u8(offset_of!(Code, state_flags) as u32);
+            ctx.builder
+                .load_fixed_u8(global_pointers::state_flags as u32);
+            ctx.builder.eq_i32();
+            ctx.builder.if_void();
+            {
+                // state = code.state_table[eip & 0xFFF]
+                ctx.builder.get_local(&code);
+                ctx.builder.get_local_i64(&eip);
+                ctx.builder.wrap_i64_to_i32();
+                ctx.builder.const_i32(0xFFF);
+                ctx.builder.and_i32();
+                ctx.builder.const_i32(1);
+                ctx.builder.shl_i32();
+                ctx.builder.add_i32();
+                ctx.builder
+                    .load_aligned_u16(offset_of!(Code, state_table) as u32);
+                let state = ctx.builder.tee_new_local();
+                ctx.builder.const_i32(u16::MAX as i32);
+                ctx.builder.ne_i32();
+                ctx.builder.if_void();
+                {
+                    // in this module?
+                    ctx.builder.get_local(&code);
+                    ctx.builder
+                        .load_aligned_u16(offset_of!(Code, wasm_table_index) as u32);
+                    ctx.builder
+                        .const_i32(ctx.wasm_table_index.to_u16() as i32);
+                    ctx.builder.eq_i32();
+                    ctx.builder.if_void();
+                    {
+                        ctx.builder.get_local(&state);
+                        ctx.builder
+                            .set_local(&ctx.builder.arg_local_initial_state.unsafe_clone());
+                        // counted in the instruction counter already
+                        ctx.builder.const_i32(0);
+                        ctx.builder.set_local(&ctx.instruction_counter);
+                        ctx.builder.br(reenter_label);
+                    }
+                    ctx.builder.block_end();
+
+                    codegen::gen_profiler_stat_increment(
+                        ctx.builder,
+                        crate::profiler::stat::RUN_FROM_CACHE,
+                    );
+                    ctx.builder.get_local(&state);
+                    for r in 0..16 {
+                        ctx.builder.get_local_i64(&reg_local(ctx, r));
+                    }
+                    ctx.builder.get_local(&code);
+                    ctx.builder
+                        .load_aligned_u16(offset_of!(Code, wasm_table_index) as u32);
+                    ctx.builder.const_i32(WASM_TABLE_OFFSET as i32);
+                    ctx.builder.add_i32();
+                    ctx.builder.return_call_indirect_jit64();
+                }
+                ctx.builder.block_end();
+                ctx.builder.free_local(state);
+            }
+            ctx.builder.block_end();
+        }
+        ctx.builder.block_end();
+        ctx.builder.free_local(code);
+        ctx.builder.free_local_i64(eip);
+    }
+    ctx.builder.block_end();
+}
+
 /// After jumping to another page within a module: leave the module unless the instruction
 /// pointer still maps to next_block_phys. Checked inline if the page is in the tlb, by
 /// jit_page_switch_check64 otherwise.
@@ -829,7 +981,7 @@ use crate::cpu::cpu::{
     TLB_READONLY, TLB_VALID,
 };
 use crate::prefix::PREFIX_REX_PRESENT as REX_PRESENT;
-use crate::wasmgen::wasm_builder::{WasmLocal, WasmLocalI64};
+use crate::wasmgen::wasm_builder::{Label, WasmLocal, WasmLocalI64};
 
 /// A value in a wasm local: i32 for operand sizes up to 32 bits, i64 for 64 bits
 pub enum Val {

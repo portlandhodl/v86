@@ -22,6 +22,24 @@
 
     Other parameters: ?mem=<MiB> (default 2560), ?iso=<url>, ?serial (show the
     serial console; with ?direct the kernel logs there).
+
+    Networking: by default the guest's network card is connected to the Wisp
+    proxy of tools/serve.mjs, which gives the guest internet access (TCP only:
+    web, apt, git, ssh; DNS is answered over DNS-over-HTTPS, ping only reaches
+    the virtual router). Start the server with it enabled:
+
+        npm install
+        ./tools/serve.mjs --port 8000 --wisp
+
+    Add --wisp-allow-lan to also reach your local network and this machine.
+    Parameters:
+        ?net=wisp       Wisp proxy at /wisp/ on this server (default)
+        ?net=<url>      another backend: wisp://, wisps://, ws://, wss:// (a
+                        wsproxy relay, full ethernet), fetch (HTTP only) or
+                        inbrowser, see docs/networking.md
+        ?net=none       no network backend (the card is still there)
+        ?nic=ne2k       NE2000 network card (default) or ?nic=virtio
+        ?doh=<host>     DNS-over-HTTPS server (default cloudflare-dns.com)
 -->
 <style>
     body { background: #1b1b1b; color: #ddd; font: 14px sans-serif; margin: 0; }
@@ -56,6 +74,17 @@ window.onload = function()
     const memory_mb = +params.get("mem") || 2560;
     const direct = params.has("direct");
 
+    const net = params.get("net") || "wisp";
+    const relay_url =
+        net === "none" ? undefined :
+        net === "wisp" ? `${location.protocol === "https:" ? "wisps" : "wisp"}://${location.host}/wisp/` :
+        net;
+    const net_device = {
+        type: params.get("nic") || "ne2k",
+        relay_url,
+        ...(params.has("doh") ? { doh_server: params.get("doh") } : {}),
+    };
+
     const emulator = new V86({
         wasm_path: "../build/v86.wasm",
         memory_size: memory_mb * 1024 * 1024,
@@ -68,6 +97,7 @@ window.onload = function()
         // Ubuntu's kernel uses the io apic (described by SeaBIOS's MP table), which
         // v86 only enables together with acpi
         acpi: true,
+        net_device,
         ...(direct ? {
             bzimage: { url: "../images/casper/vmlinuz" },
             initrd: { url: "../images/casper/initrd" },
@@ -97,8 +127,17 @@ window.onload = function()
         const mips = ((counter - last_counter) >>> 0) / (now - last_time) / 1000;
         last_counter = counter;
         last_time = now;
-        status.textContent = `${download}${emulator.is_running() ? mips.toFixed(0) + " MIPS" : "stopped"} | ${memory_mb} MiB`;
+        status.textContent = `${download}${emulator.is_running() ? mips.toFixed(0) + " MIPS" : "stopped"} | ${memory_mb} MiB | net: ${net_status()}`;
     }, 1000);
+
+    function net_status()
+    {
+        if(!relay_url) return "off";
+        const ws = emulator.network_adapter && emulator.network_adapter.wispws;
+        if(!ws) return `${net_device.type}, ${net}`;
+        return `${net_device.type}, ${net} ` +
+            (ws.readyState === WebSocket.OPEN ? "connected" : "not connected (serve.mjs --wisp?)");
+    }
 
     // keyboard helpers (scancode set 1)
     document.getElementById("enter").onclick = () => emulator.keyboard_send_scancodes([0x1C, 0x9C]);

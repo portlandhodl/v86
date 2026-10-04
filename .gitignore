@@ -31,3 +31,4 @@ src/rust/gen/jit64_wrappers.rs
 bios/seabios
 bench-results
 .devcontainer/devcontainer-lock.json
+package-lock.json

@@ -67,6 +67,9 @@ pub fn jit_clear_func(wasm_table_index: WasmTableIndex) {
 static mut JIT_DISABLED: bool = false;
 // compile 64-bit code (see jit64.rs); when disabled, 64-bit code runs in the interpreter
 static mut JIT64_DISABLED: bool = false;
+// let modules for 64-bit code continue directly with the next module through a tail call
+// (jit64::gen_chain_to_next_module). Enabled by the host if it supports wasm tail calls.
+static mut JIT64_CHAINING: bool = false;
 
 // Maximum number of pages per wasm module. Necessary for the following reasons:
 // - There is an upper limit on the size of a single function in wasm (currently ~7MB in all browsers)
@@ -1297,14 +1300,14 @@ fn jit_generate_module(
 ) -> Vec<(u64, u16)> {
     builder.reset();
 
-    // the 64-bit jit keeps registers in i64 locals (register_locals64)
+    // the 64-bit jit keeps registers in i64 locals (register_locals64), which are the parameters
+    // of the module's function
+    let chaining = state_flags.is_64() && unsafe { JIT64_CHAINING };
+    if state_flags.is_64() {
+        builder.set_jit64_function(chaining);
+    }
     let register_locals64: Vec<WasmLocalI64> = if state_flags.is_64() {
-        (0..16)
-            .map(|i| {
-                builder.load_fixed_i64(global_pointers::get_reg64_offset(i));
-                builder.set_new_local_i64()
-            })
-            .collect()
+        (0..16).map(|i| builder.arg_local_reg64(i)).collect()
     }
     else {
         Vec::new()
@@ -1324,6 +1327,9 @@ fn jit_generate_module(
     builder.const_i32(0);
     let instruction_counter = builder.set_new_local();
 
+    // with chaining, the exit code looks up the next entry point and continues here if it's
+    // in this module (see jit64::gen_chain_to_next_module)
+    let reenter_label = if chaining { Some(builder.loop_void()) } else { None };
     let exit_label = builder.block_void();
     let exit_with_fault_label = builder.block_void();
     let main_loop_label = builder.loop_void();
@@ -1490,6 +1496,11 @@ fn jit_generate_module(
                         // Exit this function
                         codegen::gen_debug_track_jit_exit(ctx.builder, block.last_instruction_addr);
                         codegen::gen_profiler_stat_increment(ctx.builder, stat::DIRECT_EXIT);
+                        ctx.builder.br(ctx.exit_label);
+                    },
+                    BasicBlockType::AbsoluteEip if chaining => {
+                        // the exit code finds the entry point, in this module or another
+                        codegen::gen_debug_track_jit_exit(ctx.builder, block.last_instruction_addr);
                         ctx.builder.br(ctx.exit_label);
                     },
                     BasicBlockType::AbsoluteEip => {
@@ -2114,16 +2125,23 @@ fn jit_generate_module(
     {
         // exit
         ctx.builder.block_end();
-        codegen::gen_move_registers_from_locals_to_memory(ctx);
-        codegen::gen_update_instruction_counter(ctx);
+        if let Some(reenter_label) = reenter_label {
+            codegen::gen_update_instruction_counter(ctx);
+            crate::jit64::gen_chain_to_next_module(ctx, reenter_label);
+            codegen::gen_move_registers_from_locals_to_memory(ctx);
+            ctx.builder.block_end(); // reenter_label
+        }
+        else {
+            codegen::gen_move_registers_from_locals_to_memory(ctx);
+            codegen::gen_update_instruction_counter(ctx);
+        }
     }
 
     for local in ctx.register_locals.drain(..) {
         ctx.builder.free_local(local);
     }
-    for local in ctx.register_locals64.drain(..) {
-        ctx.builder.free_local_i64(local);
-    }
+    // parameters, not allocated locals
+    ctx.register_locals64.clear();
     ctx.builder
         .free_local(ctx.instruction_counter.unsafe_clone());
 
@@ -2628,6 +2646,7 @@ pub unsafe fn set_jit_config(index: u32, value: u32) {
         4 => JIT64_DISABLED = value != 0,
         5 => JIT_HOTNESS_THRESHOLD = value,
         6 => crate::jit64::PROFILE_GENERIC = value != 0,
+        7 => JIT64_CHAINING = value != 0,
         _ => dbg_assert!(false),
     }
 }
@@ -2641,6 +2660,7 @@ pub unsafe fn get_jit_config(index: u32) -> u32 {
         3 => MAX_EXTRA_BASIC_BLOCKS as u32,
         4 => JIT64_DISABLED as u32,
         5 => JIT_HOTNESS_THRESHOLD,
+        7 => JIT64_CHAINING as u32,
         _ => 0,
     }
 }

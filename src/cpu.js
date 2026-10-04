@@ -403,6 +403,22 @@ CPU.prototype.create_jit_imports = function()
         jit_imports[name] = this.wm.exports[name];
     }
 
+    // modules for 64-bit code continue with the next module through a tail call
+    // (return_call_indirect) on the table, if the host supports tail calls
+    dbg_assert(!("t" in jit_imports));
+    jit_imports["t"] = this.wm.wasm_table;
+    const TAIL_CALL_TEST_MODULE = new Uint8Array([
+        0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00, // type 0: [] -> []
+        0x03, 0x02, 0x01, 0x00, // function 0: type 0
+        0x04, 0x04, 0x01, 0x70, 0x00, 0x00, // table 0: funcref, min 0
+        0x0A, 0x09, 0x01, 0x07, 0x00, 0x41, 0x00, 0x13, 0x00, 0x00, 0x0B, // return_call_indirect
+    ]);
+    if(WebAssembly.validate(TAIL_CALL_TEST_MODULE))
+    {
+        this.wm.exports["set_jit_config"](7, 1);
+    }
+
     this.jit_imports = jit_imports;
 };
 

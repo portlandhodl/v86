@@ -221,7 +221,7 @@ build/v86.wasm: $(RUST_FILES) build/softfloat.o build/zstddeclib.o Cargo.toml
 	-BLOCK_SIZE=K ls -l build/v86.wasm
 	cargo rustc --release $(CARGO_FLAGS)
 	cp build/wasm32-unknown-unknown/release/v86_64.wasm build/v86.wasm
-	-$(WASM_OPT) && wasm-opt -O2 --strip-debug build/v86.wasm -o build/v86.wasm
+	-$(WASM_OPT) && wasm-opt -O3 --strip-debug build/v86.wasm -o build/v86.wasm
 	BLOCK_SIZE=K ls -l build/v86.wasm
 
 build/v86-debug.wasm: $(RUST_FILES) build/softfloat.o build/zstddeclib.o Cargo.toml
@@ -344,6 +344,7 @@ nasmtests-force-jit: build/v86-debug.wasm
 longmode-tests: build/v86-debug.wasm
 	./tests/longmode/run.js
 	JIT_THRESHOLD=1 ./tests/longmode/run.js
+	JIT_THRESHOLD=1 JIT64_CHAINING=0 ./tests/longmode/run.js
 	./tests/longmode/multiboot64.js
 
 jitpagingtests: build/v86-debug.wasm
