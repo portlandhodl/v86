@@ -1,17 +1,38 @@
-[![Join the chat at https://gitter.im/copy/v86](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/copy/v86) or #v86 on [irc.libera.chat](https://libera.chat/)
+# v86_64
+
+**v86_64 is a 64-bit fork of [v86](https://github.com/copy/v86).** It adds
+x86-64 (long mode) support to the emulator and its x86-to-wasm JIT, so that
+modern 64-bit operating systems can boot in the browser. 32-bit guests keep
+working exactly as they do in upstream v86.
+
+Status:
+
+- Alpine Linux 3.19 x86_64 boots from its ISO (SeaBIOS + ISOLINUX) to an
+  interactive root shell, with 64-bit code running in the JIT.
+- Graphical 64-bit distributions (Xubuntu 24.04) are being brought up, see
+  [examples/xubuntu.html](examples/xubuntu.html).
+- The roadmap, design notes and test status are in [TODOS.md](TODOS.md).
+
+The JavaScript API, the build outputs (`libv86.js`, `v86.wasm`) and the
+documentation below are inherited from upstream and still use the name v86.
+For upstream releases, demos and support, see
+[copy/v86](https://github.com/copy/v86) and [copy.sh/v86](https://copy.sh/v86/).
+
+---
 
 v86 emulates an x86-compatible CPU and hardware. Machine code is translated to
 WebAssembly modules at runtime in order to achieve decent performance. Here's a
 list of emulated hardware:
 
-- An x86-compatible CPU. The instruction set is around Pentium 4 level,
-  including full SSE3 support. Some features are missing, in particular:
+- An x86-64 compatible CPU. The instruction set is around Pentium 4 level,
+  including full SSE3 support, plus the 64-bit extensions (long mode, 4-level
+  paging, SYSCALL/SYSRET, NX). Some features are missing, in particular:
   - Task gates, far calls in protected mode
   - Some 16 bit protected mode features
   - Single stepping (trap flag, debug registers)
   - Some exceptions, especially floating point and SSE
   - Multicore
-  - 64-bit extensions
+  - Guest physical memory above 4 GiB
 - A floating point unit (FPU). Calculations are done using the Berkeley
   SoftFloat library and therefore should be precise (but slow). Trigonometric
   and log functions are emulated using 64-bit floats and may be less precise.
@@ -31,7 +52,7 @@ list of emulated hardware:
 - A SoundBlaster 16 sound card.
 - A hayes-compatible dial-up Modem.
 
-## Demos
+## Demos (upstream, 32-bit)
 
 [9front](https://copy.sh/v86/?profile=9front) —
 [Arch Linux](https://copy.sh/v86/?profile=archlinux) —
@@ -78,7 +99,8 @@ list of emulated hardware:
 
 Here's an overview of the operating systems supported in v86:
 
-- Linux works pretty well. 64-bit kernels are not supported.
+- Linux works pretty well. 64-bit kernels are supported in v86_64
+  (Alpine x86_64 boots to a shell; see [TODOS.md](TODOS.md) for others).
   - [Buildroot](https://buildroot.org/) can be used to build a minimal image.
     [humphd/browser-vm](https://github.com/humphd/browser-vm) and
     [darin755/browser-buildroot](https://github.com/Darin755/browser-buildroot) have some useful scripts for building one.
@@ -106,7 +128,7 @@ Here's an overview of the operating systems supported in v86:
 - OpenBSD works with a specific boot configuration. At the `boot>` prompt type
   `boot -c`, then at the `UKC>` prompt `disable mpbios` and `exit`.
 - NetBSD works only with a custom kernel, see [#350](https://github.com/copy/v86/issues/350).
-- SerenityOS works (only 32-bit versions).
+- SerenityOS works (tested with 32-bit versions).
 - [SkiftOS](https://skiftos.org/) works.
 
 You can get some information on the disk images here: https://github.com/copy/images.
@@ -128,12 +150,15 @@ for a full setup on Debian or
 
 - Run `make` to build the debug build (at `debug.html`).
 - Run `make all` to build the optimized build (at `index.html`).
+- Large 64-bit ISOs are streamed with HTTP range requests, which `make run`
+  doesn't support. Use `./tools/serve.mjs --port 8000` instead.
 - ROM and disk images are loaded via XHR, so if you want to try out `index.html`
   locally, make sure to serve it from a local webserver. You can use `make run`
   to serve the files using Python's http module.
 - If you only want to embed v86 in a webpage you can use `libv86.js`. For usage,
   check out the [examples](examples/). You can download it from the [release section](https://github.com/copy/v86/releases).
-- For bundler-based setups (Vite/React/Next/Webpack), there is also an official npm package:
+- For bundler-based setups (Vite/React/Next/Webpack), upstream v86 has an official npm package
+  (it does not include the 64-bit support of this fork):
 https://www.npmjs.com/package/v86
 
   This package was originally maintained by [@giulioz](https://github.com/giulioz) (bundler-optimized fork) and was made "official" for this repo by [@basicer](https://github.com/basicer) with the author's permission.
@@ -145,8 +170,8 @@ https://www.npmjs.com/package/v86
 
 - If you have Docker installed, you can run the whole system inside a container.
 - See `tools/docker/exec` to find the Dockerfile required for this.
-- You can run `docker build -f tools/docker/exec/Dockerfile -t v86:alpine-3.19 .` from the root directory to generate docker image.
-- Then you can simply run `docker run -it -p 8000:8000 v86:alpine-3.19` to start the server.
+- You can run `docker build -f tools/docker/exec/Dockerfile -t v86_64:alpine-3.19 .` from the root directory to generate docker image.
+- Then you can simply run `docker run -it -p 8000:8000 v86_64:alpine-3.19` to start the server.
 - Check `localhost:8000` for hosted server.
 
 ### Running via Dev Container
@@ -177,6 +202,7 @@ See [tests/Readme.md](tests/Readme.md) for more information.
 - [Networking between browser windows/tabs using the Broadcast Channel API](examples/broadcast-network.html)
 - [TCP Terminal (fetch-based networking)](examples/tcp_terminal.html)
 - [Saving and restoring emulator state](examples/save_restore.html)
+- [Xubuntu 24.04 x86-64 live ISO](examples/xubuntu.html)
 
 Using v86 for your own purposes is as easy as:
 

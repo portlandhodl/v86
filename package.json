@@ -1,9 +1,9 @@
 {
-  "name": "v86",
+  "name": "v86_64",
   "version": "0.5",
   "license": "BSD-2-Clause",
-  "description": "x86 PC emulator and x86-to-wasm JIT, running in the browser",
-  "homepage": "https://copy.sh/v86/",
+  "description": "x86-64 PC emulator and x86-to-wasm JIT, running in the browser (64-bit fork of v86)",
+  "homepage": "https://github.com/portlandhodl/v86_64",
   "files": [
     "Readme.md",
     "LICENSE",
@@ -15,6 +15,6 @@
   ],
   "main": "build/libv86.mjs",
   "types": "v86.d.ts",
-  "repository": "github:copy/v86",
+  "repository": "github:portlandhodl/v86_64",
   "type": "module"
 }
