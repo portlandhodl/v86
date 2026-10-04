@@ -406,6 +406,20 @@ Run `grep -n unimplemented src/rust/cpu/instructions_64.rs`. Notable groups:
 
 ---
 
+### Test status (2026-10-03)
+
+CI targets run locally (images from i.copy.sh as in .github/workflows/ci.yml):
+rust-test, expect-tests, nasmtests (+force-jit), longmode-tests and `make
+tests` pass, except for the tests using `images/linux4.iso` ("Linux 4" in
+tests/full, jitpagingtests, api/state.js): that 32-bit guest stops after
+"Freeing SMP alternatives memory", spinning in APIC timer calibration with
+only one PIT interrupt (vector 0x30) ever delivered. `master` behaves the
+same on this machine, so it's not caused by this branch; not investigated
+further (check on another host/CI first). Running `make tests` found a real
+regression from M2 (null SS loads allowed outside 64-bit mode), fixed.
+
+---
+
 ## 4. Milestone M4 — JIT for 64-bit code
 
 Interpreter-first was deliberate; M4 makes long mode fast. Measure with
