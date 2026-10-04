@@ -107,7 +107,6 @@ impl CpuContext {
             self.state_flags.is_32() != (self.prefixes & PREFIX_MASK_ADDRSIZE != 0)
         }
     }
-    pub fn asize_64(&self) -> bool { self.is_64() && self.prefixes & PREFIX_MASK_ADDRSIZE == 0 }
 
     pub fn rex_w(&self) -> bool { self.prefixes & PREFIX_REX_W != 0 }
     /// register number extensions (8 or 0), as folded into register numbers by the decoder

@@ -513,7 +513,7 @@ function gen_table()
             "#![cfg_attr(rustfmt, rustfmt_skip)]",
 
             "use crate::cpu::cpu::{after_block_boundary, modrm_resolve};",
-            "use crate::cpu::cpu::{read_imm8, read_imm16, read_imm32s, read_imm64s};",
+            "use crate::cpu::cpu::{read_imm8, read_imm16, read_imm32s};",
             "use crate::cpu::cpu::{rex_b, rex_r};",
             "use crate::cpu::cpu::{task_switch_test, task_switch_test_mmx, trigger_ud};",
             "use crate::cpu::instructions_0f;",

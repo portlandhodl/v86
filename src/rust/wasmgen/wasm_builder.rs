@@ -57,6 +57,7 @@ enum FunctionType {
     FN4_I32_I64_I64_I32_RET,
 
     FN1_I64,
+    #[allow(dead_code)]
     FN2_I64_I64,
     FN3_I32_I32_I64,
 
@@ -1028,6 +1029,7 @@ impl WasmBuilder {
     pub fn call_fn0_ret_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN0_RET_I64) }
     pub fn call_fn1(&mut self, name: &str) { self.call_fn(name, FunctionType::FN1) }
     pub fn call_fn1_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN1_I64) }
+    #[allow(dead_code)]
     pub fn call_fn2_i64_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN2_I64_I64) }
     pub fn call_fn3_i32_i32_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN3_I32_I32_I64) }
     pub fn call_fn1_ret(&mut self, name: &str) { self.call_fn(name, FunctionType::FN1_RET) }

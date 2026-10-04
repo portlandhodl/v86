@@ -687,6 +687,7 @@ function gen_wrappers()
 {
     const code = [
         "#![allow(unused_variables)]",
+        "#![allow(non_snake_case)]",
         "use crate::cpu::cpu::{task_switch_test, task_switch_test_mmx, trigger_ud};",
         "use crate::cpu::instructions;",
         "use crate::cpu::instructions_0f;",

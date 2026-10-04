@@ -1,20 +1,18 @@
 // 64-bit instruction implementations (long mode).
 // Filled in incrementally; unimplemented ones panic (only reachable in 64-bit mode).
 #![allow(unused_variables)]
+#![allow(non_snake_case)]
 #![allow(clippy::all)]
 
 use crate::cpu::arith::*;
 use crate::cpu::cpu::*;
 use crate::cpu::global_pointers::*;
-use crate::cpu::memory;
 use crate::cpu::misc_instr::*;
 use crate::cpu::string::{
     cmpsq_no_rep, cmpsq_repnz, cmpsq_repz, insd_no_rep, lodsq_no_rep, lodsq_rep, movsq_no_rep,
     movsq_rep, outsd_no_rep, scasq_no_rep, scasq_repnz, scasq_repz, stosq_no_rep, stosq_rep,
 };
-use crate::cpu::modrm;
 use crate::prefix;
-use crate::regs;
 
 pub unsafe fn instr64_01_mem(addr: u64, r: i32) { safe_read_write64(addr, &|x| add64(x, read_reg64(r))) }
 pub unsafe fn instr64_01_reg(r1: i32, r: i32) { write_reg64(r1, add64(read_reg64(r1), read_reg64(r))); }

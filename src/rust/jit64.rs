@@ -873,14 +873,14 @@ fn gen_tlb_fast_path_check(
     let slot = ctx.builder.tee_new_local();
 
     ctx.builder
-        .load_aligned_i64(unsafe { &raw const cpu::tlb_high_page } as u32);
+        .load_aligned_i64(&raw const cpu::tlb_high_page as u32);
     ctx.builder.get_local_i64(&page);
     ctx.builder.eq_i64();
     ctx.builder.free_local_i64(page);
 
     ctx.builder.get_local(&slot);
     ctx.builder
-        .load_aligned_i64(unsafe { &raw const cpu::tlb_high_entry } as u32);
+        .load_aligned_i64(&raw const cpu::tlb_high_entry as u32);
     ctx.builder.free_local(slot);
     ctx.builder.wrap_i64_to_i32();
     ctx.builder.tee_local(entry);

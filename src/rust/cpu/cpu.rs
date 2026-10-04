@@ -1507,8 +1507,6 @@ pub unsafe fn call_interrupt_vector64(
     );
 
     let offset = descriptor.offset();
-    let selector = descriptor.selector() as i32;
-
     if is_software_int && descriptor.dpl() < *cpl {
         dbg_log!("#gp software interrupt ({:x}) and dpl < cpl", interrupt_nr);
         trigger_gp(interrupt_nr << 4 | 2);
