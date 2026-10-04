@@ -1165,14 +1165,13 @@ fn gen_set_last_result(ctx: &mut JitContext, bits: u32, value: &Val) {
     }
 }
 fn gen_set_op_size_and_flags_changed(ctx: &mut JitContext, bits: u32, flags_changed: i32) {
+    // last_op_size and flags_changed are adjacent: write both with one store
+    dbg_assert!(global_pointers::flags_changed as u32 == global_pointers::last_op_size as u32 + 4);
     ctx.builder
         .const_i32(global_pointers::last_op_size as i32);
-    ctx.builder.const_i32(opsize(bits));
-    ctx.builder.store_aligned_i32(0);
     ctx.builder
-        .const_i32(global_pointers::flags_changed as i32);
-    ctx.builder.const_i32(flags_changed);
-    ctx.builder.store_aligned_i32(0);
+        .const_i64((flags_changed as u32 as i64) << 32 | opsize(bits) as u32 as i64);
+    ctx.builder.store_aligned_i64(0);
 }
 fn gen_clear_flags(ctx: &mut JitContext, clear: i32) {
     ctx.builder.const_i32(global_pointers::flags as i32);
