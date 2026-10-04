@@ -824,6 +824,29 @@ t85_2:
     jmp t87_a
 t87_done:
     mov [r15 + 87*8], r13
+
+    ; ======== test 88: cf around inc/dec after add/sub (dead when cmp follows, live
+    ; across mov reg/mem and lea), jitted ========
+    xor r13, r13
+    mov ecx, 100000
+    mov [r15 + 88*8], rcx
+t88_loop:
+    mov eax, ecx
+    add eax, 0xFFFF0000          ; cf set for ecx >= 0x10000
+    inc ebx
+    cmp ebx, ecx                 ; overwrites cf: the inc's saved cf is dead
+    adc r13, 1
+    mov edx, ecx
+    sub edx, 50000               ; cf set for ecx < 50000
+    dec ebx
+    mov rax, [r15 + 88*8]        ; can fault: cf must be saved before it
+    lea rsi, [rax + 1]
+    mov rdi, rsi
+    adc r13, rdi
+    add r13, rbx
+    dec ecx
+    jnz t88_loop
+    mov [r15 + 88*8], r13
     jmp t81_done
 t81_func:
     add rax, 1

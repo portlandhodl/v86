@@ -1817,7 +1817,7 @@ fn gen_save_cf(ctx: &mut JitContext) {
         Flags64::Sub(b) | Flags64::Add(b) | Flags64::Logic(b) => b >= 32,
         Flags64::Unknown => false,
     };
-    if !known && next_instructions_overwrite_flags(ctx) {
+    if next_instructions_overwrite_flags(ctx) {
         // the saved cf would be dead
         return;
     }
@@ -2085,8 +2085,12 @@ fn next_instructions_overwrite_flags(ctx: &JitContext) -> bool {
         if writes_all {
             return true;
         }
-        let neutral = matches!(opcode,
-            0x88..=0x8D | 0xC6 | 0xC7 | 0xB0..=0xBF | 0x50..=0x5F | 0x63 | 0x90 | 0x0FB6 | 0x0FB7 | 0x0FBE | 0x0FBF);
+        // instructions that don't use the flags and can't fault (no memory or stack access)
+        let neutral = match opcode {
+            0x88..=0x8B | 0x63 | 0x0FB6 | 0x0FB7 | 0x0FBE | 0x0FBF => cpu.read_imm8() >= 0xC0,
+            0x8D | 0xB0..=0xBF | 0x90 => true,
+            _ => false,
+        };
         if !neutral {
             return false;
         }
