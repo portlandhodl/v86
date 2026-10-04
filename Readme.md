@@ -88,6 +88,18 @@ commands are at the top of [examples/xubuntu.html](examples/xubuntu.html)) and
 open http://localhost:8000/examples/xubuntu.html. Add `?serial` to see the
 serial console, `?mem=<MiB>` to change the memory size.
 
+**Internet access in the guest.** `./tools/serve.mjs --wisp` (after
+`npm install`) also runs a [Wisp](https://github.com/MercuryWorkshop/wisp-protocol)
+proxy at `/wisp/`, and the Xubuntu page connects its network card to it by
+default. The guest gets an address by DHCP and can open TCP connections to
+the internet (web, apt, git, ssh); DNS is resolved over DNS-over-HTTPS. Add
+`--wisp-allow-lan` to also reach your local network and the host. Anyone who
+can reach the server can use the proxy, so pass `--host 127.0.0.1` unless you
+trust your network. The page takes `?net=` (`wisp`, `none` or another backend
+URL), `?nic=ne2k|virtio` and `?doh=<server>`; see
+[docs/networking.md](docs/networking.md) for the other backends, including
+full-ethernet relays.
+
 **Alpine x86_64 in Node.js.** This boots the ISO, logs in on the serial
 console and checks `uname -m`:
 
