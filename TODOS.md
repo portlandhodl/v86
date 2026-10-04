@@ -5,10 +5,11 @@ modern 64-bit Linux distributions can boot. It is written to be picked up by
 another engineer (human or LLM) with no prior context.
 
 **Status: Alpine 3.19 x86_64 boots from its ISO (SeaBIOS + ISOLINUX) to a
-root shell in ~35s with the 64-bit JIT (`tests/longmode/alpine.js`). M1 and M2
-are complete, M3 is complete apart from optional items, M4 (64-bit JIT) is in
-progress: phase 1 (all 64-bit code compiled) and the first native instructions
-are done, see §4. The work lives on branch `x86-64-long-mode`
+root shell in ~28s with the 64-bit JIT (`tests/longmode/alpine.js`), and the
+shell is interactive (bench64: ~530 MIPS for 64-bit code vs ~80 interpreted).
+M1-M3 are complete (apart from optional items), M4 (64-bit JIT) meets its goal
+and has optional performance work left (§4). Next: graphical distributions
+such as Ubuntu (§4b). The work lives on branch `x86-64-long-mode`
 (fork: https://github.com/portlandhodl/v86).**
 
 ---
@@ -487,6 +488,45 @@ Next (measure interpreter calls with `set_jit_config(6, 1)` +
   dispatcher per wrapper signature would shrink it.
 - ~~The 32-bit JIT's fast-path masks include TLB_NOT_EXECUTABLE~~ — fixed:
   data accesses ignore the NX bit (instruction fetches still check it).
+
+---
+
+## 4b. Milestone M5 — graphical distributions (Ubuntu and friends)
+
+What exists:
+- **Display**: the VGA device is the QEMU/Bochs "stdvga" (PCI 1234:1111,
+  class 0300, Bochs VBE/DISPI registers at ports 0x1CE/0x1CF, linear
+  framebuffer at 0xE0000000, no MMIO BAR since pci_revision is 0). Linux's
+  in-tree `bochs` DRM driver binds to it and uses the io ports; verified with
+  the Alpine x86_64 kernel: "[drm] Found bochs VGA, ID 0xb0c5", fb0
+  (bochs-drmdrmfb), 1024x768x32 (simpledrm takes over the firmware framebuffer
+  before that). Ubuntu kernels build this driver (`bochs` module), so KMS,
+  fbcon, Xorg's modesetting driver and Wayland compositors have a device.
+  There is no 3D: OpenGL is software-only (Mesa llvmpipe/softpipe).
+- **Input**: PS/2 keyboard and mouse (i8042, psmouse), plus virtio devices.
+- **CPU**: CPUID reports x86-64-v1 + SSE3/POPCNT/RDRAND, which is the baseline
+  of Ubuntu's amd64 packages (no SSSE3/SSE4.x/AVX, CX16 not advertised).
+
+Tasks:
+- Boot an Ubuntu Server live ISO (cdrom with `async: true`, it's several GB)
+  to a shell; expect systemd/snapd to take minutes. Find missing 64-bit
+  instructions (`unimplemented!()` in instructions_64.rs aborts loudly) and
+  CPU bugs the way Alpine was brought up (serial console, `console=ttyS0`).
+- Memory: Ubuntu's live desktop wants >= 4 GiB, server ~1-2 GiB. Guest
+  physical addresses are limited to 4 GiB (the page walk treats bits 32+ as
+  reserved, and wasm32 memory is at most 4 GiB including the VGA memory),
+  so a few GiB is the practical maximum. Measure with memory_size 2-3 GiB.
+- VGA memory: `vga_memory_size` defaults to 8 MiB, enough for 1024x768x32
+  and not 1920x1080x32 (8.3 MB); pass 16-32 MiB for larger modes (max 256).
+- Desktop: GNOME Shell needs GL and is likely unusable with llvmpipe at
+  these speeds; try a light X11 session (Xfce, LXQt, i3) on the modesetting
+  driver first. Consider exposing SSSE3/SSE4.1/4.2 (needs implementing and
+  testing the instructions) to speed up llvmpipe/memcpy paths.
+- Performance work from §4 (module transitions, TLB misses) matters more for
+  systemd-heavy boots.
+- Optional: the bochs-display variant (PCI 1234:1111 revision 2 with an MMIO
+  BAR for the DISPI registers) to avoid io port exits; virtio-gpu would be
+  needed for anything beyond a dumb framebuffer.
 
 ---
 
