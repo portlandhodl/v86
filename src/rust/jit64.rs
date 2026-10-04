@@ -764,9 +764,16 @@ pub fn gen_page_switch_check64(ctx: &mut JitContext, next_block_phys: u64) {
     let cont = ctx.builder.block_void();
     codegen::gen_get_eip64(ctx.builder);
     let address = ctx.builder.set_new_local_i64();
-    let entry = ctx.builder.new_local();
     gen_tlb_entry(ctx, &address);
-    ctx.builder.tee_local(&entry);
+    // the stack copy of the entry continues into the flag checks; tee only saves it
+    let entry = if cfg!(feature = "mem64") {
+        let l = ctx.builder.tee_new_local_i64();
+        ctx.builder.wrap_i64_to_i32();
+        Val::I64(l)
+    }
+    else {
+        Val::I32(ctx.builder.tee_new_local())
+    };
     let user = if ctx.cpu.cpl3() { TLB_NO_USER } else { 0 };
     ctx.builder
         .const_i32(TLB_VALID | TLB_NOT_EXECUTABLE | user | crate::cpu::cpu::TLB_IN_MAPPED_RANGE);
@@ -774,15 +781,26 @@ pub fn gen_page_switch_check64(ctx: &mut JitContext, next_block_phys: u64) {
     ctx.builder.const_i32(TLB_VALID);
     ctx.builder.eq_i32();
     gen_pointer_from_entry(ctx, &address, &entry);
-    ctx.builder.const_i32(!0xFFF);
-    ctx.builder.and_i32();
-    ctx.builder
-        .const_i32(crate::cpu::memory::tlb_host_base(next_block_phys & !0xFFF) as i32);
-    ctx.builder.eq_i32();
+    entry.free(ctx);
+    ctx.builder.free_local_i64(address);
+    if cfg!(feature = "mem64") {
+        // the pointer is i64 (gen_pointer_from_entry on the i64 entry)
+        ctx.builder.const_i64(!0xFFF);
+        ctx.builder.and_i64();
+        ctx.builder
+            .const_i64(crate::cpu::memory::tlb_host_base(next_block_phys & !0xFFF) as i64);
+        ctx.builder.eq_i64();
+    }
+    else {
+        ctx.builder.const_i32(!0xFFF);
+        ctx.builder.and_i32();
+        ctx.builder
+            .const_i32(crate::cpu::memory::tlb_host_base(next_block_phys & !0xFFF) as i32);
+        ctx.builder.eq_i32();
+    }
+    // flag check && mapping check
     ctx.builder.and_i32();
     ctx.builder.br_if(cont);
-    ctx.builder.free_local(entry);
-    ctx.builder.free_local_i64(address);
 
     ctx.builder.const_i32(next_block_phys as i32);
     ctx.builder.const_i32((next_block_phys >> 32) as i32);
@@ -937,17 +955,24 @@ fn eip_and_wasm_table_index(ctx: &JitContext) -> i32 {
     (ctx.start_of_current_instruction & 0xFFF) as i32 | (ctx.wasm_table_index.to_u16() as i32) << 16
 }
 
-/// Generate the fast path tlb check for a 64-bit address: sets entry (the low 32 bits of the
-/// tlb entry) and leaves 1 on the stack if the fast path can be used.
+/// Generate the fast path tlb check for a 64-bit address: returns a local holding the
+/// tlb entry (i32 in the default build, i64 under mem64) and leaves 1 on the stack if the
+/// fast path can be used. The stack copy of the entry continues into the flag checks.
 fn gen_tlb_fast_path_check(
     ctx: &mut JitContext,
     bits: u32,
     address: &WasmLocalI64,
     for_writing: bool,
-    entry: &WasmLocal,
-) {
+) -> Val {
     gen_tlb_entry(ctx, address);
-    ctx.builder.tee_local(entry);
+    let entry = if cfg!(feature = "mem64") {
+        let l = ctx.builder.tee_new_local_i64();
+        ctx.builder.wrap_i64_to_i32();
+        Val::I64(l)
+    }
+    else {
+        Val::I32(ctx.builder.tee_new_local())
+    };
 
     // flags that must be clear (or set) for the fast path
     let user = if ctx.cpu.cpl3() { TLB_NO_USER } else { 0 };
@@ -972,6 +997,8 @@ fn gen_tlb_fast_path_check(
         ctx.builder.le_i32();
         ctx.builder.and_i32();
     }
+
+    entry
 }
 
 /// Push the low 32 bits of the tlb entry for the page of a 64-bit address (0 if there is none).
@@ -982,21 +1009,41 @@ fn gen_tlb_entry(ctx: &mut JitContext, address: &WasmLocalI64) {
     ctx.builder.const_i64(32);
     ctx.builder.shr_u_i64();
     ctx.builder.eqz_i64();
-    ctx.builder.if_i32();
-    {
-        // entry = tlb_data[address >> 12]
-        ctx.builder.get_local_i64(address);
-        ctx.builder.wrap_i64_to_i32();
-        ctx.builder.const_i32(12);
-        ctx.builder.shr_u_i32();
-        ctx.builder.const_i32(2);
-        ctx.builder.shl_i32();
-        ctx.builder
-            .load_aligned_i32(&raw const cpu::tlb_data as u32);
+
+    if cfg!(feature = "mem64") {
+        ctx.builder.if_i64();
+        {
+            // entry = tlb_data[address >> 12]
+            ctx.builder.get_local_i64(address);
+            ctx.builder.wrap_i64_to_i32();
+            ctx.builder.const_i32(12);
+            ctx.builder.shr_u_i32();
+            ctx.builder.const_i32(3);
+            ctx.builder.shl_i32();
+            ctx.builder
+                .load_aligned_i64(&raw const cpu::tlb_data as u32);
+        }
+        ctx.builder.else_();
+        gen_tlb_high_entry(ctx, address);
+        ctx.builder.block_end();
     }
-    ctx.builder.else_();
-    gen_tlb_high_entry(ctx, address);
-    ctx.builder.block_end();
+    else {
+        ctx.builder.if_i32();
+        {
+            // entry = tlb_data[address >> 12]
+            ctx.builder.get_local_i64(address);
+            ctx.builder.wrap_i64_to_i32();
+            ctx.builder.const_i32(12);
+            ctx.builder.shr_u_i32();
+            ctx.builder.const_i32(2);
+            ctx.builder.shl_i32();
+            ctx.builder
+                .load_aligned_i32(&raw const cpu::tlb_data as u32);
+        }
+        ctx.builder.else_();
+        gen_tlb_high_entry(ctx, address);
+        ctx.builder.block_end();
+    }
 }
 
 /// Push the low 32 bits of the hashed tlb's entry for the page of a 64-bit address, or 0 (not
@@ -1023,8 +1070,13 @@ fn gen_tlb_high_entry(ctx: &mut JitContext, address: &WasmLocalI64) {
     ctx.builder.get_local(&slot);
     ctx.builder
         .load_aligned_i64(&raw const cpu::tlb_high_entry as u32);
-    ctx.builder.wrap_i64_to_i32();
-    ctx.builder.const_i32(0);
+    if cfg!(feature = "mem64") {
+        ctx.builder.const_i64(0);
+    }
+    else {
+        ctx.builder.wrap_i64_to_i32();
+        ctx.builder.const_i32(0);
+    }
     ctx.builder.get_local(&slot);
     ctx.builder
         .load_aligned_i64(&raw const cpu::tlb_high_page as u32);
@@ -1036,16 +1088,40 @@ fn gen_tlb_high_entry(ctx: &mut JitContext, address: &WasmLocalI64) {
 }
 
 /// pointer = (entry & ~0xFFF) ^ address
-fn gen_pointer_from_entry(ctx: &mut JitContext, address: &WasmLocalI64, entry: &WasmLocal) {
-    ctx.builder.get_local(entry);
-    ctx.builder.const_i32(!0xFFF);
-    ctx.builder.and_i32();
-    ctx.builder.get_local_i64(address);
-    ctx.builder.wrap_i64_to_i32();
-    ctx.builder.xor_i32();
+fn gen_pointer_from_entry(ctx: &mut JitContext, address: &WasmLocalI64, entry: &Val) {
+    match entry {
+        Val::I32(entry) => {
+            ctx.builder.get_local(entry);
+            ctx.builder.const_i32(!0xFFF);
+            ctx.builder.and_i32();
+            ctx.builder.get_local_i64(address);
+            ctx.builder.wrap_i64_to_i32();
+            ctx.builder.xor_i32();
+        },
+        Val::I64(entry) => {
+            ctx.builder.get_local_i64(entry);
+            ctx.builder.const_i64(!0xFFF);
+            ctx.builder.and_i64();
+            ctx.builder.get_local_i64(address);
+            ctx.builder.xor_i64();
+            // strip the address' sign bits, which cancel against the entry's above only for
+            // canonical forms (see TODOS §4c phase 2)
+            ctx.builder.const_i64(0xFFFF_FFFF_FFFF);
+            ctx.builder.and_i64();
+        },
+    }
 }
 
 fn gen_load(ctx: &mut JitContext, bits: u32) {
+    if cfg!(feature = "mem64") {
+        // the pointer is an i64 under mem64 and the access targets the guest memory
+        match bits {
+            8 => return ctx.builder.load_guest_u8(0),
+            16 => return ctx.builder.load_guest_u16(0),
+            32 => return ctx.builder.load_guest_i32(0),
+            _ => return ctx.builder.load_guest_i64(0),
+        }
+    }
     match bits {
         8 => ctx.builder.load_u8(0),
         16 => ctx.builder.load_unaligned_u16(0),
@@ -1054,6 +1130,14 @@ fn gen_load(ctx: &mut JitContext, bits: u32) {
     }
 }
 fn gen_store(ctx: &mut JitContext, bits: u32) {
+    if cfg!(feature = "mem64") {
+        match bits {
+            8 => return ctx.builder.store_guest_u8(0),
+            16 => return ctx.builder.store_guest_u16(0),
+            32 => return ctx.builder.store_guest_i32(0),
+            _ => return ctx.builder.store_guest_i64(0),
+        }
+    }
     match bits {
         8 => ctx.builder.store_u8(0),
         16 => ctx.builder.store_unaligned_u16(0),
@@ -1065,9 +1149,8 @@ fn gen_store(ctx: &mut JitContext, bits: u32) {
 /// Read from memory, push the value (i32 zero-extended for up to 32 bits, i64 for 64 bits).
 /// Exceptions leave the compiled code through exit_with_fault_label.
 pub fn gen_safe_read(ctx: &mut JitContext, bits: u32, address: &WasmLocalI64) {
-    let entry = ctx.builder.new_local();
     let cont = ctx.builder.block_void();
-    gen_tlb_fast_path_check(ctx, bits, address, false, &entry);
+    let entry = gen_tlb_fast_path_check(ctx, bits, address, false);
     ctx.builder.br_if(cont);
 
     ctx.builder.get_local_i64(address);
@@ -1079,33 +1162,64 @@ pub fn gen_safe_read(ctx: &mut JitContext, bits: u32, address: &WasmLocalI64) {
         32 => "safe_read32s_slow_jit64",
         _ => "safe_read64s_slow_jit64",
     });
-    ctx.builder.tee_local(&entry);
-    ctx.builder.const_i32(1);
-    ctx.builder.and_i32();
-    ctx.builder.br_if(ctx.exit_with_fault_label);
+    // default: the return value is the entry; mem64: it's a status and the entry is stashed
+    if cfg!(feature = "mem64") {
+        ctx.builder.const_i32(1);
+        ctx.builder.and_i32();
+        ctx.builder.br_if(ctx.exit_with_fault_label);
+        codegen::gen_load_slow_entry(ctx);
+        ctx.builder.set_local_i64(match &entry {
+            Val::I64(l) => l,
+            Val::I32(_) => unreachable!(),
+        });
+    }
+    else {
+        ctx.builder.tee_local(match &entry {
+            Val::I32(l) => l,
+            Val::I64(_) => unreachable!(),
+        });
+        ctx.builder.const_i32(1);
+        ctx.builder.and_i32();
+        ctx.builder.br_if(ctx.exit_with_fault_label);
+    }
     ctx.builder.block_end();
 
     gen_pointer_from_entry(ctx, address, &entry);
-    ctx.builder.free_local(entry);
+    entry.free(ctx);
     gen_load(ctx, bits);
 }
 
 /// Write a value to memory
 pub fn gen_safe_write(ctx: &mut JitContext, bits: u32, address: &WasmLocalI64, value: &Val) {
-    let entry = ctx.builder.new_local();
     let cont = ctx.builder.block_void();
-    gen_tlb_fast_path_check(ctx, bits, address, true, &entry);
+    let entry = gen_tlb_fast_path_check(ctx, bits, address, true);
     ctx.builder.br_if(cont);
 
     gen_write_slow_path(ctx, bits, address, value);
-    ctx.builder.tee_local(&entry);
-    ctx.builder.const_i32(1);
-    ctx.builder.and_i32();
-    ctx.builder.br_if(ctx.exit_with_fault_label);
+    // default: the return value is the entry; mem64: it's a status and the entry is stashed
+    if cfg!(feature = "mem64") {
+        ctx.builder.const_i32(1);
+        ctx.builder.and_i32();
+        ctx.builder.br_if(ctx.exit_with_fault_label);
+        codegen::gen_load_slow_entry(ctx);
+        ctx.builder.set_local_i64(match &entry {
+            Val::I64(l) => l,
+            Val::I32(_) => unreachable!(),
+        });
+    }
+    else {
+        ctx.builder.tee_local(match &entry {
+            Val::I32(l) => l,
+            Val::I64(_) => unreachable!(),
+        });
+        ctx.builder.const_i32(1);
+        ctx.builder.and_i32();
+        ctx.builder.br_if(ctx.exit_with_fault_label);
+    }
     ctx.builder.block_end();
 
     gen_pointer_from_entry(ctx, address, &entry);
-    ctx.builder.free_local(entry);
+    entry.free(ctx);
     value.get(ctx);
     gen_store(ctx, bits);
 }
@@ -1129,9 +1243,8 @@ pub fn gen_safe_read_write(
     address: &WasmLocalI64,
     f: &dyn Fn(&mut JitContext),
 ) {
-    let entry = ctx.builder.new_local();
     let cont = ctx.builder.block_void();
-    gen_tlb_fast_path_check(ctx, bits, address, true, &entry);
+    let entry = gen_tlb_fast_path_check(ctx, bits, address, true);
     let can_use_fast_path = ctx.builder.tee_new_local();
     ctx.builder.br_if(cont);
 
@@ -1143,15 +1256,36 @@ pub fn gen_safe_read_write(
         32 => "safe_read_write32s_slow_jit64",
         _ => "safe_read_write64_slow_jit64",
     });
-    ctx.builder.tee_local(&entry);
-    ctx.builder.const_i32(1);
-    ctx.builder.and_i32();
-    ctx.builder.br_if(ctx.exit_with_fault_label);
+    // default: the return value is the entry; mem64: it's a status and the entry is stashed
+    if cfg!(feature = "mem64") {
+        ctx.builder.const_i32(1);
+        ctx.builder.and_i32();
+        ctx.builder.br_if(ctx.exit_with_fault_label);
+        codegen::gen_load_slow_entry(ctx);
+        ctx.builder.set_local_i64(match &entry {
+            Val::I64(l) => l,
+            Val::I32(_) => unreachable!(),
+        });
+    }
+    else {
+        ctx.builder.tee_local(match &entry {
+            Val::I32(l) => l,
+            Val::I64(_) => unreachable!(),
+        });
+        ctx.builder.const_i32(1);
+        ctx.builder.and_i32();
+        ctx.builder.br_if(ctx.exit_with_fault_label);
+    }
     ctx.builder.block_end();
 
     gen_pointer_from_entry(ctx, address, &entry);
-    ctx.builder.free_local(entry);
-    let pointer = ctx.builder.tee_new_local();
+    entry.free(ctx);
+    let pointer = if cfg!(feature = "mem64") {
+        Val::I64(ctx.builder.tee_new_local_i64())
+    }
+    else {
+        Val::I32(ctx.builder.tee_new_local())
+    };
     gen_load(ctx, bits);
 
     f(ctx);
@@ -1172,10 +1306,10 @@ pub fn gen_safe_read_write(
     ctx.builder.block_end();
     ctx.builder.free_local(can_use_fast_path);
 
-    ctx.builder.get_local(&pointer);
+    pointer.get(ctx);
     value.get(ctx);
     gen_store(ctx, bits);
-    ctx.builder.free_local(pointer);
+    pointer.free(ctx);
     value.free(ctx);
 }
 

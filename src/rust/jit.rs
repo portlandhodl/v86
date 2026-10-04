@@ -204,15 +204,16 @@ fn check_jit_state_invariants(ctx: &mut JitState) {
         if page >= 0x10_0000 {
             continue;
         }
-        let entry = unsafe { cpu::tlb_data[page as usize] };
+        let entry = unsafe { cpu::tlb_pick_entry(page << 12) };
         if 0 != entry {
             let tlb_physical_page =
-                Page::page_of(cpu::phys_of_tlb_entry(entry as u32 as u64, page << 12));
+                Page::page_of(cpu::phys_of_tlb_entry(entry, page << 12));
             let w = match unsafe { cpu::tlb_code[page as usize] } {
                 None => None,
                 Some(c) => unsafe { Some(c.as_ref().wasm_table_index) },
             };
-            let tlb_has_code = entry & cpu::TLB_HAS_CODE == cpu::TLB_HAS_CODE;
+            let tlb_has_code = entry as i32 & cpu::TLB_HAS_CODE == cpu::TLB_HAS_CODE;
+
             let infos = ctx.pages.get(&tlb_physical_page);
             let entry_points = ctx.entry_points.get(&tlb_physical_page);
             dbg_assert!(tlb_has_code || !w.is_some());

@@ -309,6 +309,8 @@ else {
         memory_size: 2 * 1024 * 1024,
         disable_jit: +process.env.DISABLE_JIT,
         log_level: 0,
+        // V86_WASM_PATH overrides the core build, e.g. build/v86-mem64-debug.wasm
+        wasm_path: process.env.V86_WASM_PATH,
     });
 
     emulator.add_listener("emulator-loaded", function()

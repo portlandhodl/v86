@@ -366,7 +366,24 @@ pub struct Code {
     pub state_table: [u16; 0x1000],
 }
 
-pub static mut tlb_data: [i32; 0x100000] = [0; 0x100000];
+/// Element type of tlb_data: i32 in the default build (host offsets are < 4 GiB), i64 in the
+/// mem64 build (host offsets into the 64-bit guest memory may exceed 32 bits above 4 GiB).
+/// All reads go through tlb_pick_entry (u64) and writes through tlb_put_entry.
+#[cfg(not(feature = "mem64"))]
+pub type TlbEntry = i32;
+#[cfg(feature = "mem64")]
+pub type TlbEntry = i64;
+
+/// tlb entries carry unsigned address bits; zero-extend i32 entries (an i32 -> u64 cast would
+/// sign-extend when bit 31 of the host address is set)
+#[cfg(not(feature = "mem64"))]
+#[inline(always)]
+pub fn tlb_entry_to_u64(e: TlbEntry) -> u64 { e as u32 as u64 }
+#[cfg(feature = "mem64")]
+#[inline(always)]
+pub fn tlb_entry_to_u64(e: TlbEntry) -> u64 { e as u64 }
+
+pub static mut tlb_data: [TlbEntry; 0x100000] = [0; 0x100000];
 pub static mut tlb_code: [Option<ptr::NonNull<Code>>; 0x100000] = [None; 0x100000];
 
 // TLB for linear pages at or above 4 GiB (48-bit virtual addresses in long
@@ -437,7 +454,7 @@ pub unsafe fn tlb_pick_entry(address: u64) -> u64 {
     let address = canonicalize_address(address);
     let page = address >> 12;
     if page < 0x10_0000 {
-        tlb_data[page as usize] as u32 as u64
+        tlb_entry_to_u64(tlb_data[page as usize])
     }
     else {
         let idx = tlb_high_index(page);
@@ -462,7 +479,7 @@ pub unsafe fn tlb_put_entry(address: u64, tlb_entry: u64) {
     let address = canonicalize_address(address);
     let page = address >> 12;
     if page < 0x10_0000 {
-        tlb_data[page as usize] = tlb_entry as u32 as i32;
+        tlb_data[page as usize] = tlb_entry as TlbEntry;
     }
     else {
         let idx = tlb_high_index(page);
@@ -3111,8 +3128,9 @@ pub unsafe fn clear_tlb() {
     let mut global_page_offset = 0;
     for i in 0..valid_tlb_entries_count {
         let page = valid_tlb_entries[i as usize] as u64;
+        // only the flag bits, which live in the low half of the entry
         let entry = if page < 0x10_0000 {
-            tlb_data[page as usize]
+            tlb_data[page as usize] as u64 as u32 as i32
         }
         else {
             let idx = tlb_high_index(page);
@@ -3144,7 +3162,7 @@ pub unsafe fn clear_tlb() {
     if CHECK_TLB_INVARIANTS {
         #[allow(static_mut_refs)]
         for &entry in tlb_data.iter() {
-            dbg_assert!(entry == 0 || 0 != entry & TLB_GLOBAL);
+            dbg_assert!(entry == 0 || 0 != entry as u64 as u32 & TLB_GLOBAL as u32);
         }
     };
 }
@@ -4673,6 +4691,76 @@ pub fn report_safe_read_write_jit_slow(address: u32, entry: i32) {
 struct ScratchBuffer([u8; 0x1000 * 2]);
 static mut jit_paging_scratch_buffer: ScratchBuffer = ScratchBuffer([0; 2 * 0x1000]);
 
+/// The slow paths of jitted memory accesses return a "pointer" (host_base ^ addr) & !0xFFF,
+/// which the fast path xors with the address again to get the location to read from or write
+/// to. Under mem64 that value needs 64 bits and the jit function types have no i64 return
+/// variant, so it is stashed here and the helpers return 0 (1 still means fault). (Unused in
+/// the default build.)
+pub static mut jit_slow_path_entry: u64 = 0;
+
+/// Where a jit slow path stages or sinks a value that the fast path then loads from/stores to.
+/// Default build: the page-aligned static above. mem64: physical 0xA0000 in the VGA hole —
+/// guest RAM that is never accessed as RAM (its reads/writes divert to the VGA device).
+#[cfg(not(feature = "mem64"))]
+#[inline(always)]
+unsafe fn jit_scratch_base() -> u64 { &jit_paging_scratch_buffer.0 as *const u8 as u64 }
+#[cfg(feature = "mem64")]
+#[inline(always)]
+fn jit_scratch_base() -> u64 { 0xA0000 }
+
+#[cfg(not(feature = "mem64"))]
+#[inline(always)]
+unsafe fn jit_scratch_store8(offset: u64, value: u8) {
+    *(jit_scratch_base() as *mut u8).offset(offset as isize) = value
+}
+#[cfg(feature = "mem64")]
+#[inline(always)]
+unsafe fn jit_scratch_store8(offset: u64, value: u8) {
+    memory::write8_no_mmap_or_dirty_check(jit_scratch_base() + offset, value as i32)
+}
+#[cfg(not(feature = "mem64"))]
+#[inline(always)]
+unsafe fn jit_scratch_store16(offset: u64, value: u16) {
+    ptr::write_unaligned((jit_scratch_base() + offset) as *mut u16, value)
+}
+#[cfg(feature = "mem64")]
+#[inline(always)]
+unsafe fn jit_scratch_store16(offset: u64, value: u16) {
+    memory::write16_no_mmap_or_dirty_check(jit_scratch_base() + offset, value as i32)
+}
+#[cfg(not(feature = "mem64"))]
+#[inline(always)]
+unsafe fn jit_scratch_store32(offset: u64, value: i32) {
+    ptr::write_unaligned((jit_scratch_base() + offset) as *mut i32, value)
+}
+#[cfg(feature = "mem64")]
+#[inline(always)]
+unsafe fn jit_scratch_store32(offset: u64, value: i32) {
+    memory::write32_no_mmap_or_dirty_check(jit_scratch_base() + offset, value)
+}
+#[cfg(not(feature = "mem64"))]
+#[inline(always)]
+unsafe fn jit_scratch_store64(offset: u64, value: i64) {
+    ptr::write_unaligned((jit_scratch_base() + offset) as *mut i64, value)
+}
+#[cfg(feature = "mem64")]
+#[inline(always)]
+unsafe fn jit_scratch_store64(offset: u64, value: i64) {
+    memory::write64_no_mmap_or_dirty_check(jit_scratch_base() + offset, value as u64)
+}
+
+/// Hand a slow path's result to the fast path: returned directly in the default build;
+/// stashed under mem64 (see jit_slow_path_entry).
+#[cfg(not(feature = "mem64"))]
+#[inline(always)]
+fn jit_slow_result(result: u64) -> i32 { result as i32 }
+#[cfg(feature = "mem64")]
+#[inline(always)]
+fn jit_slow_result(result: u64) -> i32 {
+    unsafe { jit_slow_path_entry = result };
+    0
+}
+
 pub unsafe fn safe_read_slow_jit(
     addr: i32,
     bitsize: i32,
@@ -4732,51 +4820,42 @@ pub unsafe fn safe_read_slow_jit_impl(
         // TODO: Could check if virtual pages point to consecutive physical and go to fast path
         // do read, write into scratch buffer
 
-        let scratch = &raw mut jit_paging_scratch_buffer.0 as u32;
-        dbg_assert!(scratch & 0xFFF == 0);
+        // TODO: Could check if virtual pages point to consecutive physical and go to fast path
+        // do read, write into scratch buffer
+
+        dbg_assert!(jit_scratch_base() & 0xFFF == 0);
 
         for s in addr_low..((addr_low | 0xFFF) + 1) {
-            *(scratch as *mut u8).offset((s & 0xFFF) as isize) = memory::read8(s) as u8
+            jit_scratch_store8(s & 0xFFF, memory::read8(s) as u8)
         }
         for s in addr_high..(addr_high + ((addr as i32 + bitsize / 8) & 0xFFF) as u64) {
-            *(scratch as *mut u8).offset((0x1000 | s & 0xFFF) as isize) = memory::read8(s) as u8
+            jit_scratch_store8(0x1000 | s & 0xFFF, memory::read8(s) as u8)
         }
 
-        ((scratch as i32) ^ addr as i32) & !0xFFF
+        jit_slow_result((jit_scratch_base() ^ addr) & !0xFFF)
     }
     else if memory::in_mapped_range(addr_low) {
-        let scratch = &raw mut jit_paging_scratch_buffer.0[0];
+        let off = addr_low & 0xFFF;
 
         match bitsize {
-            128 => ptr::write_unaligned(
-                scratch.offset(addr_low as isize & 0xFFF) as *mut reg128,
-                memory::read128(addr_low),
-            ),
-            64 => ptr::write_unaligned(
-                scratch.offset(addr_low as isize & 0xFFF) as *mut i64,
-                memory::read64s(addr_low),
-            ),
-            32 => ptr::write_unaligned(
-                scratch.offset(addr_low as isize & 0xFFF) as *mut i32,
-                memory::read32s(addr_low),
-            ),
-            16 => ptr::write_unaligned(
-                scratch.offset(addr_low as isize & 0xFFF) as *mut u16,
-                memory::read16(addr_low) as u16,
-            ),
-            8 => {
-                *(scratch.offset(addr_low as isize & 0xFFF) as *mut u8) =
-                    memory::read8(addr_low) as u8
+            128 => {
+                let v = memory::read128(addr_low);
+                jit_scratch_store64(off, unsafe { v.u64[0] } as i64);
+                jit_scratch_store64(off + 8, unsafe { v.u64[1] } as i64);
             },
+            64 => jit_scratch_store64(off, memory::read64s(addr_low)),
+            32 => jit_scratch_store32(off, memory::read32s(addr_low)),
+            16 => jit_scratch_store16(off, memory::read16(addr_low) as u16),
+            8 => jit_scratch_store8(off, memory::read8(addr_low) as u8),
             _ => {
                 dbg_assert!(false);
             },
         }
 
-        ((scratch as i32) ^ addr as i32) & !0xFFF
+        jit_slow_result((jit_scratch_base() ^ addr) & !0xFFF)
     }
     else {
-        (memory::tlb_host_base(addr_low) as i32 ^ addr as i32) & !0xFFF
+        jit_slow_result((memory::tlb_host_base(addr_low) ^ addr) & !0xFFF)
     }
 }
 
@@ -4807,7 +4886,7 @@ pub unsafe fn get_phys_eip_slow_jit(addr: i32) -> i32 {
         Err(()) => 1,
         Ok(addr_low) => {
             dbg_assert!(!memory::in_mapped_range(addr_low)); // same assumption as in read_imm8
-            (memory::tlb_host_base(addr_low) as i32 ^ addr) & !0xFFF
+            jit_slow_result((memory::tlb_host_base(addr_low) ^ addr as u32 as u64) & !0xFFF)
         },
     }
 }
@@ -4916,9 +4995,8 @@ pub unsafe fn safe_write_slow_jit_impl(
             },
         }
 
-        let scratch = &raw mut jit_paging_scratch_buffer.0 as u32;
-        dbg_assert!(scratch & 0xFFF == 0);
-        ((scratch as i32) ^ addr as i32) & !0xFFF
+        dbg_assert!(jit_scratch_base() & 0xFFF == 0);
+        jit_slow_result((jit_scratch_base() ^ addr) & !0xFFF)
     }
     else if memory::in_mapped_range(addr_low) {
         match bitsize {
@@ -4932,12 +5010,10 @@ pub unsafe fn safe_write_slow_jit_impl(
             },
         }
 
-        let scratch = &raw mut jit_paging_scratch_buffer.0 as u32;
-        dbg_assert!(scratch & 0xFFF == 0);
-        ((scratch as i32) ^ addr as i32) & !0xFFF
+        jit_slow_result((jit_scratch_base() ^ addr) & !0xFFF)
     }
     else {
-        (memory::tlb_host_base(addr_low) as i32 ^ addr as i32) & !0xFFF
+        jit_slow_result((memory::tlb_host_base(addr_low) ^ addr) & !0xFFF)
     }
 }
 
@@ -5728,7 +5804,7 @@ pub unsafe fn get_valid_tlb_entries_count() -> i32 {
         let page = valid_tlb_entries[i as usize];
         if page >= 0x10_0000 { continue; }
         let entry = tlb_data[page as usize];
-        if 0 != entry {
+        if 0 != entry as u64 {
             result += 1
         }
     }
@@ -5745,7 +5821,7 @@ pub unsafe fn get_valid_global_tlb_entries_count() -> i32 {
         let page = valid_tlb_entries[i as usize];
         if page >= 0x10_0000 { continue; }
         let entry = tlb_data[page as usize];
-        if 0 != entry & TLB_GLOBAL {
+        if 0 != entry as u64 as u32 & TLB_GLOBAL as u32 {
             result += 1
         }
     }

@@ -130,6 +130,8 @@ const emulator = new V86({
     memory_size: 32 * 1024 * 1024,
     log_level: 0,
     disable_jit: +process.env.DISABLE_JIT,
+    // V86_WASM_PATH overrides the core build, e.g. build/v86-mem64-debug.wasm
+    wasm_path: process.env.V86_WASM_PATH,
 });
 
 // JIT_THRESHOLD=<n>: compile code after n executed instructions instead of the default

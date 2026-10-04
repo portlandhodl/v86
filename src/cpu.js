@@ -358,6 +358,12 @@ CPU.prototype.create_jit_imports = function()
 
     jit_imports["m"] = this.wm.exports["memory"];
 
+    if(this.wm.exports["guest_memory"])
+    {
+        // mem64 build: generated modules import the guest memory as "g" (memory index 1)
+        jit_imports["g"] = this.wm.exports["guest_memory"];
+    }
+
     for(const name of Object.keys(this.wm.exports))
     {
         if(name.startsWith("_") || name.startsWith("zstd") || name.endsWith("_js"))
@@ -1842,6 +1848,13 @@ CPU.prototype.codegen_finalize = function(wasm_table_index, start, state_flags, 
 
     if(DEBUG)
     {
+        if(typeof process !== "undefined" && process.env.DUMP_WASM)
+        {
+            const fs = process.getBuiltinModule("node:fs");
+            fs.writeFileSync("/tmp/opencode/gen-" + this.dump_wasm_i + ".wasm", code.slice());
+            this.dump_wasm_i = (this.dump_wasm_i || 0) + 1;
+        }
+
         if(DUMP_GENERATED_WASM && !this.seen_code[start])
         {
             this.dump_wasm(code);

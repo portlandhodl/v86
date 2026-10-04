@@ -595,7 +595,7 @@ returning 0. With the Rust memhog payload the 3 GiB test passes: fills and
 verifies 2703 MiB in ~8 s (1802 MiB in ~6 s at 2048 MiB), straight through
 frames above 2 GiB with no cliff.
 
-### Phase 2: mem64 build (started; milestone 1 done)
+### Phase 2: mem64 build (DONE)
 - Done: cargo feature `mem64`; placeholders in `guest.rs`;
   `tools/patch-mem64.mjs`; Makefile targets `build/v86-mem64.wasm` and
   `build/v86-mem64-debug.wasm` (build, patch and validate; all 12
@@ -607,32 +607,37 @@ frames above 2 GiB with no cliff.
   `view()` helper re-reads `.buffer` per access, so no invalidation issues).
   starter.js loads `v86-mem64[-debug].wasm` when `memory_size` exceeds
   `MAX_LOW_MEMORY_SIZE` (no fallback: hosts without memory64+multi-memory
-  fail there); tests can point at it via `V86_WASM_PATH`. Verified:
+  fail there); tests can point at it via `V86_WASM_PATH` (2g-mem, nasm and longmode
+  runners). Verified:
   `MEMORY_MB=3072 DISABLE_JIT=1 V86_WASM_PATH=build/v86-mem64-debug.wasm
   node tests/api/2g-mem.js` passes (fills/verifies 2703 MiB), and the
   default build is untouched (longmode 90/90 + multiboot64 5/5, nasmtests
   15599/15599 both variants, 2g-mem at 2048 usual).
-- To do:
-  - `tlb_data` becomes u64 under mem64 (host offsets exceed 32 bits above
-    4 GiB; for RAM <= 3 GiB the identity layout keeps entries in u32, which
-    is why milestone 1 works without it).
-  - JIT fast paths (codegen.rs `gen_safe_read`/`_write`/`_read_write`,
-    `gen_get_phys_eip_plus_mem`; jit64.rs `gen_tlb_entry`,
-    `gen_tlb_high_entry`, `gen_pointer_from_entry`, `gen_load`/`gen_store`,
-    `gen_page_switch_check64`): i64 entries, pointer
-    `((entry & !0xFFF) ^ addr) & 0xFFFF_FFFF_FFFF` (strip the sign bits),
-    loads and stores with memarg `0x40|align, 1, offset`. Plan: `*_guest`
-    builder methods that emit today's bytes in the default build.
-  - Slow paths (`safe_*_slow_jit*` in cpu.rs): under mem64 return a 0/1
-    status and store the i64 entry in a fixed global (avoids new function
-    types).
-  - The JIT scratch buffer must live in guest memory: host offset 0xA0000
-    (VGA hole, never accessed as RAM).
-  - wasm_builder: import `"e" "g"` (memory64, limits flag 0x04) after `"m"`
-    and fix the export index. JS: `jit_imports["g"]`, `mem8` over
-    `guest_memory`, zstd worker.
-  - Expect tests and verify-wasmgen-dummy-output need memory64 and
-    multi-memory enabled in wabt if run against the mem64 build.
+- **Milestone 2 (JIT on the mem64 build)**: done.
+  - `tlb_data` is `TlbEntry` (i32 default, i64 under mem64); reads go through
+    `tlb_pick_entry`/`tlb_entry_to_u64` (zero-extending).
+  - The jit slow paths (`safe_*_slow_jit*`, `get_phys_eip_slow_jit`) return a
+    0/1 status under mem64 and stash the i64 entry in
+    `cpu::jit_slow_path_entry` (no new function types). The generated code
+    reloads it only on the slow path, inside the fast-path block: the fast
+    path must keep its own TLB entry.
+  - JIT scratch buffer at host offset 0xA0000 (VGA hole) under mem64.
+  - wasm_builder imports `"e" "g"` (memory64) and emits memory-index-1
+    memargs via `load_guest_*`/`store_guest_*`, which emit today's bytes in
+    the default build. codegen.rs has `*_mem64` twins of the 32-bit fast
+    paths; jit64.rs handles both entry widths through `Val`.
+  - The zstd worker needs no change (same imports, only uses memory 0).
+  - Verified on `build/v86-mem64-debug.wasm` with the JIT on: 2g-mem at
+    512/2048/3072 MiB, longmode 90/90 (also with `JIT_THRESHOLD=1`),
+    nasmtests 15599/15599 both variants; default build unchanged
+    (expect-tests, nasmtests both variants, longmode 90/90 + multiboot64).
+  - Lesson: under mem64 an identity-mapped page's pointer
+    `(host_base ^ addr) & ~0xFFF` is 0, so a stale stashed entry is usually
+    "right" too. A bug that used the stash on the fast path passed nasm and
+    longmode and only broke in the kernel decompressor (after a page-crossing
+    read stashed the 0xA0000 scratch). Always run 2g-mem on mem64.
+- Open: expect tests and verify-wasmgen-dummy-output need memory64 and
+  multi-memory enabled in wabt to run against the mem64 build.
 
 ### Phase 3: RAM above 4 GiB (not started)
 CMOS 0x5b-0x5d (64 KiB units) or fw_cfg `etc/e820` (the shipped SeaBIOS

@@ -163,9 +163,17 @@ pub fn gen_page_switch_check(
     gen_get_phys_eip_plus_mem(ctx, &address_local);
     ctx.builder.free_local(address_local);
 
-    ctx.builder
-        .const_i32(memory::tlb_host_base(next_block_addr) as i32);
-    ctx.builder.ne_i32();
+    if cfg!(feature = "mem64") {
+        // the result of gen_get_phys_eip_plus_mem is an i64 in this build
+        ctx.builder
+            .const_i64(memory::tlb_host_base(next_block_addr) as i64);
+        ctx.builder.ne_i64();
+    }
+    else {
+        ctx.builder
+            .const_i32(memory::tlb_host_base(next_block_addr) as i32);
+        ctx.builder.ne_i32();
+    }
 
     if cfg!(debug_assertions) {
         ctx.builder.if_void();
@@ -710,6 +718,14 @@ fn gen_safe_read(
     address_local: &WasmLocal,
     where_to_write: Option<u32>,
 ) {
+    #[cfg(feature = "mem64")]
+    {
+        gen_safe_read_mem64(ctx, bits, address_local, where_to_write);
+        return;
+    }
+
+    #[cfg(not(feature = "mem64"))]
+    {
     // Execute a virtual memory read. All slow paths (memory-mapped IO, tlb miss, page fault and
     // read across page boundary are handled in safe_read_jit_slow
 
@@ -842,9 +858,18 @@ fn gen_safe_read(
     }
 
     ctx.builder.free_local(entry_local);
+    }
 }
 
 pub fn gen_get_phys_eip_plus_mem(ctx: &mut JitContext, address_local: &WasmLocal) {
+    #[cfg(feature = "mem64")]
+    {
+        gen_get_phys_eip_plus_mem_mem64(ctx, address_local);
+        return;
+    }
+
+    #[cfg(not(feature = "mem64"))]
+    {
     // Similar to gen_safe_read, but return the physical eip + memory::mem rather than reading from memory
     // In functions that need to use this value we need to fix it by substracting memory::mem
     // this is done in order to remove one instruction from the fast path of memory accesses (no need to add
@@ -919,6 +944,7 @@ pub fn gen_get_phys_eip_plus_mem(ctx: &mut JitContext, address_local: &WasmLocal
     ctx.builder.xor_i32();
 
     ctx.builder.free_local(entry_local);
+    }
 }
 
 fn gen_safe_write(
@@ -927,6 +953,14 @@ fn gen_safe_write(
     address_local: &WasmLocal,
     value_local: GenSafeWriteValue,
 ) {
+    #[cfg(feature = "mem64")]
+    {
+        gen_safe_write_mem64(ctx, bits, address_local, value_local);
+        return;
+    }
+
+    #[cfg(not(feature = "mem64"))]
+    {
     // Execute a virtual memory write. All slow paths (memory-mapped IO, tlb miss, page fault,
     // write across page boundary and page containing jitted code are handled in safe_write_jit_slow
 
@@ -1067,6 +1101,7 @@ fn gen_safe_write(
     }
 
     ctx.builder.free_local(entry_local);
+    }
 }
 
 pub fn gen_safe_read_write(
@@ -1075,6 +1110,14 @@ pub fn gen_safe_read_write(
     address_local: &WasmLocal,
     f: &dyn Fn(&mut JitContext),
 ) {
+    #[cfg(feature = "mem64")]
+    {
+        gen_safe_read_write_mem64(ctx, bits, address_local, f);
+        return;
+    }
+
+    #[cfg(not(feature = "mem64"))]
+    {
     // Execute a virtual memory read+write. All slow paths (memory-mapped IO, tlb miss, page fault,
     // write across page boundary and page containing jitted code are handled in
     // safe_read_write_jit_slow
@@ -1303,6 +1346,7 @@ pub fn gen_safe_read_write(
     }
     ctx.builder.free_local(can_use_fast_path_local);
     ctx.builder.free_local(phys_addr_local);
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -1310,6 +1354,647 @@ pub fn gen_safe_read_write(
 pub fn bug_gen_safe_read_write_page_fault(bits: i32, addr: u32) {
     dbg_log!("bug: gen_safe_read_write_page_fault {} {:x}", bits, addr);
     dbg_assert!(false);
+}
+
+// ---------------------------------------------------------------------------
+// mem64 variants of the memory fast paths. Same structure as the default ones
+// above; the differences are: tlb_data elements are i64, the jit slow paths
+// return 0/1 with the "entry" stashed in cpu::jit_slow_path_entry, and the
+// access itself targets the 64-bit guest memory (memory index 1).
+// ---------------------------------------------------------------------------
+
+/// Base of the tlb_data array (i64 elements in this build)
+#[cfg(feature = "mem64")]
+unsafe fn tlb_data_base() -> u32 { &tlb_data[0] as *const i64 as u32 }
+
+/// Load the stashed slow-path entry (call right after a safe_*_slow_jit call that returned 0).
+/// Only called under mem64, but must exist in both builds.
+pub fn gen_load_slow_entry(ctx: &mut JitContext) {
+    ctx.builder
+        .load_fixed_i64(&raw const crate::cpu::cpu::jit_slow_path_entry as u32);
+}
+
+#[cfg(feature = "mem64")]
+fn gen_safe_read_mem64(
+    ctx: &mut JitContext,
+    bits: BitSize,
+    address_local: &WasmLocal,
+    where_to_write: Option<u32>,
+) {
+    //   entry <- tlb_data[addr >> 12 << 3]
+    //   if entry & MASK == TLB_VALID && (addr & 0xFFF) <= 0x1000 - bytes: goto fast
+    //   safe_read_jit_slow(addr, instruction_pointer); if it returned 1: goto exit-with-pagefault
+    //   entry <- jit_slow_path_entry
+    //   fast: guest_mem[(entry & ~0xFFF) ^ addr]
+
+    let cont = ctx.builder.block_void();
+    ctx.builder.get_local(&address_local);
+
+    ctx.builder.const_i32(12);
+    ctx.builder.shr_u_i32();
+    ctx.builder.const_i32(3);
+    ctx.builder.shl_i32();
+
+    ctx.builder
+        .load_aligned_i64(unsafe { tlb_data_base() });
+    let entry_local = ctx.builder.tee_new_local_i64();
+
+    // the flag bits are all in the low 32 bits of the entry
+    ctx.builder.wrap_i64_to_i32();
+    ctx.builder.const_i32(
+        (0xFFF
+            & !TLB_READONLY
+            & !TLB_GLOBAL
+            & !TLB_NOT_EXECUTABLE
+            & !TLB_HAS_CODE
+            & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER })) as i32,
+    );
+    ctx.builder.and_i32();
+
+    ctx.builder.const_i32(TLB_VALID as i32);
+    ctx.builder.eq_i32();
+
+    if bits != BitSize::BYTE {
+        ctx.builder.get_local(&address_local);
+        ctx.builder.const_i32(0xFFF);
+        ctx.builder.and_i32();
+        ctx.builder.const_i32(0x1000 - bits.bytes() as i32);
+        ctx.builder.le_i32();
+
+        ctx.builder.and_i32();
+    }
+
+    ctx.builder.br_if(cont);
+
+    if cfg!(feature = "profiler") {
+        ctx.builder.get_local(&address_local);
+        ctx.builder.get_local_i64(&entry_local);
+        ctx.builder.wrap_i64_to_i32();
+        ctx.builder.call_fn2("report_safe_read_jit_slow");
+    }
+
+    ctx.builder.get_local(&address_local);
+    ctx.builder
+        .const_i32(ctx.start_of_current_instruction as i32 & 0xFFF);
+    match bits {
+        BitSize::BYTE => {
+            ctx.builder.call_fn2_ret("safe_read8_slow_jit");
+        },
+        BitSize::WORD => {
+            ctx.builder.call_fn2_ret("safe_read16_slow_jit");
+        },
+        BitSize::DWORD => {
+            ctx.builder.call_fn2_ret("safe_read32s_slow_jit");
+        },
+        BitSize::QWORD => {
+            ctx.builder.call_fn2_ret("safe_read64s_slow_jit");
+        },
+        BitSize::DQWORD => {
+            ctx.builder.call_fn2_ret("safe_read128s_slow_jit");
+        },
+    }
+    let status_local = ctx.builder.tee_new_local();
+    ctx.builder.const_i32(1);
+    ctx.builder.and_i32();
+
+    if cfg!(feature = "profiler") {
+        ctx.builder.if_void();
+        gen_debug_track_jit_exit(ctx.builder, ctx.start_of_current_instruction);
+        ctx.builder.block_end();
+
+        ctx.builder.get_local(&status_local);
+        ctx.builder.const_i32(1);
+        ctx.builder.and_i32();
+    }
+
+    ctx.builder.br_if(ctx.exit_with_fault_label);
+
+    // slow path only: the fast path branched to cont with the tlb entry already in entry_local
+    gen_load_slow_entry(ctx);
+    ctx.builder.set_local_i64(&entry_local);
+
+    ctx.builder.block_end();
+
+    ctx.builder.free_local(status_local);
+
+    gen_profiler_stat_increment(ctx.builder, profiler::stat::SAFE_READ_FAST); // XXX: Both fast and slow
+
+    ctx.builder.get_local_i64(&entry_local);
+    ctx.builder.const_i64(!0xFFF);
+    ctx.builder.and_i64();
+    ctx.builder.get_local(&address_local);
+    ctx.builder.extend_unsigned_i32_to_i64();
+    ctx.builder.xor_i64();
+
+    // where_to_write is only used by dqword
+    dbg_assert!((where_to_write != None) == (bits == BitSize::DQWORD));
+
+    match bits {
+        BitSize::BYTE => {
+            ctx.builder.load_guest_u8(0);
+        },
+        BitSize::WORD => {
+            ctx.builder.load_guest_u16(0);
+        },
+        BitSize::DWORD => {
+            ctx.builder.load_guest_i32(0);
+        },
+        BitSize::QWORD => {
+            ctx.builder.load_guest_i64(0);
+        },
+        BitSize::DQWORD => {
+            let where_to_write = where_to_write.unwrap();
+            let virt_address_local = ctx.builder.set_new_local_i64();
+            ctx.builder.const_i32(0);
+            ctx.builder.get_local_i64(&virt_address_local);
+            ctx.builder.load_guest_i64(0);
+            ctx.builder.store_unaligned_i64(where_to_write);
+
+            ctx.builder.const_i32(0);
+            ctx.builder.get_local_i64(&virt_address_local);
+            ctx.builder.load_guest_i64(8);
+            ctx.builder.store_unaligned_i64(where_to_write + 8);
+
+            ctx.builder.free_local_i64(virt_address_local);
+        },
+    }
+
+    ctx.builder.free_local_i64(entry_local);
+}
+
+#[cfg(feature = "mem64")]
+fn gen_get_phys_eip_plus_mem_mem64(ctx: &mut JitContext, address_local: &WasmLocal) {
+    // Same as gen_safe_read_mem64, but pushes the guest-memory address of the instruction instead
+    // of reading from it. Does not (need to) handle mapped memory.
+
+    let cont = ctx.builder.block_void();
+    ctx.builder.get_local(&address_local);
+
+    ctx.builder.const_i32(12);
+    ctx.builder.shr_u_i32();
+    ctx.builder.const_i32(3);
+    ctx.builder.shl_i32();
+
+    ctx.builder
+        .load_aligned_i64(unsafe { tlb_data_base() });
+    let entry_local = ctx.builder.tee_new_local_i64();
+
+    ctx.builder.wrap_i64_to_i32();
+    ctx.builder.const_i32(
+        (0xFFF
+            & !TLB_READONLY
+            & !TLB_GLOBAL
+            & !TLB_HAS_CODE
+            & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER })) as i32,
+    );
+    ctx.builder.and_i32();
+
+    ctx.builder.const_i32(TLB_VALID as i32);
+    ctx.builder.eq_i32();
+
+    ctx.builder.br_if(cont);
+
+    if cfg!(feature = "profiler") {
+        ctx.builder.get_local(&address_local);
+        ctx.builder.get_local_i64(&entry_local);
+        ctx.builder.wrap_i64_to_i32();
+        ctx.builder.call_fn2("report_safe_read_jit_slow");
+    }
+
+    ctx.builder.get_local(&address_local);
+    ctx.builder.call_fn1_ret("get_phys_eip_slow_jit");
+    let status_local = ctx.builder.tee_new_local();
+
+    ctx.builder.const_i32(1);
+    ctx.builder.and_i32();
+
+    if cfg!(feature = "profiler") {
+        ctx.builder.if_void();
+        gen_debug_track_jit_exit(ctx.builder, ctx.start_of_current_instruction); // XXX
+        ctx.builder.block_end();
+
+        ctx.builder.get_local(&status_local);
+        ctx.builder.const_i32(1);
+        ctx.builder.and_i32();
+    }
+
+    ctx.builder.br_if(ctx.exit_with_fault_label);
+
+    // slow path only: the fast path branched to cont with the tlb entry already in entry_local
+    gen_load_slow_entry(ctx);
+    ctx.builder.set_local_i64(&entry_local);
+
+    ctx.builder.block_end();
+
+    ctx.builder.free_local(status_local);
+
+    gen_profiler_stat_increment(ctx.builder, profiler::stat::SAFE_READ_FAST); // XXX: Both fast and slow
+
+    ctx.builder.get_local_i64(&entry_local);
+    ctx.builder.const_i64(!0xFFF);
+    ctx.builder.and_i64();
+    ctx.builder.get_local(&address_local);
+    ctx.builder.extend_unsigned_i32_to_i64();
+    ctx.builder.xor_i64();
+
+    ctx.builder.free_local_i64(entry_local);
+}
+
+#[cfg(feature = "mem64")]
+fn gen_safe_write_mem64(
+    ctx: &mut JitContext,
+    bits: BitSize,
+    address_local: &WasmLocal,
+    value_local: GenSafeWriteValue,
+) {
+    //   entry <- tlb_data[addr >> 12 << 3]
+    //   if entry & MASK == TLB_VALID && (addr & 0xFFF) <= 0x1000 - bytes: goto fast
+    //   safe_write_jit_slow(addr, value, instruction_pointer); if it returned 1: goto exit
+    //   entry <- jit_slow_path_entry
+    //   fast: guest_mem[(entry & ~0xFFF) ^ addr] <- value
+
+    let cont = ctx.builder.block_void();
+    ctx.builder.get_local(&address_local);
+
+    ctx.builder.const_i32(12);
+    ctx.builder.shr_u_i32();
+    ctx.builder.const_i32(3);
+    ctx.builder.shl_i32();
+
+    ctx.builder
+        .load_aligned_i64(unsafe { tlb_data_base() });
+    let entry_local = ctx.builder.tee_new_local_i64();
+
+    ctx.builder.wrap_i64_to_i32();
+    ctx.builder
+        .const_i32((0xFFF & !TLB_GLOBAL & !TLB_NOT_EXECUTABLE & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER })) as i32);
+    ctx.builder.and_i32();
+
+    ctx.builder.const_i32(TLB_VALID as i32);
+    ctx.builder.eq_i32();
+
+    if bits != BitSize::BYTE {
+        ctx.builder.get_local(&address_local);
+        ctx.builder.const_i32(0xFFF);
+        ctx.builder.and_i32();
+        ctx.builder.const_i32(0x1000 - bits.bytes() as i32);
+        ctx.builder.le_i32();
+
+        ctx.builder.and_i32();
+    }
+
+    ctx.builder.br_if(cont);
+
+    if cfg!(feature = "profiler") {
+        ctx.builder.get_local(&address_local);
+        ctx.builder.get_local_i64(&entry_local);
+        ctx.builder.wrap_i64_to_i32();
+        ctx.builder.call_fn2("report_safe_write_jit_slow");
+    }
+
+    ctx.builder.get_local(&address_local);
+    match value_local {
+        GenSafeWriteValue::I32(local) => ctx.builder.get_local(local),
+        GenSafeWriteValue::I64(local) => ctx.builder.get_local_i64(local),
+        GenSafeWriteValue::TwoI64s(local1, local2) => {
+            ctx.builder.get_local_i64(local1);
+            ctx.builder.get_local_i64(local2)
+        },
+    }
+
+    // packed lower bits of eip and wasm table index
+    ctx.builder.const_i32(
+        ctx.start_of_current_instruction as i32 & 0xFFF
+            | (ctx.wasm_table_index.to_u16() as i32) << 16,
+    );
+
+    match bits {
+        BitSize::BYTE => {
+            ctx.builder.call_fn3_ret("safe_write8_slow_jit");
+        },
+        BitSize::WORD => {
+            ctx.builder.call_fn3_ret("safe_write16_slow_jit");
+        },
+        BitSize::DWORD => {
+            ctx.builder.call_fn3_ret("safe_write32_slow_jit");
+        },
+        BitSize::QWORD => {
+            ctx.builder
+                .call_fn3_i32_i64_i32_ret("safe_write64_slow_jit");
+        },
+        BitSize::DQWORD => {
+            ctx.builder
+                .call_fn4_i32_i64_i64_i32_ret("safe_write128_slow_jit");
+        },
+    }
+    let status_local = ctx.builder.tee_new_local();
+    ctx.builder.const_i32(1);
+    ctx.builder.and_i32();
+
+    if cfg!(feature = "profiler") {
+        ctx.builder.if_void();
+        gen_debug_track_jit_exit(ctx.builder, ctx.start_of_current_instruction);
+        ctx.builder.block_end();
+
+        ctx.builder.get_local(&status_local);
+        ctx.builder.const_i32(1);
+        ctx.builder.and_i32();
+    }
+
+    ctx.builder.br_if(ctx.exit_with_fault_label);
+
+    // slow path only: the fast path branched to cont with the tlb entry already in entry_local
+    gen_load_slow_entry(ctx);
+    ctx.builder.set_local_i64(&entry_local);
+
+    ctx.builder.block_end();
+
+    ctx.builder.free_local(status_local);
+
+    gen_profiler_stat_increment(ctx.builder, profiler::stat::SAFE_WRITE_FAST); // XXX: Both fast and slow
+
+    ctx.builder.get_local_i64(&entry_local);
+    ctx.builder.const_i64(!0xFFF);
+    ctx.builder.and_i64();
+    ctx.builder.get_local(&address_local);
+    ctx.builder.extend_unsigned_i32_to_i64();
+    ctx.builder.xor_i64();
+
+    match value_local {
+        GenSafeWriteValue::I32(local) => ctx.builder.get_local(local),
+        GenSafeWriteValue::I64(local) => ctx.builder.get_local_i64(local),
+        GenSafeWriteValue::TwoI64s(local1, local2) => {
+            assert!(bits == BitSize::DQWORD);
+
+            let virt_address_local = ctx.builder.tee_new_local_i64();
+            ctx.builder.get_local_i64(local1);
+            ctx.builder.store_guest_i64(0);
+
+            ctx.builder.get_local_i64(&virt_address_local);
+            ctx.builder.get_local_i64(local2);
+            ctx.builder.store_guest_i64(8);
+            ctx.builder.free_local_i64(virt_address_local);
+        },
+    }
+    match bits {
+        BitSize::BYTE => {
+            ctx.builder.store_guest_u8(0);
+        },
+        BitSize::WORD => {
+            ctx.builder.store_guest_u16(0);
+        },
+        BitSize::DWORD => {
+            ctx.builder.store_guest_i32(0);
+        },
+        BitSize::QWORD => {
+            ctx.builder.store_guest_i64(0);
+        },
+        BitSize::DQWORD => {}, // handled above
+    }
+
+    ctx.builder.free_local_i64(entry_local);
+}
+
+#[cfg(feature = "mem64")]
+fn gen_safe_read_write_mem64(
+    ctx: &mut JitContext,
+    bits: BitSize,
+    address_local: &WasmLocal,
+    f: &dyn Fn(&mut JitContext),
+) {
+    //   entry <- tlb_data[addr >> 12 << 3]
+    //   can_use_fast_path <- entry & MASK == TLB_VALID && (addr & 0xFFF) <= 0x1000 - bytes
+    //   if can_use_fast_path: goto fast
+    //   safe_read_write_jit_slow(addr, instruction_pointer); 1 -> exit-with-pagefault
+    //   entry <- jit_slow_path_entry
+    //   fast: value <- f(guest_mem[(entry & ~0xFFF) ^ addr])
+    //   if !can_use_fast_path { safe_write_jit_slow(addr, value, instruction_pointer) }
+    //   guest_mem[(entry & ~0xFFF) ^ addr] <- value
+
+    let cont = ctx.builder.block_void();
+    ctx.builder.get_local(address_local);
+
+    ctx.builder.const_i32(12);
+    ctx.builder.shr_u_i32();
+    ctx.builder.const_i32(3);
+    ctx.builder.shl_i32();
+
+    ctx.builder
+        .load_aligned_i64(unsafe { tlb_data_base() });
+    let entry_local = ctx.builder.tee_new_local_i64();
+
+    ctx.builder.wrap_i64_to_i32();
+    ctx.builder
+        .const_i32((0xFFF & !TLB_GLOBAL & !TLB_NOT_EXECUTABLE & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER })) as i32);
+    ctx.builder.and_i32();
+
+    ctx.builder.const_i32(TLB_VALID as i32);
+    ctx.builder.eq_i32();
+
+    if bits != BitSize::BYTE {
+        ctx.builder.get_local(&address_local);
+        ctx.builder.const_i32(0xFFF);
+        ctx.builder.and_i32();
+        ctx.builder.const_i32(0x1000 - bits.bytes() as i32);
+        ctx.builder.le_i32();
+        ctx.builder.and_i32();
+    }
+
+    let can_use_fast_path_local = ctx.builder.tee_new_local();
+
+    ctx.builder.br_if(cont);
+
+    if cfg!(feature = "profiler") {
+        ctx.builder.get_local(&address_local);
+        ctx.builder.get_local_i64(&entry_local);
+        ctx.builder.wrap_i64_to_i32();
+        ctx.builder.call_fn2("report_safe_read_write_jit_slow");
+    }
+
+    ctx.builder.get_local(&address_local);
+
+    // packed lower bits of eip and wasm table index
+    ctx.builder.const_i32(
+        ctx.start_of_current_instruction as i32 & 0xFFF
+            | (ctx.wasm_table_index.to_u16() as i32) << 16,
+    );
+
+    match bits {
+        BitSize::BYTE => {
+            ctx.builder.call_fn2_ret("safe_read_write8_slow_jit");
+        },
+        BitSize::WORD => {
+            ctx.builder.call_fn2_ret("safe_read_write16_slow_jit");
+        },
+        BitSize::DWORD => {
+            ctx.builder.call_fn2_ret("safe_read_write32s_slow_jit");
+        },
+        BitSize::QWORD => {
+            ctx.builder.call_fn2_ret("safe_read_write64_slow_jit");
+        },
+        BitSize::DQWORD => {
+            dbg_assert!(false);
+        },
+    }
+    let status_local = ctx.builder.tee_new_local();
+    ctx.builder.const_i32(1);
+    ctx.builder.and_i32();
+
+    if cfg!(feature = "profiler") {
+        ctx.builder.if_void();
+        gen_debug_track_jit_exit(ctx.builder, ctx.start_of_current_instruction);
+        ctx.builder.block_end();
+
+        ctx.builder.get_local(&status_local);
+        ctx.builder.const_i32(1);
+        ctx.builder.and_i32();
+    }
+
+    ctx.builder.br_if(ctx.exit_with_fault_label);
+
+    // slow path only: the fast path branched to cont with the tlb entry already in entry_local
+    gen_load_slow_entry(ctx);
+    ctx.builder.set_local_i64(&entry_local);
+
+    ctx.builder.block_end();
+
+    ctx.builder.free_local(status_local);
+
+    gen_profiler_stat_increment(ctx.builder, profiler::stat::SAFE_READ_WRITE_FAST); // XXX: Also slow
+
+    ctx.builder.get_local_i64(&entry_local);
+    ctx.builder.const_i64(!0xFFF);
+    ctx.builder.and_i64();
+    ctx.builder.get_local(&address_local);
+    ctx.builder.extend_unsigned_i32_to_i64();
+    ctx.builder.xor_i64();
+
+    ctx.builder.free_local_i64(entry_local);
+    let phys_addr_local = ctx.builder.tee_new_local_i64();
+
+    match bits {
+        BitSize::BYTE => {
+            ctx.builder.load_guest_u8(0);
+        },
+        BitSize::WORD => {
+            ctx.builder.load_guest_u16(0);
+        },
+        BitSize::DWORD => {
+            ctx.builder.load_guest_i32(0);
+        },
+        BitSize::QWORD => {
+            ctx.builder.load_guest_i64(0);
+        },
+        BitSize::DQWORD => assert!(false), // not used
+    }
+
+    // value is now on stack
+
+    f(ctx);
+
+    // TODO: Could get rid of this local by returning one from f
+    let value_local = if bits == BitSize::QWORD {
+        GenSafeReadWriteValue::I64(ctx.builder.set_new_local_i64())
+    }
+    else {
+        GenSafeReadWriteValue::I32(ctx.builder.set_new_local())
+    };
+
+    ctx.builder.get_local(&can_use_fast_path_local);
+
+    ctx.builder.eqz_i32();
+    ctx.builder.if_void();
+    {
+        ctx.builder.get_local(&address_local);
+
+        match &value_local {
+            GenSafeReadWriteValue::I32(l) => ctx.builder.get_local(l),
+            GenSafeReadWriteValue::I64(l) => ctx.builder.get_local_i64(l),
+        }
+
+        // packed lower bits of eip and wasm table index
+        ctx.builder.const_i32(
+            ctx.start_of_current_instruction as i32 & 0xFFF
+                | (ctx.wasm_table_index.to_u16() as i32) << 16,
+        );
+
+        match bits {
+            BitSize::BYTE => {
+                ctx.builder.call_fn3_ret("safe_write8_slow_jit");
+            },
+            BitSize::WORD => {
+                ctx.builder.call_fn3_ret("safe_write16_slow_jit");
+            },
+            BitSize::DWORD => {
+                ctx.builder.call_fn3_ret("safe_write32_slow_jit");
+            },
+            BitSize::QWORD => {
+                ctx.builder
+                    .call_fn3_i32_i64_i32_ret("safe_write64_slow_jit");
+            },
+            BitSize::DQWORD => {
+                dbg_assert!(false);
+            },
+        }
+
+        if cfg!(debug_assertions) {
+            ctx.builder.const_i32(1);
+            ctx.builder.and_i32();
+
+            ctx.builder.if_void();
+            {
+                // handled above
+                ctx.builder.const_i32(match bits {
+                    BitSize::BYTE => 8,
+                    BitSize::WORD => 16,
+                    BitSize::DWORD => 32,
+                    BitSize::QWORD => 64,
+                    _ => {
+                        dbg_assert!(false);
+                        0
+                    },
+                });
+                ctx.builder.get_local(&address_local);
+                ctx.builder.call_fn2("bug_gen_safe_read_write_page_fault");
+            }
+            ctx.builder.block_end();
+        }
+        else {
+            ctx.builder.drop_();
+        }
+    }
+    ctx.builder.block_end();
+
+    ctx.builder.get_local_i64(&phys_addr_local);
+    match &value_local {
+        GenSafeReadWriteValue::I32(l) => ctx.builder.get_local(l),
+        GenSafeReadWriteValue::I64(l) => ctx.builder.get_local_i64(l),
+    }
+
+    match bits {
+        BitSize::BYTE => {
+            ctx.builder.store_guest_u8(0);
+        },
+        BitSize::WORD => {
+            ctx.builder.store_guest_u16(0);
+        },
+        BitSize::DWORD => {
+            ctx.builder.store_guest_i32(0);
+        },
+        BitSize::QWORD => {
+            ctx.builder.store_guest_i64(0);
+        },
+        BitSize::DQWORD => {
+            dbg_assert!(false);
+        },
+    }
+
+    match value_local {
+        GenSafeReadWriteValue::I32(l) => ctx.builder.free_local(l),
+        GenSafeReadWriteValue::I64(l) => ctx.builder.free_local_i64(l),
+    }
+    ctx.builder.free_local(can_use_fast_path_local);
+    ctx.builder.free_local_i64(phys_addr_local);
 }
 
 pub fn gen_jmp_rel16(builder: &mut WasmBuilder, rel16: u16) {
