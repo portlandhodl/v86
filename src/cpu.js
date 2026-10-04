@@ -1357,7 +1357,7 @@ CPU.prototype.init = function(settings, device_bus)
             this.devices.parallel1 = new ParallelPort(this, 0x278, 5, 1, device_bus);
         }
 
-        this.devices.fdc = new FloppyController(this, settings.fda, settings.fdb);
+        this.devices.fdc = new FloppyController(this, settings.fda, settings.fdb, settings.fdc);
 
         const ide_config = [[undefined, undefined], [undefined, undefined]];
         if(settings.hda)

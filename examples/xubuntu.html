@@ -111,6 +111,8 @@ window.onload = function()
         bios: { url: "../bios/seabios.bin" },
         vga_bios: { url: "../bios/vgabios.bin" },
         cdrom: { url: iso, async: true },
+        // no floppy drives (otherwise the guest probes two empty ones and logs i/o errors)
+        fdc: { fda: { drive_type: 0 }, fdb: { drive_type: 0 } },
         // Ubuntu's kernel uses the io apic (described by SeaBIOS's MP table), which
         // v86 only enables together with acpi
         acpi: true,

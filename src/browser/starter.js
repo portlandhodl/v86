@@ -246,6 +246,8 @@ V86.prototype.continue_init = async function(emulator, options)
     }
 
     settings.acpi = options.acpi;
+    // floppy drive types, see FloppyController (e.g. { fda: { drive_type: 0 } } hides fda)
+    settings.fdc = options.fdc;
     settings.disable_jit = options.disable_jit;
     settings.load_devices = true;
     settings.memory_size = options.memory_size || 64 * 1024 * 1024;
