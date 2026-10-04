@@ -1,6 +1,6 @@
 use crate::cpu::cpu::{
     tlb_data, FLAG_CARRY, FLAG_OVERFLOW, FLAG_SIGN, FLAG_ZERO, OPSIZE_16, OPSIZE_32, OPSIZE_8,
-    TLB_GLOBAL, TLB_HAS_CODE, TLB_NO_USER, TLB_READONLY, TLB_VALID,
+    TLB_GLOBAL, TLB_HAS_CODE, TLB_NOT_EXECUTABLE, TLB_NO_USER, TLB_READONLY, TLB_VALID,
 };
 use crate::cpu::global_pointers;
 use crate::cpu::memory;
@@ -739,6 +739,7 @@ fn gen_safe_read(
         (0xFFF
             & !TLB_READONLY
             & !TLB_GLOBAL
+            & !TLB_NOT_EXECUTABLE
             & !TLB_HAS_CODE
             & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER })) as i32,
     );
@@ -952,7 +953,7 @@ fn gen_safe_write(
     let entry_local = ctx.builder.tee_new_local();
 
     ctx.builder
-        .const_i32((0xFFF & !TLB_GLOBAL & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER })) as i32);
+        .const_i32((0xFFF & !TLB_GLOBAL & !TLB_NOT_EXECUTABLE & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER })) as i32);
     ctx.builder.and_i32();
 
     ctx.builder.const_i32(TLB_VALID as i32);
@@ -1104,7 +1105,7 @@ pub fn gen_safe_read_write(
     let entry_local = ctx.builder.tee_new_local();
 
     ctx.builder
-        .const_i32((0xFFF & !TLB_GLOBAL & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER })) as i32);
+        .const_i32((0xFFF & !TLB_GLOBAL & !TLB_NOT_EXECUTABLE & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER })) as i32);
     ctx.builder.and_i32();
 
     ctx.builder.const_i32(TLB_VALID as i32);

@@ -448,8 +448,8 @@ Next:
   flat-TLB check if non-PIE 64-bit user code matters.
 - The wrappers inline each handler: release wasm grew 2.3 -> 3.0 MB. Consider
   `#[inline(never)]` on large handlers or one dispatcher per signature.
-- The 32-bit JIT's fast-path masks include TLB_NOT_EXECUTABLE, so with NX
-  enabled every data access to an NX page takes the slow path (since M2).
+- ~~The 32-bit JIT's fast-path masks include TLB_NOT_EXECUTABLE~~ — fixed:
+  data accesses ignore the NX bit (instruction fetches still check it).
 
 ---
 
