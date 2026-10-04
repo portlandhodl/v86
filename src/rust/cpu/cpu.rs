@@ -4640,17 +4640,35 @@ pub unsafe fn safe_read_slow_jit(
     is_write: bool,
     eip_offset_in_page_and_wasm_table_index: i32,
 ) -> i32 {
+    safe_read_slow_jit_impl(
+        addr as u32 as u64,
+        bitsize,
+        is_write,
+        eip_offset_in_page_and_wasm_table_index,
+    )
+}
+
+/// Slow path of jitted memory reads (and the read part of read-modify-write accesses). Returns
+/// (pointer ^ address) & !0xFFF, where pointer is where the fast path reads the value from, or
+/// 1 for an exception (which is delivered by exit_jit). Only the low 32 bits of the address
+/// matter for the returned value.
+pub unsafe fn safe_read_slow_jit_impl(
+    addr: u64,
+    bitsize: i32,
+    is_write: bool,
+    eip_offset_in_page_and_wasm_table_index: i32,
+) -> i32 {
     let wasm_table_index = (eip_offset_in_page_and_wasm_table_index >> 16) as u16;
     let eip_offset_in_page = eip_offset_in_page_and_wasm_table_index & 0xFFFF;
     dbg_assert!(eip_offset_in_page >= 0 && eip_offset_in_page < 0x1000);
     dbg_assert!(u32::from(wasm_table_index) < jit::WASM_TABLE_SIZE);
 
-    let crosses_page = (addr & 0xFFF) + bitsize / 8 > 0x1000;
+    let crosses_page = (addr & 0xFFF) as i32 + bitsize / 8 > 0x1000;
     let addr_low = match if is_write {
-        translate_address_write_jit(addr as u32 as u64, wasm_table_index)
+        translate_address_write_jit(addr, wasm_table_index)
     }
     else {
-        translate_address_read_jit(addr as u32 as u64)
+        translate_address_read_jit(addr)
     } {
         Err(()) => {
             *instruction_pointer = *instruction_pointer & !0xFFF | eip_offset_in_page as u64;
@@ -4659,12 +4677,12 @@ pub unsafe fn safe_read_slow_jit(
         Ok(addr) => addr,
     };
     if crosses_page {
-        let boundary_addr = (addr | 0xFFF) + 1;
+        let boundary_addr = (addr | 0xFFF).wrapping_add(1);
         let addr_high = match if is_write {
-            translate_address_write_jit(boundary_addr as u32 as u64, wasm_table_index)
+            translate_address_write_jit(boundary_addr, wasm_table_index)
         }
         else {
-            translate_address_read_jit(boundary_addr as u32 as u64)
+            translate_address_read_jit(boundary_addr)
         } {
             Err(()) => {
                 *instruction_pointer = *instruction_pointer & !0xFFF | eip_offset_in_page as u64;
@@ -4681,11 +4699,11 @@ pub unsafe fn safe_read_slow_jit(
         for s in addr_low..((addr_low | 0xFFF) + 1) {
             *(scratch as *mut u8).offset((s & 0xFFF) as isize) = memory::read8(s) as u8
         }
-        for s in addr_high..(addr_high + (addr + bitsize / 8 & 0xFFF) as u32) {
+        for s in addr_high..(addr_high + ((addr as i32 + bitsize / 8) & 0xFFF) as u32) {
             *(scratch as *mut u8).offset((0x1000 | s & 0xFFF) as isize) = memory::read8(s) as u8
         }
 
-        ((scratch as i32) ^ addr) & !0xFFF
+        ((scratch as i32) ^ addr as i32) & !0xFFF
     }
     else if memory::in_mapped_range(addr_low) {
         let scratch = &raw mut jit_paging_scratch_buffer.0[0];
@@ -4716,10 +4734,10 @@ pub unsafe fn safe_read_slow_jit(
             },
         }
 
-        ((scratch as i32) ^ addr) & !0xFFF
+        ((scratch as i32) ^ addr as i32) & !0xFFF
     }
     else {
-        ((addr_low as i32 + memory::mem8 as i32) ^ addr) & !0xFFF
+        ((addr_low as i32 + memory::mem8 as i32) ^ addr as i32) & !0xFFF
     }
 }
 
@@ -4793,13 +4811,31 @@ pub unsafe fn safe_write_slow_jit(
     value_high: u64,
     eip_offset_in_page_and_wasm_table_index: i32,
 ) -> i32 {
+    safe_write_slow_jit_impl(
+        addr as u32 as u64,
+        bitsize,
+        value_low,
+        value_high,
+        eip_offset_in_page_and_wasm_table_index,
+    )
+}
+
+/// Slow path of jitted memory writes, see safe_read_slow_jit_impl. Writes that cross a page or
+/// go to memory-mapped io are done here, the returned pointer then points to a scratch buffer.
+pub unsafe fn safe_write_slow_jit_impl(
+    addr: u64,
+    bitsize: i32,
+    value_low: u64,
+    value_high: u64,
+    eip_offset_in_page_and_wasm_table_index: i32,
+) -> i32 {
     let wasm_table_index = (eip_offset_in_page_and_wasm_table_index >> 16) as u16;
     let eip_offset_in_page = eip_offset_in_page_and_wasm_table_index & 0xFFFF;
     dbg_assert!(eip_offset_in_page >= 0 && eip_offset_in_page < 0x1000);
     dbg_assert!(u32::from(wasm_table_index) < jit::WASM_TABLE_SIZE);
 
-    let crosses_page = (addr & 0xFFF) + bitsize / 8 > 0x1000;
-    let addr_low = match translate_address_write_jit(addr as u32 as u64, wasm_table_index) {
+    let crosses_page = (addr & 0xFFF) as i32 + bitsize / 8 > 0x1000;
+    let addr_low = match translate_address_write_jit(addr, wasm_table_index) {
         Err(()) => {
             *instruction_pointer = *instruction_pointer & !0xFFF | eip_offset_in_page as u64;
             return 1;
@@ -4807,7 +4843,7 @@ pub unsafe fn safe_write_slow_jit(
         Ok(x) => x,
     };
     if crosses_page {
-        let addr_high = match translate_address_write_jit(((addr | 0xFFF) + 1) as u32 as u64, wasm_table_index) {
+        let addr_high = match translate_address_write_jit((addr | 0xFFF).wrapping_add(1), wasm_table_index) {
             Err(()) => {
                 *instruction_pointer = *instruction_pointer & !0xFFF | eip_offset_in_page as u64;
                 return 1;
@@ -4820,13 +4856,13 @@ pub unsafe fn safe_write_slow_jit(
 
         match bitsize {
             128 => safe_write128(
-                addr as u32 as u64,
+                addr,
                 reg128 {
                     u64: [value_low, value_high],
                 },
             )
             .unwrap(),
-            64 => safe_write64(addr as u32 as u64, value_low).unwrap(),
+            64 => safe_write64(addr, value_low).unwrap(),
             32 => virt_boundary_write32(
                 addr_low,
                 addr_high | (addr as u32 + 3 & 3),
@@ -4843,7 +4879,7 @@ pub unsafe fn safe_write_slow_jit(
 
         let scratch = &raw mut jit_paging_scratch_buffer.0 as u32;
         dbg_assert!(scratch & 0xFFF == 0);
-        ((scratch as i32) ^ addr) & !0xFFF
+        ((scratch as i32) ^ addr as i32) & !0xFFF
     }
     else if memory::in_mapped_range(addr_low) {
         match bitsize {
@@ -4859,11 +4895,61 @@ pub unsafe fn safe_write_slow_jit(
 
         let scratch = &raw mut jit_paging_scratch_buffer.0 as u32;
         dbg_assert!(scratch & 0xFFF == 0);
-        ((scratch as i32) ^ addr) & !0xFFF
+        ((scratch as i32) ^ addr as i32) & !0xFFF
     }
     else {
-        ((addr_low as i32 + memory::mem8 as i32) ^ addr) & !0xFFF
+        ((addr_low as i32 + memory::mem8 as i32) ^ addr as i32) & !0xFFF
     }
+}
+
+// 64-bit address variants of the slow paths, for the 64-bit jit
+#[no_mangle]
+pub unsafe fn safe_read8_slow_jit64(addr: u64, eip: i32) -> i32 {
+    safe_read_slow_jit_impl(addr, 8, false, eip)
+}
+#[no_mangle]
+pub unsafe fn safe_read16_slow_jit64(addr: u64, eip: i32) -> i32 {
+    safe_read_slow_jit_impl(addr, 16, false, eip)
+}
+#[no_mangle]
+pub unsafe fn safe_read32s_slow_jit64(addr: u64, eip: i32) -> i32 {
+    safe_read_slow_jit_impl(addr, 32, false, eip)
+}
+#[no_mangle]
+pub unsafe fn safe_read64s_slow_jit64(addr: u64, eip: i32) -> i32 {
+    safe_read_slow_jit_impl(addr, 64, false, eip)
+}
+#[no_mangle]
+pub unsafe fn safe_read_write8_slow_jit64(addr: u64, eip_and_wasm_table_index: i32) -> i32 {
+    safe_read_slow_jit_impl(addr, 8, true, eip_and_wasm_table_index)
+}
+#[no_mangle]
+pub unsafe fn safe_read_write16_slow_jit64(addr: u64, eip_and_wasm_table_index: i32) -> i32 {
+    safe_read_slow_jit_impl(addr, 16, true, eip_and_wasm_table_index)
+}
+#[no_mangle]
+pub unsafe fn safe_read_write32s_slow_jit64(addr: u64, eip_and_wasm_table_index: i32) -> i32 {
+    safe_read_slow_jit_impl(addr, 32, true, eip_and_wasm_table_index)
+}
+#[no_mangle]
+pub unsafe fn safe_read_write64_slow_jit64(addr: u64, eip_and_wasm_table_index: i32) -> i32 {
+    safe_read_slow_jit_impl(addr, 64, true, eip_and_wasm_table_index)
+}
+#[no_mangle]
+pub unsafe fn safe_write8_slow_jit64(addr: u64, value: i32, eip_and_wasm_table_index: i32) -> i32 {
+    safe_write_slow_jit_impl(addr, 8, value as u32 as u64, 0, eip_and_wasm_table_index)
+}
+#[no_mangle]
+pub unsafe fn safe_write16_slow_jit64(addr: u64, value: i32, eip_and_wasm_table_index: i32) -> i32 {
+    safe_write_slow_jit_impl(addr, 16, value as u32 as u64, 0, eip_and_wasm_table_index)
+}
+#[no_mangle]
+pub unsafe fn safe_write32_slow_jit64(addr: u64, value: i32, eip_and_wasm_table_index: i32) -> i32 {
+    safe_write_slow_jit_impl(addr, 32, value as u32 as u64, 0, eip_and_wasm_table_index)
+}
+#[no_mangle]
+pub unsafe fn safe_write64_slow_jit64(addr: u64, value: u64, eip_and_wasm_table_index: i32) -> i32 {
+    safe_write_slow_jit_impl(addr, 64, value, 0, eip_and_wasm_table_index)
 }
 
 #[no_mangle]

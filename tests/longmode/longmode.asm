@@ -514,6 +514,38 @@ after_nx:
     mov ebx, [abs 0x7100]
     mov [r15 + 71*8], rbx                     ; 0x71717171
 
+    ; ======== test 72-75: mov r, imm forms, in a loop so that they get jitted ========
+    mov ecx, 200000
+t72_loop:
+    mov rax, -1
+    mov eax, 0x12345678                       ; zero-extends
+    mov rbx, 0x0008000000000123               ; movabs with bit 51
+    mov rdx, -1
+    mov dx, 0xBEEF
+    mov rsi, -1
+    mov ah, 0x5A                              ; legacy high byte register
+    mov sil, 0x33                             ; REX byte register
+    mov r9, -1
+    mov r9b, 0x44
+    mov r10, 0x100
+    bsf r11, r10                              ; 0F BC: must not be taken for mov r, imm
+    mov eax, 7
+    mov edi, 7
+    mov r12d, 9
+    cmpxchg r12d, edi                         ; 0F B1 (eax != r12d: eax <- r12d)
+    mov r13, rax
+    mov eax, 0x12345678
+    mov ah, 0x5A
+    dec ecx
+    jnz t72_loop
+    mov [r15 + 77*8], r11                     ; 8
+    mov [r15 + 78*8], r13                     ; 9
+    mov [r15 + 72*8], rax                     ; 0x5A78 in the low word: 0x12345A78
+    mov [r15 + 73*8], rbx
+    mov [r15 + 74*8], rdx                     ; 0xFFFFFFFFFFFFBEEF
+    mov [r15 + 75*8], rsi                     ; 0xFFFFFFFFFFFFFF33
+    mov [r15 + 76*8], r9                      ; 0xFFFFFFFFFFFFFF44
+
     ; set DF before the syscall: r11 must carry it, rflags must lose it
     pushfq
     or  qword [rsp], 0x400

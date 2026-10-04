@@ -67,6 +67,7 @@ enum FunctionType {
     FN4_I32_I32_I64_I32_RET,
     FN5_I32_I32_I64_I32_I32_RET,
     FN3_I64_I32_I32_RET,
+    FN3_I64_I64_I32_RET,
     // When adding at the end, update LAST below
 }
 
@@ -76,7 +77,7 @@ impl FunctionType {
         unsafe { transmute(x) }
     }
     pub fn to_u8(self: FunctionType) -> u8 { self as u8 }
-    pub const LAST: FunctionType = FunctionType::FN3_I64_I32_I32_RET;
+    pub const LAST: FunctionType = FunctionType::FN3_I64_I64_I32_RET;
 }
 
 pub const WASM_MODULE_ARGUMENT_COUNT: u8 = 1;
@@ -284,6 +285,7 @@ impl WasmBuilder {
                     Some((&[I32, I32, I64, I32, I32], &[I32]))
                 },
                 FunctionType::FN3_I64_I32_I32_RET => Some((&[I64, I32, I32], &[I32])),
+                FunctionType::FN3_I64_I64_I32_RET => Some((&[I64, I64, I32], &[I32])),
                 _ => None,
             };
             if let Some((params, results)) = generic {
@@ -639,6 +641,8 @@ impl WasmBuilder {
     }
 
     #[must_use = "local allocated but not used"]
+    /// A new local that is written later (wasm locals start out as zero)
+    pub fn new_local(&mut self) -> WasmLocal { self.alloc_local() }
     pub fn set_new_local(&mut self) -> WasmLocal {
         let local = self.alloc_local();
         self.instruction_body.push(op::OP_SETLOCAL);
@@ -1032,6 +1036,9 @@ impl WasmBuilder {
     }
     pub fn call_fn5_i32_i32_i64_i32_i32_ret(&mut self, name: &str) {
         self.call_fn(name, FunctionType::FN5_I32_I32_I64_I32_I32_RET)
+    }
+    pub fn call_fn3_i64_i64_i32_ret(&mut self, name: &str) {
+        self.call_fn(name, FunctionType::FN3_I64_I64_I32_RET)
     }
     pub fn call_fn3_i64_i32_i32_ret(&mut self, name: &str) {
         self.call_fn(name, FunctionType::FN3_I64_I32_I32_RET)

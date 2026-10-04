@@ -4,13 +4,12 @@ This file is the roadmap for completing full x86-64 emulation in v86, so that
 modern 64-bit Linux distributions can boot. It is written to be picked up by
 another engineer (human or LLM) with no prior context.
 
-**Status: Alpine 3.19 x86_64 boots from its ISO to a root shell over
-serial (interpreter only, ~3 min; see the 2026-10-03 update in §2).
-M2 is complete, including the previously-open gaps (SSE/REX,
-SMEP/NX corner cases in `access`, `eventinj`, `apic`, and the kernel
-self-decompression triple fault — all fixed; see §2 "Remaining known gaps"
-for details). M1 is complete. The work
-lives on branch `x86-64-long-mode` (fork: https://github.com/portlandhodl/v86).**
+**Status: Alpine 3.19 x86_64 boots from its ISO (SeaBIOS + ISOLINUX) to a
+root shell in ~35s with the 64-bit JIT (`tests/longmode/alpine.js`). M1 and M2
+are complete, M3 is complete apart from optional items, M4 (64-bit JIT) is in
+progress: phase 1 (all 64-bit code compiled) and the first native instructions
+are done, see §4. The work lives on branch `x86-64-long-mode`
+(fork: https://github.com/portlandhodl/v86).**
 
 ---
 
@@ -279,9 +278,12 @@ Remaining known gaps (non-blocking for the goal above):
   printed "Login incorrect". It now reports 32 physical bits (matching the
   page walk, which treats PTE bits 32..51 as reserved) and 48 linear bits;
   longmode test 70 covers it.
-- ISO/SeaBIOS path currently idles at the ISOLINUX `boot:` prompt (v86 accepts
-  no keyboard input in this headless runner; direct-bzImage is the default
-  bring-up vehicle).
+- ~~ISO/SeaBIOS path idles at the ISOLINUX `boot:` prompt~~ — it didn't: the
+  prompt times out after 1s and boots. The ISO boot panicked in
+  `tlb_set_has_code` (a page above 4 GiB indexed tlb_code, fixed; longmode
+  test 71), and later appeared to hang at "Loading hardware drivers" only
+  because the console switches to a DRM framebuffer, so the text-mode screen
+  stops updating. Alpine also runs a getty on ttyS0.
 
 The original ordered task list is kept below for reference.
 
@@ -379,13 +381,13 @@ Run `grep -n unimplemented src/rust/cpu/instructions_64.rs`. Notable groups:
 
 ## 3. Milestone M3 — boot media & devices for real distros
 
-- **SeaBIOS ISO boot should just work** once the CPU is correct — SeaBIOS is
-  32-bit; it loads the OS loader, which switches to long mode. Test with a
-  tiny distro ISO first (e.g. Alpine virt).
-- Direct bzImage boot (`src/kernel.js`): implement the 64-bit Linux boot
-  protocol (entry at `code32_start + 0x200` with paging + long mode already
-  enabled by the loader — v86 must build identity page tables, a GDT with a
-  64-bit code segment, and set EFER.LMA itself).
+- ~~SeaBIOS ISO boot~~ — works: the Alpine virt ISO boots through ISOLINUX to
+  a shell on ttyS0 (`ALPINE_ISO=... tests/longmode/alpine.js`).
+- Direct bzImage boot (`src/kernel.js`) works for 64-bit kernels through the
+  32-bit boot protocol (the kernel's own startup code enables long mode), which
+  every x86_64 bzImage supports. The 64-bit entry point (`code32_start +
+  0x200`, loader sets up long mode) is optional; implement only if a kernel
+  without the 32-bit entry shows up.
 - ~~`src/elf.js` is 32-bit only~~ — done: ELF64 headers are parsed (virtual
   addresses as BigInt, offsets/sizes/paddr as numbers), and the multiboot
   loader maps a higher-half ELF64 entry point to its physical address.
@@ -397,31 +399,57 @@ Run `grep -n unimplemented src/rust/cpu/instructions_64.rs`. Notable groups:
   PIT/ACPI-PM timer, fine. Virtio is legacy-transitional PCI; modern
   64-bit-only kernels may want non-transitional virtio-pci — check
   `src/virtio.js` device ids if disks/nics don't show up.
-- Machine-readable "it booted" marker: kernel console on serial
-  (`console=ttyS0`) with an expect script, like `tests/full/`.
+- ~~Machine-readable "it booted" marker~~ — `tests/longmode/alpine.js` boots
+  the ISO (or kernel+initrd directly with `ALPINE_KERNEL`/`ALPINE_INITRD`),
+  logs in on ttyS0 and checks `uname -m`. Not part of `make` targets since the
+  image isn't in the repository.
 
 ---
 
 ## 4. Milestone M4 — JIT for 64-bit code
 
-Interpreter-first was deliberate; M4 makes long mode fast.
+Interpreter-first was deliberate; M4 makes long mode fast. Measure with
+`tests/benchmark/bench64.js` (same workload in 32-bit and higher-half 64-bit
+mode): 32-bit with the JIT ~1100 MIPS; 64-bit interpreted ~80, phase 1 ~200,
+with the native instructions below ~390.
 
-- Remove the guard in `jit_increase_hotness_and_maybe_compile`
-  (jit.rs) once the below land. `Code.state_flags` already keys on is_64.
-- `gen/generate_jit.js` + `gen/generate_analyzer.js`: add the 0x2xx tier
-  (they currently only generate 16/32; the interpreter generator is the
-  reference for how).
-- `codegen.rs`/`jit_instructions.rs`: the JIT keeps GPRs in wasm locals
-  (`register_locals`, 8×i32) — 64-bit mode needs 16×i64 locals (or i64 only
-  where profitable). `wasmgen/wasm_builder.rs` already has full i64
-  primitives. Lazy-flag emission gets 64-bit variants (arith fusion:
-  cmp→jcc etc.).
-- REX decode in the analyzer (`analysis.rs` handles prefixes for the JIT;
-  currently no REX knowledge).
-- Extend `tests/expect/` (golden wasm output) with 64-bit cases, and the nasm
-  suite: run 64-bit fixtures through the JIT (`run.js --force-jit`) once
-  64-bit nasm tests exist.
-- Measure with `tests/benchmark/`.
+Design (see the header comment of `src/rust/jit64.rs`): the block finder,
+control-flow structuring and module generation in jit.rs are shared; 64-bit
+code has its own instruction table (`gen/generate_jit64.js` ->
+`src/rust/gen/jit64.rs`, `jit64_0f.rs`, `jit64_wrappers.rs`), so the 32-bit
+JIT's output is unchanged (expect-tests only gained new function types).
+
+Done:
+- Phase 1: every 64-bit instruction compiles. Unless it has native code, it's
+  a call of a generated wrapper (`jit64_*`) around the interpreter's handler
+  with the instruction pre-decoded; the wrapper returns whether to leave the
+  module (`JIT64_EXIT`: exception delivered or jitted code dirtied). Jumps,
+  call rel32, lea and sti are native; pop r/m and 0x67-prefixed instructions
+  are interpreted one at a time (`jit64_interpret_one`). Block finder uses
+  u64 virtual addresses; code for pages above 4 GiB lives in `tlb_code_high`.
+- Phase 2 (first part): registers stay in memory; native code for add/or/
+  and/sub/xor/cmp/test, mov (r/m, imm, imm64), movzx/movsx/movsxd, inc/dec,
+  push/pop r64, push imm/r/m, ret. Memory accesses inline the lookup of the
+  high TLB (`tlb_high_*`, hashed) and share the 32-bit JIT's slow paths
+  (`*_slow_jit64`, exceptions via exit_jit). `NATIVE64_SKIP=group,...` when
+  generating falls back to the interpreter for groups of native instructions
+  (bisecting miscompilations).
+- `set_jit_config(4, 1)` disables the 64-bit JIT, `(5, n)` sets the hotness
+  threshold (`JIT_THRESHOLD=1 tests/longmode/run.js` in `make longmode-tests`).
+
+Next:
+- Conditions: `jit64_test_cc` is a call per jcc; generate the condition
+  inline, fused with the preceding cmp/test/sub (the 32-bit JIT's
+  `gen_condition_fn` does this for 32-bit lazy flags).
+- More native instructions: shifts (C1/D1/D3), imul (0F AF, 69, 6B), setcc,
+  cmovcc, xchg, call r/m / call rel (push inline), leave, string ops.
+- Registers in wasm locals (16 x i64), spilled around wrapper calls.
+- Low (<4 GiB) addresses always take the slow path in 64-bit code; add the
+  flat-TLB check if non-PIE 64-bit user code matters.
+- The wrappers inline each handler: release wasm grew 2.3 -> 3.0 MB. Consider
+  `#[inline(never)]` on large handlers or one dispatcher per signature.
+- The 32-bit JIT's fast-path masks include TLB_NOT_EXECUTABLE, so with NX
+  enabled every data access to an NX page takes the slow path (since M2).
 
 ---
 

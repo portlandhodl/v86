@@ -232,6 +232,12 @@ function gen_instruction_body_after_fixed_g(encoding, size)
     }
     assert(!encoding.custom_modrm_resolve, "unhandled custom_modrm_resolve: " + name);
 
+    const native = gen_native(encoding, size, imm);
+    if(native)
+    {
+        return native.concat(postfix);
+    }
+
     // generic: call the interpreter's handler through a wrapper
 
     if(encoding.e)
@@ -330,6 +336,169 @@ function gen_instruction_body_after_fixed_g(encoding, size)
             postfix
         );
     }
+}
+
+// Natively compiled instructions (see the native section of src/rust/jit64.rs).
+// Returns the generated code or undefined (then the interpreter's handler is called).
+const ALU_OPS = { 0: "OP_ADD", 1: "OP_OR", 4: "OP_AND", 5: "OP_SUB", 6: "OP_XOR", 7: "OP_CMP" };
+
+// For debugging: NATIVE64_SKIP=group,... falls back to the interpreter's handlers for groups
+// of natively compiled instructions (see native_group)
+const NATIVE64_SKIP = (process.env.NATIVE64_SKIP || "").split(",").filter(x => x);
+
+function native_group(op, encoding)
+{
+    if(op <= 0x3F) return "alu";
+    if(op >= 0x80 && op <= 0x83) return "aluimm";
+    if(op === 0x84 || op === 0x85 || op === 0xA8 || op === 0xA9 || op === 0xF6 || op === 0xF7) return "test";
+    if(op >= 0x88 && op <= 0x8B || op === 0xC6 || op === 0xC7 || op >= 0xB0 && op <= 0xBF) return "mov";
+    if(op >= 0x0FB6 && op <= 0x0FBF || op === 0x63) return "movx";
+    if(op === 0xFE || op === 0xFF && encoding.fixed_g < 2) return "incdec";
+    if(op === 0xC3) return "ret";
+    return "stack";
+}
+
+function gen_native(encoding, size, imm)
+{
+    const code = gen_native_any(encoding, size, imm);
+    if(code && NATIVE64_SKIP.includes(native_group(encoding.opcode, encoding)))
+    {
+        return undefined;
+    }
+    return code;
+}
+
+function gen_native_any(encoding, size, imm)
+{
+    const op = encoding.opcode;
+    const bits_of = wide => wide ? size : 8;
+    const R = "r";
+    const RM_REG = "((modrm_byte & 7) as u32 | ctx.cpu.rex_b())";
+    const IMM = imm && imm[1] === "I32" ? `jit64::Opnd::Imm(${imm[0]} as i64)` : undefined;
+
+    // dst/src: "rm" (the modrm operand), "r" (the modrm reg field), "imm", "eax"
+    function modrm_form(bits, operand_code_fn)
+    {
+        // operand_code_fn(rm_operand) -> code
+        return ["let r = (modrm_byte >> 3 & 7) as u32 | ctx.cpu.rex_r();", {
+            type: "if-else",
+            if_blocks: [{
+                condition: "modrm_byte < 0xC0",
+                body: [].concat(
+                    "let addr = jit64::decode_modrm(ctx.cpu, modrm_byte);",
+                    imm ? [`let imm = ${IMM};`] : [],
+                    operand_code_fn("jit64::Opnd::Mem(addr)", "imm")
+                ),
+            }],
+            else_block: {
+                body: [].concat(
+                    imm ? [`let imm = ${IMM};`] : [],
+                    `let rm = ${RM_REG};`,
+                    operand_code_fn(`jit64::Opnd::Reg(rm)`, "imm")
+                ),
+            },
+        }];
+    }
+
+    if(op <= 0x3F && (op & 7) < 4 && ALU_OPS[op >> 3] && !encoding.prefix)
+    {
+        const bits = bits_of(op & 1);
+        const alu = ALU_OPS[op >> 3];
+        if(op & 2)
+        {
+            // r <op>= r/m
+            return modrm_form(bits, rm => [`jit64::gen_alu(ctx, jit64::${alu}, ${bits}, jit64::Opnd::Reg(${R}), ${rm});`]);
+        }
+        else
+        {
+            return modrm_form(bits, rm => [`jit64::gen_alu(ctx, jit64::${alu}, ${bits}, ${rm}, jit64::Opnd::Reg(${R}));`]);
+        }
+    }
+    if(op <= 0x3F && ((op & 7) === 4 || (op & 7) === 5) && ALU_OPS[op >> 3] && IMM)
+    {
+        // al/eax <op>= imm
+        const bits = bits_of(op & 1);
+        return [`let imm = ${IMM};`, `jit64::gen_alu(ctx, jit64::${ALU_OPS[op >> 3]}, ${bits}, jit64::Opnd::Reg(0), imm);`];
+    }
+    if((op === 0x80 || op === 0x81 || op === 0x83) && ALU_OPS[encoding.fixed_g] && IMM)
+    {
+        const bits = op === 0x80 ? 8 : size;
+        return modrm_form(bits, (rm, i) => [`jit64::gen_alu(ctx, jit64::${ALU_OPS[encoding.fixed_g]}, ${bits}, ${rm}, ${i});`]);
+    }
+    if(op === 0x84 || op === 0x85)
+    {
+        const bits = bits_of(op & 1);
+        return modrm_form(bits, rm => [`jit64::gen_alu(ctx, jit64::OP_TEST, ${bits}, ${rm}, jit64::Opnd::Reg(${R}));`]);
+    }
+    if((op === 0xA8 || op === 0xA9) && IMM)
+    {
+        return [`let imm = ${IMM};`, `jit64::gen_alu(ctx, jit64::OP_TEST, ${bits_of(op & 1)}, jit64::Opnd::Reg(0), imm);`];
+    }
+    if((op === 0xF6 || op === 0xF7) && encoding.fixed_g === 0 && IMM)
+    {
+        const bits = bits_of(op & 1);
+        return modrm_form(bits, (rm, i) => [`jit64::gen_alu(ctx, jit64::OP_TEST, ${bits}, ${rm}, ${i});`]);
+    }
+    if(op >= 0x88 && op <= 0x8B)
+    {
+        const bits = bits_of(op & 1);
+        if(op & 2)
+        {
+            return modrm_form(bits, rm => [`jit64::gen_alu(ctx, jit64::OP_MOV, ${bits}, jit64::Opnd::Reg(${R}), ${rm});`]);
+        }
+        return modrm_form(bits, rm => [`jit64::gen_alu(ctx, jit64::OP_MOV, ${bits}, ${rm}, jit64::Opnd::Reg(${R}));`]);
+    }
+    if((op === 0xC6 || op === 0xC7) && encoding.fixed_g === 0 && IMM)
+    {
+        const bits = bits_of(op & 1);
+        return modrm_form(bits, (rm, i) => [`jit64::gen_alu(ctx, jit64::OP_MOV, ${bits}, ${rm}, ${i});`]);
+    }
+    if(op < 0x100 && (op & 0xF8) === 0xB0 && IMM)
+    {
+        return [`let imm = ${IMM};`, `let r = ${op & 7} | ctx.cpu.rex_b();`, `jit64::gen_alu(ctx, jit64::OP_MOV, 8, jit64::Opnd::Reg(r), imm);`];
+    }
+    if(op < 0x100 && (op & 0xF8) === 0xB8 && imm)
+    {
+        const value = imm[1] === "I64" ? `${imm[0]} as i64` : `${imm[0]} as i64`;
+        return [`let imm = jit64::Opnd::Imm(${value});`, `let r = ${op & 7} | ctx.cpu.rex_b();`, `jit64::gen_alu(ctx, jit64::OP_MOV, ${size}, jit64::Opnd::Reg(r), imm);`];
+    }
+    if(op === 0x0FB6 || op === 0x0FB7 || op === 0x0FBE || op === 0x0FBF)
+    {
+        const src_bits = (op & 1) ? 16 : 8;
+        const signed = (op & 8) !== 0;
+        return modrm_form(src_bits, rm => [`jit64::gen_movx(ctx, ${signed}, ${src_bits}, ${size}, ${R}, ${rm});`]);
+    }
+    if(op === 0x63 && size === 64)
+    {
+        return modrm_form(32, rm => [`jit64::gen_movx(ctx, true, 32, 64, ${R}, ${rm});`]);
+    }
+    if((op === 0xFF && size !== 16 || op === 0xFE) && (encoding.fixed_g === 0 || encoding.fixed_g === 1))
+    {
+        // note: 0xFF is a default-64 group, inc/dec are 64-bit only with REX.W
+        const bits = op === 0xFE ? 8 : size === 64 ? "if ctx.cpu.rex_w() { 64 } else { 32 }" : size;
+        return [`let bits = ${bits};`].concat(modrm_form(8, rm => [`jit64::gen_incdec(ctx, ${encoding.fixed_g === 1}, bits, ${rm});`]));
+    }
+    if(size === 64 && op < 0x100 && (op & 0xF8) === 0x50)
+    {
+        return [`let r = ${op & 7} | ctx.cpu.rex_b();`, `jit64::gen_push64(ctx, jit64::Opnd::Reg(r));`];
+    }
+    if(size === 64 && op < 0x100 && (op & 0xF8) === 0x58)
+    {
+        return [`let r = ${op & 7} | ctx.cpu.rex_b();`, `jit64::gen_pop64(ctx, r);`];
+    }
+    if(size === 64 && (op === 0x68 || op === 0x6A) && IMM)
+    {
+        return [`let imm = ${IMM};`, `jit64::gen_push64(ctx, imm);`];
+    }
+    if(size === 64 && op === 0xFF && encoding.fixed_g === 6)
+    {
+        return modrm_form(64, rm => [`jit64::gen_push64(ctx, ${rm});`]);
+    }
+    if(size === 64 && op === 0xC3)
+    {
+        return ["jit64::gen_ret64(ctx, 0);"];
+    }
+    return undefined;
 }
 
 function gen_cases(by_opcode)

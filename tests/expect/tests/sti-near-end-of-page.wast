@@ -29,6 +29,7 @@
   (type $t27 (func (param i32 i32 i64 i32) (result i32)))
   (type $t28 (func (param i32 i32 i64 i32 i32) (result i32)))
   (type $t29 (func (param i64 i32 i32) (result i32)))
+  (type $t30 (func (param i64 i64 i32) (result i32)))
   (import "e" "exit_jit" (func $e.exit_jit (type $t0)))
   (import "e" "m" (memory {normalised output}))
   (func $f (export "f") (type $t1) (param $p0 i32)

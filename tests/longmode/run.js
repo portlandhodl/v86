@@ -104,6 +104,13 @@ const expected = [
     0x123456789ABCDEFn,  // 69: invlpg picks up the rewritten PTE
     0x3020n,             // 70: cpuid 0x80000008 address sizes (48 linear, 32 physical)
     0x71717171n,         // 71: write through a high alias of a page with jit entry points
+    0x12345A78n,         // 72: mov eax, imm32 (zero-extends) + mov ah, imm8
+    0x0008000000000123n, // 73: mov r64, imm64
+    0xFFFFFFFFFFFFBEEFn, // 74: mov r16, imm16
+    0xFFFFFFFFFFFFFF33n, // 75: mov sil, imm8 (REX)
+    0xFFFFFFFFFFFFFF44n, // 76: mov r9b, imm8
+    8n,                  // 77: bsf (0F BC) in jitted code
+    9n,                  // 78: cmpxchg (0F B1) in jitted code
 ];
 
 const emulator = new V86({

@@ -29,6 +29,7 @@
   (type $t27 (func (param i32 i32 i64 i32) (result i32)))
   (type $t28 (func (param i32 i32 i64 i32 i32) (result i32)))
   (type $t29 (func (param i64 i32 i32) (result i32)))
+  (type $t30 (func (param i64 i64 i32) (result i32)))
   (import "e" "trigger_gp_jit" (func $e.trigger_gp_jit (type $t2)))
   (import "e" "safe_read_write32s_slow_jit" (func $e.safe_read_write32s_slow_jit (type $t7)))
   (import "e" "safe_write32_slow_jit" (func $e.safe_write32_slow_jit (type $t16)))
