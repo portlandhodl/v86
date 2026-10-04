@@ -409,9 +409,12 @@ Run `grep -n unimplemented src/rust/cpu/instructions_64.rs`. Notable groups:
 ### Test status (2026-10-03)
 
 CI targets run locally (images from i.copy.sh as in .github/workflows/ci.yml):
-rust-test, expect-tests, nasmtests (+force-jit), longmode-tests and `make
-tests` pass, except for the tests using `images/linux4.iso` ("Linux 4" in
-tests/full, jitpagingtests, api/state.js): that 32-bit guest stops after
+rust-test, expect-tests, nasmtests (+force-jit), longmode-tests, `make
+tests` (16 tests with public images) and the devices tests (virtio console,
+fetch network with/without virtio, POST, balloon) pass, except for the tests
+using `images/linux4.iso` ("Linux 4" in tests/full, jitpagingtests,
+api/state.js, devices/virtio_9p.js, devices/wisp_network.js; qemutests needs
+a qemu install and wasn't run): that 32-bit guest stops after
 "Freeing SMP alternatives memory", spinning in APIC timer calibration with
 only one PIT interrupt (vector 0x30) ever delivered. `master` behaves the
 same on this machine, so it's not caused by this branch; not investigated
