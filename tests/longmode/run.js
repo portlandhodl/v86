@@ -115,6 +115,7 @@ const expected = [
     0xb6bf6aaa379b26f0n, // 80: imul/shifts/setcc/cmovcc in a hot loop
     0x154690ceac782d0n,  // 81: rotates/shift by cl/inc cf/not/neg/movsxd/cdqe/cqo/bswap/xchg/call r
     50000n,              // 82: inc at a block start preserves cf for adc
+    0x4f2ab3636643714n,  // 83: adc/sbb/bt*/cmpxchg/xadd/pushf in a hot loop
 ];
 
 const emulator = new V86({

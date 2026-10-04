@@ -1966,3 +1966,366 @@ fn next_instructions_overwrite_flags(ctx: &JitContext) -> bool {
     }
     false
 }
+
+/// Push cf (i32 0/1) for the current lazy flags state, without changing it
+fn gen_getcf(ctx: &mut JitContext) {
+    if !gen_condition_inline(ctx, 2) {
+        ctx.builder.call_fn0_ret("jit64_getcf");
+    }
+}
+#[no_mangle]
+pub unsafe fn jit64_getcf() -> i32 { crate::cpu::misc_instr::getcf() as i32 }
+
+/// Push bit (bits - 1) of a value as i32 0/1
+fn gen_msb_of(ctx: &mut JitContext, bits: u32) {
+    if bits == 64 {
+        ctx.builder.const_i64(63);
+        ctx.builder.shr_u_i64();
+        ctx.builder.wrap_i64_to_i32();
+    }
+    else {
+        ctx.builder.const_i32(31);
+        ctx.builder.shr_u_i32();
+    }
+}
+
+/// adc/sbb dst, src (32 and 64 bits), see cpu/arith.rs adc/sbb
+pub fn gen_adc_sbb(ctx: &mut JitContext, is_sbb: bool, bits: u32, dst: Opnd, src: Opnd) {
+    dbg_assert!(bits == 32 || bits == 64);
+    let w = bits == 64;
+    gen_get_operand(ctx, bits, &src);
+    let y = set_new_val(ctx, bits);
+    gen_getcf(ctx);
+    let cf = ctx.builder.set_new_local();
+
+    let compute = |ctx: &mut JitContext, x: &Val| -> Val {
+        macro_rules! op {
+            ($a:ident, $b:ident) => {
+                if w {
+                    ctx.builder.$b()
+                }
+                else {
+                    ctx.builder.$a()
+                }
+            };
+        }
+        // res = x +- y +- cf
+        x.get(ctx);
+        y.get(ctx);
+        if is_sbb {
+            op!(sub_i32, sub_i64);
+        }
+        else {
+            op!(add_i32, add_i64);
+        }
+        ctx.builder.get_local(&cf);
+        if w {
+            ctx.builder.extend_unsigned_i32_to_i64();
+        }
+        if is_sbb {
+            op!(sub_i32, sub_i64);
+        }
+        else {
+            op!(add_i32, add_i64);
+        }
+        let res = set_new_val(ctx, bits);
+
+        gen_set_last_op1(ctx, bits, x);
+        gen_set_last_result(ctx, bits, &res);
+        gen_set_op_size_and_flags_changed(
+            ctx,
+            bits,
+            FLAGS_ALL & !FLAG_CARRY & !FLAG_ADJUST & !FLAG_OVERFLOW | if is_sbb { FLAG_SUB } else { 0 },
+        );
+
+        ctx.builder.const_i32(global_pointers::flags as i32);
+        ctx.builder.load_fixed_i32(global_pointers::flags as u32);
+        ctx.builder.const_i32(!(FLAG_CARRY | FLAG_ADJUST | FLAG_OVERFLOW));
+        ctx.builder.and_i32();
+        // cf: adc: msb(x ^ ((x ^ y) & (y ^ res))), sbb: msb(res ^ ((res ^ y) & (y ^ x)))
+        let (a, b) = if is_sbb { (&res, x) } else { (x, &res) };
+        a.get(ctx);
+        a.get(ctx);
+        y.get(ctx);
+        op!(xor_i32, xor_i64);
+        y.get(ctx);
+        b.get(ctx);
+        op!(xor_i32, xor_i64);
+        op!(and_i32, and_i64);
+        op!(xor_i32, xor_i64);
+        gen_msb_of(ctx, bits);
+        ctx.builder.or_i32();
+        // af: (x ^ y ^ res) & 0x10
+        x.get(ctx);
+        y.get(ctx);
+        op!(xor_i32, xor_i64);
+        res.get(ctx);
+        op!(xor_i32, xor_i64);
+        if w {
+            ctx.builder.wrap_i64_to_i32();
+        }
+        ctx.builder.const_i32(FLAG_ADJUST);
+        ctx.builder.and_i32();
+        ctx.builder.or_i32();
+        // of: adc: msb((y ^ res) & (x ^ res)), sbb: msb((y ^ x) & (res ^ x))
+        let (p, q) = if is_sbb { (x, &res) } else { (&res, x) };
+        y.get(ctx);
+        p.get(ctx);
+        op!(xor_i32, xor_i64);
+        q.get(ctx);
+        p.get(ctx);
+        op!(xor_i32, xor_i64);
+        op!(and_i32, and_i64);
+        gen_msb_of(ctx, bits);
+        ctx.builder.const_i32(11);
+        ctx.builder.shl_i32();
+        ctx.builder.or_i32();
+        ctx.builder.store_aligned_i32(0);
+        res
+    };
+    gen_rmw(ctx, bits, dst, &compute);
+    ctx.builder.free_local(cf);
+    y.free(ctx);
+    ctx.flags64 = Flags64::Unknown;
+}
+
+/// Apply compute to a register or memory operand and write the result back
+fn gen_rmw(ctx: &mut JitContext, bits: u32, dst: Opnd, compute: &dyn Fn(&mut JitContext, &Val) -> Val) {
+    match dst {
+        Opnd::Reg(r) => {
+            gen_get_reg(ctx, bits, r);
+            let x = set_new_val(ctx, bits);
+            let result = compute(ctx, &x);
+            gen_set_reg(ctx, bits, r, &result);
+            result.free(ctx);
+            x.free(ctx);
+        },
+        Opnd::Mem(m) => {
+            let address = gen_modrm_address_local(ctx, &m);
+            gen_safe_read_write(ctx, bits, &address, &|ctx| {
+                let x = set_new_val(ctx, bits);
+                let result = compute(ctx, &x);
+                result.get(ctx);
+                result.free(ctx);
+                x.free(ctx);
+            });
+            ctx.builder.free_local_i64(address);
+        },
+        Opnd::Imm(_) => dbg_assert!(false),
+    }
+}
+
+/// bt (4), bts (5), btr (6), btc (7) with a constant bit offset, or a register offset with a
+/// register destination
+pub fn gen_bt(ctx: &mut JitContext, kind: u32, bits: u32, dst: Opnd, offset: Opnd) {
+    dbg_assert!(bits == 32 || bits == 64);
+    dbg_assert!(!(matches!(dst, Opnd::Mem(_)) && matches!(offset, Opnd::Reg(_))));
+    let w = bits == 64;
+    // offset & (bits - 1), as i32
+    let off = ctx.builder.new_local();
+    match offset {
+        Opnd::Imm(i) => ctx.builder.const_i32((i as i32) & (bits as i32 - 1)),
+        Opnd::Reg(r) => {
+            gen_get_reg(ctx, 32, r);
+            ctx.builder.const_i32(bits as i32 - 1);
+            ctx.builder.and_i32();
+        },
+        Opnd::Mem(_) => dbg_assert!(false),
+    }
+    ctx.builder.set_local(&off);
+
+    let compute = |ctx: &mut JitContext, x: &Val| -> Val {
+        // cf = x >> off & 1
+        ctx.builder.const_i32(global_pointers::flags as i32);
+        ctx.builder.load_fixed_i32(global_pointers::flags as u32);
+        ctx.builder.const_i32(!FLAG_CARRY);
+        ctx.builder.and_i32();
+        x.get(ctx);
+        ctx.builder.get_local(&off);
+        if w {
+            ctx.builder.extend_unsigned_i32_to_i64();
+            ctx.builder.shr_u_i64();
+            ctx.builder.wrap_i64_to_i32();
+        }
+        else {
+            ctx.builder.shr_u_i32();
+        }
+        ctx.builder.const_i32(1);
+        ctx.builder.and_i32();
+        ctx.builder.or_i32();
+        ctx.builder.store_aligned_i32(0);
+        ctx.builder
+            .const_i32(global_pointers::flags_changed as i32);
+        ctx.builder
+            .load_fixed_i32(global_pointers::flags_changed as u32);
+        ctx.builder.const_i32(!FLAG_CARRY);
+        ctx.builder.and_i32();
+        ctx.builder.store_aligned_i32(0);
+
+        // the new value: x |/&~/^ (1 << off)
+        x.get(ctx);
+        if kind != 4 {
+            if w {
+                ctx.builder.const_i64(1);
+                ctx.builder.get_local(&off);
+                ctx.builder.extend_unsigned_i32_to_i64();
+                ctx.builder.shl_i64();
+                if kind == 6 {
+                    ctx.builder.const_i64(-1);
+                    ctx.builder.xor_i64();
+                    ctx.builder.and_i64();
+                }
+                else if kind == 5 {
+                    ctx.builder.or_i64();
+                }
+                else {
+                    ctx.builder.xor_i64();
+                }
+            }
+            else {
+                ctx.builder.const_i32(1);
+                ctx.builder.get_local(&off);
+                ctx.builder.shl_i32();
+                if kind == 6 {
+                    ctx.builder.const_i32(-1);
+                    ctx.builder.xor_i32();
+                    ctx.builder.and_i32();
+                }
+                else if kind == 5 {
+                    ctx.builder.or_i32();
+                }
+                else {
+                    ctx.builder.xor_i32();
+                }
+            }
+        }
+        set_new_val(ctx, bits)
+    };
+    if kind == 4 {
+        // bt doesn't write
+        gen_get_operand(ctx, bits, &dst);
+        let x = set_new_val(ctx, bits);
+        let v = compute(ctx, &x);
+        v.free(ctx);
+        x.free(ctx);
+    }
+    else {
+        gen_rmw(ctx, bits, dst, &compute);
+    }
+    ctx.builder.free_local(off);
+    ctx.flags64 = Flags64::Unknown;
+}
+
+/// cmpxchg r/m, r: compare rax with the destination; equal: dst = r, else rax = dst. The
+/// destination is written in both cases (like the interpreter)
+pub fn gen_cmpxchg(ctx: &mut JitContext, bits: u32, dst: Opnd, r: u32) {
+    gen_get_reg(ctx, bits, crate::regs::EAX);
+    let rax = set_new_val(ctx, bits);
+    gen_get_reg(ctx, bits, r);
+    let src = set_new_val(ctx, bits);
+    let old = ctx.builder.new_local();
+    let old64 = ctx.builder.new_local_i64();
+    let equal = ctx.builder.new_local();
+    {
+        let (rax, src, old, old64, equal) = (&rax, &src, &old, &old64, &equal);
+        let compute = |ctx: &mut JitContext, x: &Val| -> Val {
+            match x {
+                Val::I32(_) => {
+                    x.get(ctx);
+                    ctx.builder.set_local(old);
+                },
+                Val::I64(_) => {
+                    x.get(ctx);
+                    ctx.builder.set_local_i64(old64);
+                },
+            }
+            let result = gen_alu_value(ctx, OP_CMP, bits, rax, x);
+            result.free(ctx);
+            rax.get(ctx);
+            x.get(ctx);
+            if bits == 64 {
+                ctx.builder.eq_i64();
+            }
+            else {
+                ctx.builder.eq_i32();
+            }
+            ctx.builder.set_local(equal);
+            src.get(ctx);
+            x.get(ctx);
+            ctx.builder.get_local(equal);
+            ctx.builder.select();
+            set_new_val(ctx, bits)
+        };
+        gen_rmw(ctx, bits, dst, &compute);
+    }
+    // not equal: rax = old value
+    ctx.builder.get_local(&equal);
+    ctx.builder.eqz_i32();
+    ctx.builder.if_void();
+    if bits == 64 {
+        ctx.builder.get_local_i64(&old64);
+    }
+    else {
+        ctx.builder.get_local(&old);
+    }
+    gen_set_reg_from_stack(ctx, bits, crate::regs::EAX);
+    ctx.builder.block_end();
+    ctx.builder.free_local(old);
+    ctx.builder.free_local_i64(old64);
+    ctx.builder.free_local(equal);
+    src.free(ctx);
+    rax.free(ctx);
+    ctx.flags64 = Flags64::Sub(bits);
+}
+
+/// xadd r/m, r: dst = dst + r, r = old dst
+pub fn gen_xadd(ctx: &mut JitContext, bits: u32, dst: Opnd, r: u32) {
+    gen_get_reg(ctx, bits, r);
+    let reg_value = set_new_val(ctx, bits);
+    let old = ctx.builder.new_local();
+    let old64 = ctx.builder.new_local_i64();
+    {
+        let (reg_value, old, old64) = (&reg_value, &old, &old64);
+        let compute = |ctx: &mut JitContext, x: &Val| -> Val {
+            x.get(ctx);
+            if bits == 64 {
+                ctx.builder.set_local_i64(old64);
+            }
+            else {
+                ctx.builder.set_local(old);
+            }
+            gen_alu_value(ctx, OP_ADD, bits, x, reg_value)
+        };
+        let is_reg_dst = match dst {
+            Opnd::Reg(_) => true,
+            _ => false,
+        };
+        gen_rmw(ctx, bits, dst, &compute);
+        let _ = is_reg_dst;
+    }
+    if bits == 64 {
+        ctx.builder.get_local_i64(&old64);
+    }
+    else {
+        ctx.builder.get_local(&old);
+    }
+    gen_set_reg_from_stack(ctx, bits, r);
+    ctx.builder.free_local(old);
+    ctx.builder.free_local_i64(old64);
+    reg_value.free(ctx);
+    ctx.flags64 = Flags64::Add(bits);
+}
+
+/// pushf (64-bit)
+pub fn gen_pushf64(ctx: &mut JitContext) {
+    // no #gp in 64-bit mode (vm86 is impossible)
+    ctx.builder.call_fn0_ret("jit64_get_eflags");
+    ctx.builder.const_i32(0xFCFFFF);
+    ctx.builder.and_i32();
+    ctx.builder.extend_unsigned_i32_to_i64();
+    let value = set_new_val(ctx, 64);
+    gen_push64_value(ctx, &value);
+    value.free(ctx);
+}
+#[no_mangle]
+pub unsafe fn jit64_get_eflags() -> i32 { cpu::get_eflags() }

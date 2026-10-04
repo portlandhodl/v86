@@ -710,6 +710,60 @@ t82_inc:
     dec ecx
     jnz t82_loop
     mov [r15 + 82*8], r13
+
+    ; ======== test 83: adc/sbb, bt*, cmpxchg, xadd, pushf, jitted (hot loop) ========
+    xor r13, r13
+    mov ecx, 100000
+    mov r14, 0x9E3779B97F4A7C15
+t83_loop:
+    mov rsi, rcx
+    imul rsi, r14
+    mov rax, rsi
+    add rax, rax
+    adc r13, rcx
+    mov ebx, esi
+    sub ebx, ecx
+    mov r11, rsi
+    sbb r11, 12345
+    xor r13, r11
+    mov rbx, rsi
+    bt rbx, rcx
+    adc r13, 0
+    bts rbx, 5
+    btr rbx, 60
+    btc rbx, rcx
+    add r13, rbx
+    mov [r15 + 120*8], rsi
+    bts qword [r15 + 120*8], 7
+    btr qword [r15 + 120*8], 63
+    add r13, [r15 + 120*8]
+    mov [r15 + 120*8], rsi
+    mov rax, rcx
+    mov rbx, 77
+    lock cmpxchg [r15 + 120*8], rbx
+    add r13, rax
+    add r13, [r15 + 120*8]
+    mov rax, rsi
+    cmpxchg [r15 + 120*8], rbx
+    add r13, [r15 + 120*8]
+    mov [r15 + 120*8], rcx
+    mov rbx, rsi
+    xadd [r15 + 120*8], rbx
+    add r13, rbx
+    add r13, [r15 + 120*8]
+    mov rbx, 3
+    mov rdx, rcx
+    xadd rdx, rbx
+    add r13, rdx
+    add r13, rbx
+    cmp rcx, 50000
+    pushfq
+    pop rbx
+    and ebx, 0x8D5
+    add r13, rbx
+    dec ecx
+    jnz t83_loop
+    mov [r15 + 83*8], r13
     jmp t81_done
 t81_func:
     add rax, 1

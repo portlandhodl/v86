@@ -352,7 +352,11 @@ const NATIVE64_SKIP = (process.env.NATIVE64_SKIP || "").split(",").filter(x => x
 
 function native_group(op, encoding)
 {
+    if(op <= 0x3F && ((op >> 3) === 2 || (op >> 3) === 3)) return "adc";
     if(op <= 0x3F) return "alu";
+    if((op === 0x81 || op === 0x83) && (encoding.fixed_g === 2 || encoding.fixed_g === 3)) return "adc";
+    if(op === 0x0FA3 || op === 0x0FAB || op === 0x0FB3 || op === 0x0FBB || op === 0x0FBA) return "bt";
+    if(op === 0x0FB1 || op === 0x0FC1) return "atomic";
     if(op >= 0x80 && op <= 0x83) return "aluimm";
     if(op === 0x84 || op === 0x85 || op === 0xA8 || op === 0xA9 || op === 0xF6 || op === 0xF7) return "test";
     if(op >= 0x88 && op <= 0x8B || op === 0xC6 || op === 0xC7 || op >= 0xB0 && op <= 0xBF) return "mov";
@@ -578,6 +582,51 @@ function gen_native_any(encoding, size, imm, generic)
     if(op === 0x99)
     {
         return [`jit64::gen_cwd(ctx, ${size});`];
+    }
+    const ADC_SBB = { 2: false, 3: true };
+    if(op <= 0x3F && (op >> 3) in ADC_SBB && (op & 7) < 6 && size !== 16 && (op & 1))
+    {
+        // adc/sbb (32/64 bits)
+        const is_sbb = ADC_SBB[op >> 3];
+        if((op & 7) === 5)
+        {
+            return IMM ? [`let imm = ${IMM};`, `jit64::gen_adc_sbb(ctx, ${is_sbb}, ${size}, jit64::Opnd::Reg(0), imm);`] : undefined;
+        }
+        if(op & 2)
+        {
+            return modrm_form(size, rm => [`jit64::gen_adc_sbb(ctx, ${is_sbb}, ${size}, jit64::Opnd::Reg(r), ${rm});`]);
+        }
+        return modrm_form(size, rm => [`jit64::gen_adc_sbb(ctx, ${is_sbb}, ${size}, ${rm}, jit64::Opnd::Reg(r));`]);
+    }
+    if((op === 0x81 || op === 0x83) && (encoding.fixed_g === 2 || encoding.fixed_g === 3) && size !== 16 && IMM)
+    {
+        return modrm_form(size, (rm, i) => [`jit64::gen_adc_sbb(ctx, ${encoding.fixed_g === 3}, ${size}, ${rm}, ${i});`]);
+    }
+    const BT = { 0x0FA3: 4, 0x0FAB: 5, 0x0FB3: 6, 0x0FBB: 7 };
+    if(op in BT && size !== 16)
+    {
+        // bt r, r (with a memory operand the offset addresses a bit string: interpreter)
+        return if_else("modrm_byte >= 0xC0", [
+            "let r = (modrm_byte >> 3 & 7) as u32 | ctx.cpu.rex_r();",
+            "let rm = (modrm_byte & 7) as u32 | ctx.cpu.rex_b();",
+            `jit64::gen_bt(ctx, ${BT[op]}, ${size}, jit64::Opnd::Reg(rm), jit64::Opnd::Reg(r));`,
+        ], generic());
+    }
+    if(op === 0x0FBA && encoding.fixed_g >= 4 && size !== 16 && IMM)
+    {
+        return modrm_form(size, (rm, i) => [`jit64::gen_bt(ctx, ${encoding.fixed_g}, ${size}, ${rm}, ${i});`]);
+    }
+    if(op === 0x0FB1 && size !== 16)
+    {
+        return modrm_form(size, rm => [`jit64::gen_cmpxchg(ctx, ${size}, ${rm}, r);`]);
+    }
+    if(op === 0x0FC1 && size !== 16)
+    {
+        return modrm_form(size, rm => [`jit64::gen_xadd(ctx, ${size}, ${rm}, r);`]);
+    }
+    if(op === 0x9C && size === 64)
+    {
+        return ["jit64::gen_pushf64(ctx);"];
     }
     if(op >= 0x0FC8 && op <= 0x0FCF)
     {
