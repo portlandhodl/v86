@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use crate::fxhash::HashMap;
 use std::mem::transmute;
 
 use crate::leb::{
@@ -146,7 +146,7 @@ impl WasmBuilder {
 
             initial_static_size: 0,
 
-            label_to_depth: HashMap::new(),
+            label_to_depth: HashMap::default(),
             label_stack: Vec::new(),
             next_label: Label::ZERO,
 

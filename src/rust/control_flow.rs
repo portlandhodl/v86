@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use crate::fxhash::HashSet;
 use std::collections::{BTreeMap, BTreeSet};
 use std::iter;
 
@@ -125,7 +125,7 @@ impl WasmStructure {
             }
         }
 
-        let mut result = HashSet::new();
+        let mut result = HashSet::default();
         handle(self, edges, &mut result);
         result
     }
@@ -202,7 +202,7 @@ fn scc(edges: &Graph, rev_edges: &Graph) -> Vec<Vec<u32>> {
     }
 
     let mut l = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited = HashSet::default();
     for &node in edges.keys() {
         visit(node, edges, rev_edges, &mut visited, &mut l);
     }
@@ -225,7 +225,7 @@ fn scc(edges: &Graph, rev_edges: &Graph) -> Vec<Vec<u32>> {
             }
         }
     }
-    let mut assigned = HashSet::new();
+    let mut assigned = HashSet::default();
     let mut assignment = Vec::new();
     for &node in l.iter().rev() {
         let mut group = Vec::new();
@@ -407,7 +407,7 @@ pub fn blockify(blocks: &mut Vec<WasmStructure>, edges: &Graph) {
         }
 
         {
-            let replacement = HashSet::new();
+            let replacement = HashSet::default();
             let children: Vec<HashSet<u32>> = cached_branches
                 .splice(source..i, iter::once(replacement))
                 .collect();

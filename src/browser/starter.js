@@ -101,7 +101,7 @@ export function V86(options)
         },
 
         "codegen_finalize": (wasm_table_index, start, state_flags, ptr, len) => {
-            cpu.codegen_finalize(wasm_table_index, start, state_flags, ptr, len);
+            return cpu.codegen_finalize(wasm_table_index, start, state_flags, ptr, len);
         },
         "jit_clear_func": (wasm_table_index) => cpu.jit_clear_func(wasm_table_index),
         "jit_clear_all_funcs": () => cpu.jit_clear_all_funcs(),

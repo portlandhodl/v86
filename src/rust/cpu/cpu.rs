@@ -23,7 +23,7 @@ use crate::profiler::stat;
 use crate::softfloat;
 use crate::state_flags::CachedStateFlags;
 
-use std::collections::HashSet;
+use crate::fxhash::HashSet;
 use std::ptr;
 
 mod wasm {
@@ -231,6 +231,7 @@ pub const IA32_BIOS_SIGN_ID: i32 = 0x8B;
 pub const IA32_PMC0: i32 = 0xC1;
 pub const IA32_PMC1: i32 = 0xC2;
 pub const MSR_PLATFORM_INFO: i32 = 0xCE;
+pub const IA32_ARCH_CAPABILITIES: i32 = 0x10A;
 pub const MSR_TSX_FORCE_ABORT: i32 = 0x10F;
 pub const IA32_TSX_CTRL: i32 = 0x122;
 pub const IA32_MCU_OPT_CTRL: i32 = 0x123;
@@ -256,6 +257,24 @@ pub const IA32_STAR: i32 = 0xC0000081u32 as i32;
 pub const IA32_LSTAR: i32 = 0xC0000082u32 as i32;
 pub const IA32_CSTAR: i32 = 0xC0000083u32 as i32;
 pub const IA32_SFMASK: i32 = 0xC0000084u32 as i32;
+
+// IA32_ARCH_CAPABILITIES: the emulated cpu doesn't execute speculatively, so it
+// reports itself as unaffected by the speculative-execution vulnerabilities. Without
+// this Linux enables mitigations that are very expensive here, most of all page table
+// isolation (two cr3 writes, i.e. tlb flushes, per syscall/interrupt from user mode),
+// but also buffer clearing (verw) on kernel exit and the bhb clearing loop on entry.
+pub const ARCH_CAPABILITIES: u64 = 1 << 0 // RDCL_NO (meltdown)
+    | 1 << 4 // SSB_NO
+    | 1 << 5 // MDS_NO
+    | 1 << 6 // PSCHANGE_MC_NO (itlb multihit)
+    | 1 << 8 // TAA_NO
+    | 1 << 13 // SBDR_SSDP_NO
+    | 1 << 14 // FBSDP_NO
+    | 1 << 15 // PSDP_NO
+    | 1 << 20 // BHI_NO
+    | 1 << 24 // PBRSB_NO
+    | 1 << 26 // GDS_NO
+    | 1 << 27; // RFDS_NO
 
 pub const EFER_SCE: u64 = 1 << 0;
 pub const EFER_LME: u64 = 1 << 8;
