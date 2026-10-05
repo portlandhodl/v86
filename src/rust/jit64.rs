@@ -855,14 +855,30 @@ pub fn gen_chain_to_next_module(ctx: &mut JitContext, reenter_label: Label) {
         ctx.builder.block_end();
         let code = ctx.builder.tee_new_local();
 
-        // code != 0 && code.state_flags == *state_flags
+        // code != 0 && code.state_flags == *state_flags && code.state_flags.is_64
+        //
+        // The is_64 test is not redundant with the equality check: the cpu
+        // mode may have changed to compat mode *inside* this module (e.g. an
+        // iret to a 32-bit user segment), in which case the target entry with
+        // matching (compat) state flags holds a 32-bit module — the tail call
+        // below uses the jit64 signature and would trap with a signature
+        // mismatch. Without a chain the main loop dispatches it correctly.
         ctx.builder.if_void();
         {
             ctx.builder.get_local(&code);
             ctx.builder.load_u8(offset_of!(Code, state_flags) as u32);
+            let code_flags = ctx.builder.tee_new_local();
             ctx.builder
                 .load_fixed_u8(global_pointers::state_flags as u32);
             ctx.builder.eq_i32();
+            // code must be a jit64 module (compat mode compiles to 32-bit modules)
+            ctx.builder.get_local(&code_flags);
+            ctx.builder.const_i32(1 << 4); // CachedStateFlags is_64 bit
+            ctx.builder.and_i32();
+            ctx.builder.eqz_i32();
+            ctx.builder.eqz_i32();
+            ctx.builder.and_i32();
+            ctx.builder.free_local(code_flags);
             ctx.builder.if_void();
             {
                 // state = code.state_table[eip & 0xFFF]

@@ -396,6 +396,10 @@ RTC.prototype.cmos_port_write = function(data_byte)
             break;
 
         default:
+            // All 128 CMOS bytes are battery-backed RAM on the MC146818 and
+            // are writable; the shutdown-status byte (0x0f) is what the BIOS
+            // warm-boot path (resume via 0040:0067) reads
+            this.cmos_write(this.cmos_index, data_byte);
             dbg_log("cmos write index " + h(this.cmos_index) + ": " + h(data_byte), LOG_RTC);
     }
 

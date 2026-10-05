@@ -2292,6 +2292,12 @@ pub fn jit_increase_hotness_and_maybe_compile(
         return;
     }
 
+    // breakpoints/single-stepping are only checked by the interpreter;
+    // don't compile code while they're armed
+    if unsafe { cpu::debug_mode_active() } {
+        return;
+    }
+
     let mut ctx = get_jit_state();
     let is_compiling = ctx.compiling.is_some();
     let page = Page::page_of(phys_address);
@@ -2347,15 +2353,16 @@ fn free_wasm_table_index(ctx: &mut JitState, wasm_table_index: WasmTableIndex) {
 
         for i in 0..unsafe { cpu::valid_tlb_entries_count } {
             let page = unsafe { cpu::valid_tlb_entries[i as usize] };
-            if page >= 0x10_0000 {
-                continue;
-            }
             unsafe {
-                match cpu::tlb_code[page as usize] {
+                // tlb_code_slot covers the low (flat) table and the high
+                // (hashed) table — kernel pages live above 4 GiB
+                match cpu::tlb_code_slot(page) {
                     None => {},
-                    Some(c) => {
-                        let c = c.as_ref();
-                        dbg_assert!(c.wasm_table_index != wasm_table_index);
+                    Some(slot) => match slot {
+                        None => {},
+                        Some(c) => {
+                            dbg_assert!(c.as_ref().wasm_table_index != wasm_table_index);
+                        },
                     },
                 }
             }

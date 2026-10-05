@@ -11,9 +11,9 @@
 
 use crate::cpu::arith::{cmp16, cmp32, cmp64, cmp8};
 use crate::cpu::cpu::{
-    get_seg64, io_port_read16, io_port_read32, io_port_read8, io_port_write16, io_port_write32,
-    io_port_write8, read_reg16, read_reg32, read_reg64, safe_read16, safe_read32s, safe_read64s,
-    safe_read8, safe_write16, safe_write32, safe_write64, safe_write8, set_reg_asize,
+    debug_data_wp_armed, get_seg64, io_port_read16, io_port_read32, io_port_read8, io_port_write16,
+    io_port_write32, io_port_write8, read_reg16, read_reg32, read_reg64, safe_read16, safe_read32s,
+    safe_read64s, safe_read8, safe_write16, safe_write32, safe_write64, safe_write8, set_reg_asize,
     test_privileges_for_io, translate_address_read,
     translate_address_write_and_can_skip_dirty, writable_or_pagefault, write_reg16, write_reg32,
     write_reg64, write_reg8, AL, AX, DX, EAX, ECX, EDI, ES, ESI, FLAG_DIRECTION,
@@ -188,6 +188,7 @@ unsafe fn string_instruction(
     // unaligned movs is properly handled in the fast path
     let mut rep_fast = (instruction == Instruction::Movs || is_aligned)
         && !is_asize_16 // 16-bit address wraparound
+        && !debug_data_wp_armed // watchpoints are checked per element below
         && match rep {
             Rep::NZ | Rep::Z => true,
             Rep::None => false,

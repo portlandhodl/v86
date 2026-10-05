@@ -1070,6 +1070,13 @@ CPU.prototype.reboot_internal = function()
         this.devices.ps2.reset();
     }
 
+    // Reload the BIOS image: the ROM area is writable shadow RAM and guests
+    // (and SeaBIOS itself) modify it, so a reset restores the pristine image.
+    // Note: this wipes SeaBIOS's runtime state (HaveRunPost), so the BIOS
+    // warm-boot path (CMOS shutdown status 0x0a -> resume via 0040:0067,
+    // exercised by kvm-unit-tests' init.flat) is not taken after a reset
+    // triggered through this path — the machine does a full POST instead.
+    // The APIC INIT path (request_cpu_init) is CPU-local and does preserve it.
     this.load_bios();
 };
 
@@ -1194,8 +1201,34 @@ CPU.prototype.init = function(settings, device_bus)
 
     io.register_write(0x92, this, function(out_byte)
     {
+        // port 92 bit 0: fast reset on a 0->1 transition (bit 1 is A20, not
+        // modelled); the bit itself stays set across the reset, letting the
+        // BIOS distinguish this soft reset from a hard reset
+        const reset = (out_byte & 1) !== 0 && (a20_byte & 1) === 0;
         a20_byte = out_byte;
+        if(reset)
+        {
+            dbg_log("CPU reboot via port 92", LOG_CPU);
+            this.reboot_internal();
+        }
     });
+
+    // QEMU-compatible test device used by kvm-unit-tests' ioapic test:
+    // a byte write to port 0x2000+i drives irq line i to the given level
+    for(let irq_line = 0; irq_line < 24; irq_line++)
+    {
+        io.register_write(0x2000 + irq_line, this, function(out_byte)
+        {
+            if(out_byte & 1)
+            {
+                this.device_raise_irq(irq_line);
+            }
+            else
+            {
+                this.device_lower_irq(irq_line);
+            }
+        });
+    }
 
     io.register_read(0x511, this, function()
     {

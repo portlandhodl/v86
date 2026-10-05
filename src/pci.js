@@ -121,13 +121,6 @@ export function PCI(cpu)
         },
         function(out_byte)
         {
-            if((this.pci_addr[1] & 0x06) === 0x02 && (out_byte & 0x06) === 0x06)
-            {
-                dbg_log("CPU reboot via PCI");
-                cpu.reboot_internal();
-                return;
-            }
-
             this.pci_addr[1] = out_byte;
         },
         function(out_byte)
@@ -140,6 +133,21 @@ export function PCI(cpu)
             this.pci_query();
         }
     );
+
+    // 0xcf9 reset control register (a single-byte port on real chipsets;
+    // PCI config-address dword writes to 0xcf8 must not trigger it). Linux
+    // writes 0x02 then 0x06, firmware and kvm-unit-tests pulse bit 2
+    // directly: reset on a rising edge of bit 2.
+    cpu.io.register_write(0xCF9, this, function(out_byte)
+    {
+        const old_byte = this.pci_addr[1];
+        this.pci_addr[1] = out_byte;
+        if((old_byte & 0x04) === 0 && (out_byte & 0x04) !== 0)
+        {
+            dbg_log("CPU reboot via 0xcf9");
+            cpu.reboot_internal();
+        }
+    });
 
 
     // Some experimental PCI devices taken from my PC:

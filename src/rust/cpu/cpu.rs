@@ -845,7 +845,7 @@ pub unsafe fn iret64() {
 
         // rflags are updated with the permissions of the old cpl (at cpl 3,
         // update_eflags would keep if and iopl, like popf), as in iret32
-        update_eflags(new_flags);
+        update_eflags_iret(new_flags);
 
         // switch_seg(SS) checks the descriptor against cpl; the checks in
         // switch_seg must see the *target* cpl (same order as iret32)
@@ -866,7 +866,7 @@ pub unsafe fn iret64() {
         let new_rsp = return_on_pagefault!(safe_read64s(rsp + 24));
         write_reg64(ESP, new_rsp);
 
-        update_eflags(new_flags);
+        update_eflags_iret(new_flags);
     }
 
     // no exceptions below
@@ -922,15 +922,15 @@ pub unsafe fn iret(is_16: bool) {
         *instruction_pointer = (get_seg_cs() as u32).wrapping_add(new_eip as u32) as u64;
 
         if is_16 {
-            update_eflags(new_flags | *flags & !0xFFFF);
+            update_eflags_iret(new_flags | *flags & !0xFFFF);
             adjust_stack_reg(3 * 2);
         }
         else {
             if !*protected_mode {
-                update_eflags((new_flags & 0x257FD5) | (*flags & 0x1A0000));
+                update_eflags_iret((new_flags & 0x257FD5) | (*flags & 0x1A0000));
             }
             else {
-                update_eflags(new_flags);
+                update_eflags_iret(new_flags);
             }
             adjust_stack_reg(3 * 4);
         }
@@ -968,7 +968,7 @@ pub unsafe fn iret(is_16: bool) {
 
             // no exceptions below
 
-            update_eflags(new_flags);
+            update_eflags_iret(new_flags);
             *flags |= FLAG_VM;
 
             switch_cs_real_mode(new_cs);
@@ -1103,10 +1103,10 @@ pub unsafe fn iret(is_16: bool) {
         // no exceptions below
 
         if is_16 {
-            update_eflags(new_flags | *flags & !0xFFFF);
+            update_eflags_iret(new_flags | *flags & !0xFFFF);
         }
         else {
-            update_eflags(new_flags);
+            update_eflags_iret(new_flags);
         }
 
         *cpl = cs_selector.rpl();
@@ -1146,11 +1146,11 @@ pub unsafe fn iret(is_16: bool) {
         // no exceptions below
         if is_16 {
             adjust_stack_reg(3 * 2);
-            update_eflags(new_flags | *flags & !0xFFFF);
+            update_eflags_iret(new_flags | *flags & !0xFFFF);
         }
         else {
             adjust_stack_reg(3 * 4);
-            update_eflags(new_flags);
+            update_eflags_iret(new_flags);
         }
 
         // update vip and vif, which are not changed by update_eflags
@@ -1180,6 +1180,17 @@ pub unsafe fn iret(is_16: bool) {
     handle_irqs();
 }
 
+/// Fault-class exceptions save RFLAGS with RF set in the pushed image, so
+/// that an iret back to the faulting instruction doesn't immediately
+/// re-trigger an instruction breakpoint (Intel SDM Vol. 3A, Table 6-1).
+/// #DB is excluded: it is fault-class only for instruction breakpoints.
+fn exception_is_fault(vector: i32) -> bool {
+    matches!(
+        vector,
+        0 | 5 | 6 | 7 | 8 | 10 | 11 | 12 | 13 | 14 | 16 | 17 | 19 | 20 | 21
+    )
+}
+
 pub unsafe fn call_interrupt_vector(
     interrupt_nr: i32,
     is_software_int: bool,
@@ -1187,9 +1198,14 @@ pub unsafe fn call_interrupt_vector(
 ) {
     // compiled 64-bit code that called into the interpreter must not continue
     crate::jit64::JIT64_EXIT = true;
+    // a faulting/trapping instruction's watchpoint hits are discarded; its
+    // re-execution (or the next instruction) records them again
+    db_pending_data = 0;
     if *protected_mode {
-        if *is_64 {
-            // long mode: 16-byte gates and a 64-bit interrupt frame
+        if *efer & EFER_LMA != 0 {
+            // IA-32e mode (incl. compatibility mode): interrupt/exception
+            // delivery uses 64-bit IDT gates and the 64-bit frame regardless
+            // of the interrupted code segment's L bit
             let was_delivering = in_interrupt_delivery;
             in_interrupt_delivery = interrupt_nr;
             call_interrupt_vector64(interrupt_nr, is_software_int, error_code);
@@ -1304,7 +1320,12 @@ pub unsafe fn call_interrupt_vector(
             return;
         }
 
-        let old_flags = get_eflags();
+        let mut old_flags = get_eflags();
+        if exception_is_fault(interrupt_nr)
+            || std::mem::replace(&mut force_rf_in_exception_image, false)
+        {
+            old_flags |= FLAG_RF;
+        }
 
         if !cs_segment_descriptor.is_dc() && cs_segment_descriptor.dpl() < *cpl {
             // inter privilege level interrupt
@@ -1520,14 +1541,15 @@ pub unsafe fn call_interrupt_vector(
     }
 }
 
-/// Interrupt/trap delivery in long mode (64-bit submode): 16-byte IDT gates,
-/// a 64-bit interrupt frame and IST stack switches.
+/// Interrupt/trap delivery in IA-32e mode (64-bit *and* compatibility
+/// submode): 16-byte IDT gates, a 64-bit interrupt frame and IST stack
+/// switches. The interrupted code may be running in compat mode (is_64=0).
 pub unsafe fn call_interrupt_vector64(
     interrupt_nr: i32,
     is_software_int: bool,
     error_code: Option<i32>,
 ) {
-    dbg_assert!(*protected_mode && *is_64);
+    dbg_assert!(*protected_mode && *efer & EFER_LMA != 0);
 
     if (interrupt_nr << 4 | 15) as u32 > *idtr_size as u32 {
         dbg_log!("interrupt_nr={:x} idtr_size={:x}", interrupt_nr, *idtr_size);
@@ -1620,7 +1642,12 @@ pub unsafe fn call_interrupt_vector64(
         return;
     }
 
-    let old_flags = get_eflags();
+    let mut old_flags = get_eflags();
+    if exception_is_fault(interrupt_nr)
+        || std::mem::replace(&mut force_rf_in_exception_image, false)
+    {
+        old_flags |= FLAG_RF;
+    }
     let old_rip = *instruction_pointer;
     let old_cs = *sreg.offset(CS as isize) as u64;
     let old_ss = *sreg.offset(SS as isize) as u64;
@@ -3248,6 +3275,124 @@ pub unsafe fn exit_jit() {
 pub static mut in_interrupt_delivery: i32 = -1;
 pub static mut delivering_double_fault: bool = false;
 
+/// An APIC INIT IPI requested a CPU-local reset; carried out at the next
+/// instruction boundary (cycle_internal), like hardware delivering INIT
+/// between instructions
+pub static mut cpu_init_pending: bool = false;
+
+#[no_mangle]
+pub unsafe fn request_cpu_init() { cpu_init_pending = true; }
+
+
+/// Debug facilities (DR0-3 breakpoints via DR7, TF single-stepping, INT1).
+/// When any of these are armed the CPU runs interpreter-only: JIT dispatch
+/// and compilation are gated off so the per-instruction checks in
+/// jit_run_interpreted see everything. Recomputed on every DR7 write.
+pub static mut debug_exec_bp_armed: bool = false;
+pub static mut debug_data_wp_armed: bool = false;
+/// Data-watchpoint hits (B0-B3 bits) accumulated by the current instruction;
+/// delivered as a trap-class #DB after it completes. Cleared on any other
+/// exception delivery (a faulting instruction is re-executed and re-hits).
+pub static mut db_pending_data: i32 = 0;
+/// Requests RF=1 in the next saved exception image (fault-class #DB from an
+/// instruction breakpoint); consumed by call_interrupt_vector{,64}.
+pub static mut force_rf_in_exception_image: bool = false;
+
+pub const DR6_BS: i32 = 1 << 14;
+/// DR6 bits that read as 1 (reserved)
+pub const DR6_RESERVED_READ: i32 = 0xFFFF0FF0u32 as i32;
+
+#[inline(always)]
+pub unsafe fn debug_mode_active() -> bool {
+    debug_exec_bp_armed || debug_data_wp_armed || *flags & (FLAG_TRAP | FLAG_RF) != 0
+}
+
+/// Deliver #DB. `matched` holds the B0-B3 bits of the breakpoints that fired.
+/// Faults (instruction breakpoints) restart at the faulting instruction and
+/// save an image with RF=1; traps (TF, data watchpoints, INT1) push the
+/// address of the next instruction.
+#[inline(never)]
+#[cold]
+unsafe fn deliver_db(matched: i32, single_step: bool, fault: bool) {
+    dbg_log!(
+        "#db matched={:x} ss={} fault={} ip={:x}",
+        matched,
+        single_step,
+        fault,
+        *instruction_pointer
+    );
+    // B0-B3 report only the current event; BS is sticky-or'ed (Intel SDM
+    // 17.2.4: the processor updates B0-B3 and BS on every debug exception)
+    let mut dr6 = *dreg.offset(6) & DR6_BS;
+    if single_step {
+        dr6 |= DR6_BS;
+    }
+    *dreg.offset(6) = dr6 | matched;
+    db_pending_data = 0;
+    if fault {
+        force_rf_in_exception_image = true;
+    }
+    call_interrupt_vector(CPU_EXCEPTION_DB, false, None);
+}
+
+/// INT1 (icebp, opcode 0xF1): #DB trap with no condition bits; not a
+/// software interrupt (no DPL check)
+#[no_mangle]
+pub unsafe fn int1() { deliver_db(0, false, false); }
+
+
+/// Recompute the armed flags after a DR7 write and make sure no compiled
+/// code keeps running while breakpoints are armed.
+pub unsafe fn dr7_update_armed() {
+    let dr7 = *dreg.offset(7);
+    let mut exec = false;
+    let mut data = false;
+    for n in 0..4 {
+        if dr7 >> (n * 2) & 3 != 0 {
+            // Ln or Gn set
+            if dr7 >> (16 + n * 4) & 3 == 0 {
+                exec = true;
+            }
+            else {
+                data = true;
+            }
+        }
+    }
+    debug_exec_bp_armed = exec;
+    debug_data_wp_armed = data;
+    if exec || data {
+        // leave compiled 64-bit code (a no-op outside jit64); 0F 23 is a
+        // block boundary, so the 32-bit JIT returns to the gated dispatcher
+        // right after this instruction
+        crate::jit64::JIT64_EXIT = true;
+    }
+}
+
+/// Data-watchpoint check, called from the safe_read*/safe_write* family.
+/// Only records the hit; the trap is delivered after the instruction.
+#[inline(always)]
+pub unsafe fn dbg_check_data_wp(addr: u64, size: u64, is_write: bool) {
+    let dr7 = *dreg.offset(7);
+    for n in 0..4 {
+        if dr7 >> (n * 2) & 3 == 0 {
+            continue; // breakpoint n not enabled
+        }
+        let rw = dr7 >> (16 + n * 4) & 3;
+        if rw == 0 || rw == 2 {
+            continue; // execution breakpoint, or i/o breakpoint (CR4.DE, not modelled)
+        }
+        if !is_write && rw == 1 {
+            continue; // write-only watchpoint
+        }
+        let len = 1u64 << (dr7 >> (18 + n * 4) & 3);
+        let base = *dreg.offset(n as isize) as u32 as u64;
+        if addr < base.wrapping_add(len) && base < addr.wrapping_add(size) {
+            // [addr, addr+size) overlaps [base, base+len)
+            db_pending_data |= 1 << n;
+        }
+    }
+}
+
 /// Pagefault handling with the jit works as follows:
 /// - If the slow path is taken, it calls safe_{read,write}*_jit
 /// - safe_{read,write}*_jit call translate_address_{read,write}_jit
@@ -3336,6 +3481,13 @@ pub fn tlb_set_has_code(physical_page: Page, has_code: bool) {
         let page = unsafe { valid_tlb_entries[i as usize] } as u64;
         let entry = unsafe { tlb_pick_entry(page << 12) };
         if 0 != entry {
+            if entry as i32 & TLB_IN_MAPPED_RANGE != 0 {
+                // The host base of mmio-backed pages (e.g. the BIOS alias at
+                // 0xFFF00000) can exceed 4 GiB and doesn't survive the i32
+                // entry encoding; they never have code (see do_page_walk), so
+                // there is nothing to mark
+                continue;
+            }
             let tlb_physical_page = Page::page_of(phys_of_tlb_entry(entry, page << 12));
             if physical_page == tlb_physical_page {
                 unsafe {
@@ -3359,6 +3511,10 @@ pub fn tlb_set_has_code_multiple(physical_pages: &HashSet<Page>, has_code: bool)
         let page = unsafe { valid_tlb_entries[i as usize] } as u64;
         let entry = unsafe { tlb_pick_entry(page << 12) };
         if 0 != entry {
+            if entry as i32 & TLB_IN_MAPPED_RANGE != 0 {
+                // see tlb_set_has_code
+                continue;
+            }
             let tlb_physical_page = Page::page_of(phys_of_tlb_entry(entry, page << 12));
             if physical_pages.contains(&tlb_physical_page) {
                 unsafe {
@@ -4077,11 +4233,18 @@ pub unsafe fn run_instruction0f_32(opcode: i32) {
 
 pub unsafe fn cycle_internal() {
     profiler::stat_increment(stat::CYCLE_INTERNAL);
+    if cpu_init_pending {
+        // APIC INIT: CPU-local reset (devices and RAM are not touched)
+        cpu_init_pending = false;
+        reset_cpu();
+        return;
+    }
     let mut jit_entry = None;
     let initial_eip = *instruction_pointer;
     let initial_state_flags = *state_flags;
 
-    {
+    // Breakpoints and single-stepping are only checked by the interpreter
+    if !debug_mode_active() {
         match tlb_code_get(canonicalize_address(initial_eip) >> 12) {
             None => {},
             Some(c) => {
@@ -4196,7 +4359,7 @@ pub unsafe fn cycle_internal() {
         *previous_ip = initial_eip;
         let phys_addr = return_on_pagefault!(get_phys_eip());
 
-        {
+        if !debug_mode_active() {
             match tlb_code_get(canonicalize_address(initial_eip) >> 12) {
                 None => {},
                 Some(c) => {
@@ -4300,7 +4463,63 @@ unsafe fn jit_run_interpreted(mut phys_addr: u64) {
 
         i += 1;
         let start_eip = *instruction_pointer;
+
+        let debug_mode = debug_mode_active();
+        if debug_mode {
+            if *flags & FLAG_RF != 0 {
+                // RF suppresses instruction-address breakpoints for exactly
+                // one instruction; it is cleared once that instruction ran
+                *flags &= !FLAG_RF;
+            }
+            else if debug_exec_bp_armed {
+                let linear_ip = if *is_64 {
+                    start_eip
+                }
+                else {
+                    (get_seg_cs() as u32 as u64).wrapping_add(start_eip) & 0xFFFF_FFFF
+                };
+                let dr7 = *dreg.offset(7);
+                let mut n = 0;
+                let mut matched = 0;
+                while n < 4 {
+                    if dr7 >> (n * 2) & 3 != 0
+                        && dr7 >> (16 + n * 4) & 3 == 0
+                        && *dreg.offset(n) as u32 as u64 == linear_ip
+                    {
+                        matched |= 1 << n;
+                    }
+                    n += 1;
+                }
+                if matched != 0 {
+                    // instruction-address breakpoint: fault-class #DB, the
+                    // saved rip points at the faulting instruction
+                    *previous_ip = start_eip;
+                    *instruction_pointer = start_eip;
+                    deliver_db(matched, false, true);
+                    break;
+                }
+            }
+        }
+
         let opcode = memory::read8_no_mmap_check(phys_addr);
+        // TF is sampled *before* the instruction runs: an instruction that
+        // sets TF (popf/iret) doesn't trap after itself, and one that clears
+        // TF still traps (Intel SDM 17.3.1.4)
+        let tf_before_instruction = *flags & FLAG_TRAP != 0;
+        if tf_before_instruction
+            && opcode == 0x0F
+            && phys_addr & 0xFFF != 0xFFF
+            && matches!(memory::read8_no_mmap_check(phys_addr + 1), 0x05 | 0x07)
+        {
+            // syscall/sysret are single-stepped *preemptively*: the #DB is
+            // delivered instead of executing the instruction, in the
+            // pre-syscall context (the saved rip points past it). This is the
+            // Intel behaviour the kvm-unit-tests syscall test checks (the
+            // #DB frame must show the user CS, not the kernel's).
+            *instruction_pointer += 2;
+            deliver_db(0, true, false);
+            break;
+        }
         *instruction_pointer += 1;
         dbg_assert!(*prefixes == 0);
         if *is_64 && opcode & 0xF0 == 0x40 {
@@ -4323,6 +4542,20 @@ unsafe fn jit_run_interpreted(mut phys_addr: u64) {
             run_instruction(opcode | (*is_32 as i32) << 8);
         }
         dbg_assert!(*prefixes == 0);
+
+        if debug_mode {
+            // trap-class debug events are delivered after the instruction:
+            // data-watchpoint hits recorded by the safe_read/write family,
+            // and single-stepping when TF was set at instruction start
+            // (syscall/sysret instead key on TF at the *end* of the
+            // instruction, per Intel behaviour tested by kvm-unit-tests)
+            let tf_trap = tf_before_instruction;
+            let pending = db_pending_data;
+            if pending != 0 || tf_trap {
+                deliver_db(pending, tf_trap, false);
+                break;
+            }
+        }
 
         if jit_block_boundary
             || (start_eip ^ *instruction_pointer) & !0xFFF != 0
@@ -4431,7 +4664,11 @@ pub unsafe fn main_loop() -> f64 {
     let start = js::microtick();
 
     if *in_hlt {
-        if *flags & FLAG_INTERRUPT != 0 {
+        if cpu_init_pending {
+            // INIT interrupts hlt like any other reset event
+            *in_hlt = false;
+        }
+        else if *flags & FLAG_INTERRUPT != 0 {
             let t = js::run_hardware_timers(*acpi_enabled, start);
             handle_irqs();
             if *in_hlt {
@@ -4591,10 +4828,16 @@ pub unsafe fn virt_boundary_write32(low: u64, high: u64, value: i32) {
 }
 
 pub unsafe fn safe_read8(addr: u64) -> OrPageFault<i32> {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 1, false);
+    }
     Ok(memory::read8(translate_address_read(addr)?))
 }
 
 pub unsafe fn safe_read16(addr: u64) -> OrPageFault<i32> {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 2, false);
+    }
     if addr & 0xFFF == 0xFFF {
         Ok(safe_read8(addr)? | safe_read8(addr + 1)? << 8)
     }
@@ -4604,6 +4847,9 @@ pub unsafe fn safe_read16(addr: u64) -> OrPageFault<i32> {
 }
 
 pub unsafe fn safe_read32s(addr: u64) -> OrPageFault<i32> {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 4, false);
+    }
     if addr & 0xFFF >= 0xFFD {
         Ok(safe_read16(addr)? | safe_read16(addr + 2)? << 16)
     }
@@ -4617,6 +4863,9 @@ pub unsafe fn safe_read_f32(addr: u64) -> OrPageFault<f32> {
 }
 
 pub unsafe fn safe_read64s(addr: u64) -> OrPageFault<u64> {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 8, false);
+    }
     if addr & 0xFFF > 0x1000 - 8 {
         Ok(safe_read32s(addr)? as u32 as u64 | (safe_read32s(addr + 4)? as u32 as u64) << 32)
     }
@@ -4626,6 +4875,9 @@ pub unsafe fn safe_read64s(addr: u64) -> OrPageFault<u64> {
 }
 
 pub unsafe fn safe_read128s(addr: u64) -> OrPageFault<reg128> {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 16, false);
+    }
     if addr & 0xFFF > 0x1000 - 16 {
         Ok(reg128 {
             u64: [safe_read64s(addr)?, safe_read64s(addr + 8)?],
@@ -5138,6 +5390,9 @@ pub unsafe fn writable_or_pagefault_jit(
 }
 
 pub unsafe fn safe_write8(addr: u64, value: i32) -> OrPageFault<()> {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 1, true);
+    }
     let (phys_addr, can_skip_dirty_page) = translate_address_write_and_can_skip_dirty(addr)?;
     if memory::in_mapped_range(phys_addr) {
         memory::mmap_write8(phys_addr, value);
@@ -5155,6 +5410,9 @@ pub unsafe fn safe_write8(addr: u64, value: i32) -> OrPageFault<()> {
 }
 
 pub unsafe fn safe_write16(addr: u64, value: i32) -> OrPageFault<()> {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 2, true);
+    }
     let (phys_addr, can_skip_dirty_page) = translate_address_write_and_can_skip_dirty(addr)?;
     dbg_assert!(value >= 0 && value < 0x10000);
     if addr & 0xFFF == 0xFFF {
@@ -5176,6 +5434,9 @@ pub unsafe fn safe_write16(addr: u64, value: i32) -> OrPageFault<()> {
 }
 
 pub unsafe fn safe_write32(addr: u64, value: i32) -> OrPageFault<()> {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 4, true);
+    }
     let (phys_addr, can_skip_dirty_page) = translate_address_write_and_can_skip_dirty(addr)?;
     if addr & 0xFFF > 0x1000 - 4 {
         virt_boundary_write32(
@@ -5200,6 +5461,9 @@ pub unsafe fn safe_write32(addr: u64, value: i32) -> OrPageFault<()> {
 }
 
 pub unsafe fn safe_write64(addr: u64, value: u64) -> OrPageFault<()> {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 8, true);
+    }
     if addr & 0xFFF > 0x1000 - 8 {
         writable_or_pagefault(addr, 8)?;
         safe_write32(addr, value as i32).unwrap();
@@ -5224,6 +5488,9 @@ pub unsafe fn safe_write64(addr: u64, value: u64) -> OrPageFault<()> {
 }
 
 pub unsafe fn safe_write128(addr: u64, value: reg128) -> OrPageFault<()> {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 16, true);
+    }
     if addr & 0xFFF > 0x1000 - 16 {
         writable_or_pagefault(addr, 16)?;
         safe_write64(addr, value.u64[0]).unwrap();
@@ -5249,6 +5516,9 @@ pub unsafe fn safe_write128(addr: u64, value: reg128) -> OrPageFault<()> {
 
 #[inline(always)]
 pub unsafe fn safe_read_write8(addr: u64, instruction: &dyn Fn(i32) -> i32) {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 1, true);
+    }
     let (phys_addr, can_skip_dirty_page) =
         return_on_pagefault!(translate_address_write_and_can_skip_dirty(addr));
     let x = memory::read8(phys_addr);
@@ -5270,6 +5540,9 @@ pub unsafe fn safe_read_write8(addr: u64, instruction: &dyn Fn(i32) -> i32) {
 
 #[inline(always)]
 pub unsafe fn safe_read_write16(addr: u64, instruction: &dyn Fn(i32) -> i32) {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 2, true);
+    }
     let (phys_addr, can_skip_dirty_page) =
         return_on_pagefault!(translate_address_write_and_can_skip_dirty(addr));
     if phys_addr & 0xFFF == 0xFFF {
@@ -5298,6 +5571,9 @@ pub unsafe fn safe_read_write16(addr: u64, instruction: &dyn Fn(i32) -> i32) {
 
 #[inline(always)]
 pub unsafe fn safe_read_write32(addr: u64, instruction: &dyn Fn(i32) -> i32) {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 4, true);
+    }
     let (phys_addr, can_skip_dirty_page) =
         return_on_pagefault!(translate_address_write_and_can_skip_dirty(addr));
     if phys_addr & 0xFFF >= 0xFFD {
@@ -5326,6 +5602,9 @@ pub unsafe fn safe_read_write32(addr: u64, instruction: &dyn Fn(i32) -> i32) {
 
 #[inline(always)]
 pub unsafe fn safe_read_write64(addr: u64, instruction: &dyn Fn(u64) -> u64) {
+    if debug_data_wp_armed {
+        dbg_check_data_wp(addr, 8, true);
+    }
     let (phys_addr, can_skip_dirty_page) =
         return_on_pagefault!(translate_address_write_and_can_skip_dirty(addr));
     if phys_addr & 0xFFF > 0x1000 - 8 {
@@ -5811,9 +6090,19 @@ pub unsafe fn update_eflags(new_flags: i32) {
     *flags_changed = 0;
 
     if *flags & FLAG_TRAP != 0 {
-        dbg_log!("Not supported: trap flag");
+        // Single-stepping armed: the interpreter loop in jit_run_interpreted
+        // delivers a #DB trap after every instruction. Leave compiled 64-bit
+        // code (no-op outside jit64); the 32-bit JIT's popf checks TF inline
+        // and iret is a block boundary, and JIT dispatch is gated on
+        // debug_mode_active, so no compiled code runs while TF is set.
+        crate::jit64::JIT64_EXIT = true;
     }
-    *flags &= !FLAG_TRAP;
+}
+
+/// iret (unlike popf and retf) restores RF from the saved flags image.
+pub unsafe fn update_eflags_iret(new_flags: i32) {
+    update_eflags(new_flags);
+    *flags = *flags & !FLAG_RF | new_flags & FLAG_RF;
 }
 
 #[no_mangle]
@@ -5976,18 +6265,16 @@ unsafe fn pic_call_irq(interrupt_nr: u8) {
 #[no_mangle]
 unsafe fn device_raise_irq(i: u8) {
     pic::set_irq(i);
-    if *acpi_enabled {
-        ioapic::set_irq(i);
-    }
+    // the ioapic is present regardless of ACPI (its redirection entries
+    // reset to masked, so a guest that never programs it sees nothing)
+    ioapic::set_irq(i);
     handle_irqs()
 }
 
 #[no_mangle]
 unsafe fn device_lower_irq(i: u8) {
     pic::clear_irq(i);
-    if *acpi_enabled {
-        ioapic::clear_irq(i);
-    }
+    ioapic::clear_irq(i);
     handle_irqs()
 }
 

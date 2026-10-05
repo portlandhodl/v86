@@ -2207,9 +2207,10 @@ pub unsafe fn instr_F0() {
 
 #[no_mangle]
 pub unsafe fn instr_F1() {
-    // INT1
+    // INT1 ("icebp"): #DB delivered as a trap (rip past the instruction), no
+    // DR6 condition bits; used by ICE software
     // https://code.google.com/p/corkami/wiki/x86oddities#IceBP
-    dbg_assert!(false);
+    int1();
 }
 
 pub unsafe fn instr_F2() {

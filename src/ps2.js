@@ -147,8 +147,8 @@ PS2.prototype.reset = function()
     this.next_byte_is_aux = false;
 
     this.command_register = 1 | 4;
-    // TODO: What should be the initial value?
-    this.controller_output_port = 0;
+    // bit 0 (system reset line) starts deasserted: the machine is running
+    this.controller_output_port = 1;
     this.read_output_register = false;
     this.read_command_register = false;
     this.read_controller_output_port = false;
@@ -704,6 +704,12 @@ PS2.prototype.port60_write = function(write_byte)
         this.controller_output_port = write_byte;
         // If we ever want to implement A20 masking, here is where
         // we should turn the masking off if the second bit is on
+        if((write_byte & 1) === 0)
+        {
+            // bit 0 is the system-reset line: pulling it low resets the CPU
+            dbg_log("CPU reboot via PS2 output port", LOG_PS2);
+            this.cpu.reboot_internal();
+        }
     }
     else
     {

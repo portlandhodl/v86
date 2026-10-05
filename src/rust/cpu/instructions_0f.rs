@@ -1,11 +1,16 @@
 #![allow(non_snake_case)]
 
 unsafe fn undefined_instruction() {
-    dbg_assert!(false, "Undefined instructions");
+    // All call sites are opcodes that are reserved (or gated behind features
+    // we don't advertise), so #UD is the spec-correct behaviour and test
+    // suites trigger it deliberately: log, but don't abort the debug build.
+    dbg_log!("#ud (undefined opcode) at {:x}", *previous_ip);
     trigger_ud()
 }
 unsafe fn unimplemented_sse() {
-    dbg_assert!(false, "Unimplemented SSE instruction");
+    // Same: the remaining call sites are all reserved encodings (see the
+    // comments at each site); #UD is correct and must not abort.
+    dbg_log!("#ud (reserved sse encoding) at {:x}", *previous_ip);
     trigger_ud()
 }
 
@@ -28,6 +33,7 @@ use crate::cpu::misc_instr::{
     test_p, test_s, test_z,
 };
 use crate::cpu::misc_instr::{lar, lsl, verr, verw};
+use crate::prefix;
 use crate::cpu::misc_instr::{lss16, lss32};
 use crate::cpu::sse_instr::*;
 pub use crate::cpu::instructions_0f38_0f3a::*;
@@ -565,14 +571,15 @@ pub unsafe fn instr32_0F03_reg(r1: i32, r: i32) {
 pub unsafe fn instr_0F04() { undefined_instruction(); }
 #[no_mangle]
 pub unsafe fn instr_0F05() {
-    // syscall (long mode only, enabled by EFER.SCE)
-    if !*is_64 || *efer & EFER_SCE == 0 {
+    // syscall (IA-32e mode: 64-bit and compatibility mode, when EFER.SCE=1)
+    if *efer & (EFER_LMA | EFER_SCE) != EFER_LMA | EFER_SCE {
         dbg_log!("syscall #ud");
         trigger_ud();
         return;
     }
 
     let cs_selector = (*star >> 32 & 0xFFFC) as u16;
+    let compat = !*is_64; // compatibility mode (CS.L=0 with EFER.LMA=1)
 
     // rcx = rip of the instruction after syscall, r11 = rflags
     let return_rip = *instruction_pointer;
@@ -600,10 +607,12 @@ pub unsafe fn instr_0F05() {
     // rflags are masked with ia32_sfmask; rf and vm are always cleared
     update_eflags((return_rflags & !*sfmask as i32 & !FLAG_RF & !FLAG_VM) | FLAGS_DEFAULT & 2);
 
-    write_reg64(ECX, return_rip);
-    write_reg64(11, return_rflags as u64);
+    // in compatibility mode the return address is a 32-bit eip (zero-extended)
+    write_reg64(ECX, if compat { return_rip & 0xFFFF_FFFF } else { return_rip });
+    write_reg64(11, return_rflags as u32 as u64);
 
-    *instruction_pointer = *lstar;
+    // compatibility mode takes the target from IA32_CSTAR
+    *instruction_pointer = if compat { *cstar } else { *lstar };
 }
 #[no_mangle]
 pub unsafe fn instr_0F06() {
@@ -620,8 +629,8 @@ pub unsafe fn instr_0F06() {
     };
 }
 #[no_mangle]
-pub unsafe fn instr_0F07() {
-    // sysret (64-bit variant)
+pub unsafe fn instr64_0F07() {
+    // sysret, 64-bit operand form (REX.W): return to a 64-bit code segment
     if !*is_64 || 0 != *cpl {
         dbg_log!("sysret #ud/#gp");
         trigger_gp(0);
@@ -658,10 +667,58 @@ pub unsafe fn instr_0F07() {
 
     *instruction_pointer = return_rip;
 }
+
+pub unsafe fn instr16_0F07() { instr32_0F07(); }
+
+pub unsafe fn instr32_0F07() {
+    // sysret, 32-bit operand form (no REX.W): return to a compatibility-mode
+    // (32-bit) code segment. Only valid in IA-32e mode at cpl 0.
+    if *efer & EFER_LMA == 0 || 0 != *cpl {
+        dbg_log!("sysretl #ud/#gp");
+        trigger_gp(0);
+        return;
+    }
+
+    let cs_selector = (*star >> 48) as u16;
+
+    // the return eip and eflags were saved by the kernel in ecx/r11d
+    let return_eip = read_reg32(ECX) as u32;
+    let return_rflags = read_reg32(11);
+
+    // cs/ss for cpl 3, 32-bit (compat) descriptors: CS = STAR[63:48] | 3,
+    // SS = CS + 8 (Intel SDM, SYSRET with operand size 32)
+    *sreg.offset(CS as isize) = cs_selector & !3 | 3;
+    *segment_is_null.offset(CS as isize) = false;
+    *segment_limits.offset(CS as isize) = -1i32 as u32;
+    *segment_offsets.offset(CS as isize) = 0;
+    *segment_access_bytes.offset(CS as isize) = 0x80 | (3 << 5) | 0x10 | 0x08 | 0x02; // P dpl3 S E RW
+    *sreg.offset(SS as isize) = (cs_selector + 8) & !3 | 3;
+    *segment_is_null.offset(SS as isize) = false;
+    *segment_limits.offset(SS as isize) = -1i32 as u32;
+    *segment_offsets.offset(SS as isize) = 0;
+    *segment_access_bytes.offset(SS as isize) = 0x80 | (3 << 5) | 0x10 | 0x02; // P dpl3 S RW
+    *stack_size_32 = true;
+
+    // rflags are loaded from r11 unconditionally: update them while still at cpl 0
+    update_eflags(return_rflags & !FLAG_RF & !FLAG_VM);
+
+    *cpl = 3;
+    cpl_changed();
+    // 32-bit code segment (compat mode: L=0, D=1)
+    update_cs_size(true, false);
+    update_state_flags();
+
+    *instruction_pointer = return_eip as u64;
+}
 #[no_mangle]
 pub unsafe fn instr_0F08() {
-    // invd
-    undefined_instruction();
+    if 0 != *cpl {
+        dbg_log!("invd #gp");
+        trigger_gp(0);
+    }
+    else {
+        // invd: no emulated cache, nothing to invalidate
+    };
 }
 #[no_mangle]
 pub unsafe fn instr_0F09() {
@@ -1008,7 +1065,13 @@ pub unsafe fn instr_0F21(r: i32, mut dreg_index: i32) {
             dreg_index += 2
         }
     }
-    write_reg32(r, *dreg.offset(dreg_index as isize));
+    let mut value = *dreg.offset(dreg_index as isize);
+    if dreg_index == 6 {
+        // DR6's reserved bits read as 1 (the stored value only tracks the
+        // meaningful bits: B0-B3 and BS)
+        value |= DR6_RESERVED_READ;
+    }
+    write_reg32(r, value);
 
     if false {
         dbg_log!(
@@ -1043,8 +1106,10 @@ pub unsafe fn instr_0F22(r: i32, creg: i32) {
         3 => set_cr3(if *is_64 { read_reg64(r) } else { data as u32 as u64 }),
         4 => {
             dbg_log!("cr4 <- {:x}", data);
-            if 0 != data as u32
-                & ((1 << 11 | 1 << 12 | 1 << 15 | 1 << 16 | 1 << 19) as u32 | 0xFFC00000)
+            // Reserved and feature-gated bits must #GP: UMIP(11), LA57(12),
+            // VMXE(13), SMXE(14), 15, FSGSBASE(16), PCIDE(17), OSXSAVE(18),
+            // 19, SMAP(21), 22-31 — none of these are advertised in CPUID.
+            if 0 != data as u32 & 0xFFEFF800u32
             {
                 dbg_log!("trigger_gp: Invalid cr4 bit");
                 trigger_gp(0);
@@ -1091,6 +1156,9 @@ pub unsafe fn instr_0F23(r: i32, mut dreg_index: i32) {
         }
     }
     *dreg.offset(dreg_index as isize) = read_reg32(r);
+    if dreg_index == 7 {
+        dr7_update_armed();
+    }
     if false {
         dbg_log!(
             "write dr{}: {:x}",
@@ -1588,8 +1656,11 @@ pub unsafe fn instr_0F30() {
         MSR_AMD64_LS_CFG => {},    // linux 5.19
         MSR_AMD64_DE_CFG => {},    // linux 6.1
         _ => {
+            // Deliberate policy (differs from hardware, which #GPs): unknown
+            // MSRs are ignored on write and read as 0, because real guests
+            // probe many model-specific MSRs. Log for visibility, but don't
+            // abort the debug build.
             dbg_log!("Unknown msr: {:x}", index);
-            dbg_assert!(false);
         },
     }
 }
@@ -1708,8 +1779,11 @@ pub unsafe fn instr_0F32() {
             high = (ARCH_CAPABILITIES >> 32) as i32;
         },
         _ => {
+            // Deliberate policy (differs from hardware, which #GPs): unknown
+            // MSRs are ignored on write and read as 0, because real guests
+            // probe many model-specific MSRs. Log for visibility, but don't
+            // abort the debug build.
             dbg_log!("Unknown msr: {:x}", index);
-            dbg_assert!(false);
         },
     }
 
@@ -1730,15 +1804,24 @@ pub unsafe fn instr_0F34() {
         return;
     }
     else {
-        *flags &= !FLAG_VM & !FLAG_INTERRUPT;
-        *instruction_pointer = *sysenter_eip as u32 as u64;
-        write_reg32(ESP, *sysenter_esp);
+        let ia32e = *efer & EFER_LMA != 0;
+        *flags &= !FLAG_VM & !FLAG_INTERRUPT & !FLAG_RF;
+        if ia32e {
+            // IA-32e mode (also when entered from compat mode): the full
+            // 64-bit msr values are used and the target is a 64-bit segment
+            *instruction_pointer = *sysenter_eip64;
+            write_reg64(ESP, *sysenter_esp64);
+        }
+        else {
+            *instruction_pointer = *sysenter_eip as u32 as u64;
+            write_reg32(ESP, *sysenter_esp);
+        }
         *sreg.offset(CS as isize) = seg as u16;
         *segment_is_null.offset(CS as isize) = false;
         *segment_limits.offset(CS as isize) = -1i32 as u32;
         *segment_offsets.offset(CS as isize) = 0;
         *segment_access_bytes.offset(CS as isize) = 0x80 | (0 << 5) | 0x10 | 0x08 | 0x02; // P dpl0 S E RW
-        update_cs_size(true, false);
+        update_cs_size(!ia32e, ia32e);
         *cpl = 0;
         cpl_changed();
         *sreg.offset(SS as isize) = (seg + 8) as u16;
@@ -1746,7 +1829,7 @@ pub unsafe fn instr_0F34() {
         *segment_limits.offset(SS as isize) = -1i32 as u32;
         *segment_offsets.offset(SS as isize) = 0;
         *segment_access_bytes.offset(SS as isize) = 0x80 | (0 << 5) | 0x10 | 0x02; // P dpl0 S RW
-        *stack_size_32 = true;
+        *stack_size_32 = !ia32e;
         update_state_flags();
         return;
     };
@@ -4007,7 +4090,11 @@ pub unsafe fn instr_0FAE_5_mem(_addr: u64) {
 }
 #[no_mangle]
 pub unsafe fn instr_0FAE_6_reg(_r: i32) {
-    // mfence
+    // mfence; with a 66 prefix this encoding is the (invalid) register form of
+    // clwb, which must #ud
+    if *prefixes & prefix::PREFIX_66 != 0 {
+        trigger_ud();
+    }
 }
 #[no_mangle]
 pub unsafe fn instr_0FAE_6_mem(_addr: u64) {
@@ -4016,11 +4103,20 @@ pub unsafe fn instr_0FAE_6_mem(_addr: u64) {
 }
 #[no_mangle]
 pub unsafe fn instr_0FAE_7_reg(_r: i32) {
-    // sfence
+    // sfence; with a 66 prefix this encoding is pcommit, which we don't
+    // advertise (CPUID.7.EBX.22 = 0), so it must #ud
+    if *prefixes & prefix::PREFIX_66 != 0 {
+        trigger_ud();
+    }
 }
 #[no_mangle]
 pub unsafe fn instr_0FAE_7_mem(addr: u64) {
-    // clflush
+    // clflush; with a 66 prefix this is clflushopt, which we don't advertise
+    // (CPUID.7.EBX.23 = 0), so it must #ud
+    if *prefixes & prefix::PREFIX_66 != 0 {
+        trigger_ud();
+        return;
+    }
     // No hardware caches are modelled, but the operand must pass the same
     // address translation and permission checks as a byte load.
     return_on_pagefault!(translate_address_read(addr));
