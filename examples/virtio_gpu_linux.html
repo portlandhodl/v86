@@ -1,0 +1,121 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Linux (x86-64) on virtio-gpu in v86</title>
+<!--
+    Boots Xubuntu 24.04 live (x86-64) with the emulated virtio-gpu device as the
+    display. Once the guest's virtio_gpu DRM driver binds, the console/desktop
+    is presented through WebGPU (2D canvas fallback) instead of the VGA card.
+
+    Setup: see xubuntu.html (needs images/xubuntu-24.04.5-minimal-amd64.iso and
+    the extracted images/casper/{vmlinuz,initrd}).
+
+    Parameters: ?mem=<MiB> (default 2048), ?iso=<url>, ?nographconsole
+    (also keeps console=tty0 off)
+-->
+<style>
+    body { background: #1b1b1b; color: #ddd; font: 14px sans-serif; margin: 0; }
+    #bar { padding: 6px 10px; background: #2a2a2a; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    #status { margin-left: auto; font-family: monospace; }
+    #screen_container { margin: 10px; display: inline-block; position: relative; }
+    #screen_container canvas { image-rendering: pixelated; }
+    #serial { width: calc(100% - 20px); height: 200px; margin: 0 10px 10px; background: #000;
+        color: #ccc; font: 12px monospace; }
+</style>
+<div id="bar">
+    <b>Linux live (x86-64) on virtio-gpu</b>
+    <span id="status">loading...</span>
+</div>
+<div id="screen_container">
+    <div style="white-space: pre; font: 14px monospace; line-height: 14px"></div>
+    <canvas style="display: none"></canvas>
+</div>
+<textarea id="serial" readonly></textarea>
+<script>
+    // ?debug loads the debug build (device logging via dbg_log)
+    document.write('<script src="../build/libv86' +
+        (new URLSearchParams(location.search).has("debug") ? "-debug" : "") + '.js"><\/script>');
+</script>
+<script>
+"use strict";
+window.onload = function()
+{
+    const params = new URLSearchParams(location.search);
+    const debian = params.has("debian");
+    const iso = params.get("iso") || (debian ?
+        "../images/debian-live-testing-amd64-xfce.iso" :
+        "../images/xubuntu-24.04.5-minimal-amd64.iso");
+    const kernel = debian ? "../images/debian-live/vmlinuz" : "../images/casper/vmlinuz";
+    const initrd = debian ? "../images/debian-live/initrd.img" : "../images/casper/initrd";
+    const boot = debian ? "boot=live components" : "boot=casper";
+    const memory_mb = +params.get("mem") || 2048;
+
+    const emulator = new V86({
+        wasm_path: params.has("debug") ? "../build/v86-debug.wasm" : "../build/v86.wasm",
+        memory_size: memory_mb * 1024 * 1024,
+        vga_memory_size: 32 * 1024 * 1024,
+        screen_container: document.getElementById("screen_container"),
+        bios: { url: "../bios/seabios.bin" },
+        vga_bios: { url: "../bios/vgabios.bin" },
+        bzimage: { url: kernel },
+        initrd: { url: initrd },
+        cdrom: { url: iso, async: true },
+        cmdline: boot + " console=ttyS0 modprobe.blacklist=bochs" + (params.has("nographconsole") ? "" : " console=tty0"),
+        fdc: { fda: { drive_type: 0 }, fdb: { drive_type: 0 } },
+        acpi: true,
+        // no NIC: the guest's skb_segment_list oops (a CPU emulation bug in
+        // the network stack path, unrelated to the GPU) kills systemd
+        net_device: { type: "none" },
+        virtio_gpu: true,
+        log_level: params.has("log") ? 0x200000 : 0, // LOG_VIRTIO
+        autostart: true,
+    });
+
+    const status = document.getElementById("status");
+    let gpu_frames = 0;
+    let gpu_scanout = "";
+    emulator.bus.register("virtio-gpu-set-scanout", function(s)
+    {
+        gpu_scanout = s.enabled ? `gpu: ${s.width}x${s.height}` : "gpu: off";
+        console.log("[virtio-gpu] scanout " + JSON.stringify(s));
+    });
+    emulator.bus.register("virtio-gpu-frame", function(f)
+    {
+        gpu_frames++;
+        if(gpu_frames <= 3 || gpu_frames % 100 === 0)
+        {
+            console.log(`[virtio-gpu] frame #${gpu_frames} ${f.width}x${f.height}`);
+        }
+    });
+
+    let last_counter = 0;
+    let last_time = performance.now();
+    setInterval(function()
+    {
+        const counter = emulator.get_instruction_counter();
+        const now = performance.now();
+        const mips = ((counter - last_counter) >>> 0) / (now - last_time) / 1000;
+        last_counter = counter;
+        last_time = now;
+        status.textContent = `${emulator.is_running() ? mips.toFixed(0) + " MIPS" : "stopped"} | ` +
+            `${memory_mb} MiB | ${gpu_scanout} | frames: ${gpu_frames}`;
+    }, 1000);
+
+    const serial = document.getElementById("serial");
+    let serial_line = "";
+    emulator.add_listener("serial0-output-byte", function(byte)
+    {
+        const chr = String.fromCharCode(byte);
+        serial.value += chr;
+        if(serial.value.length > 200000) serial.value = serial.value.slice(-100000);
+        serial.scrollTop = serial.scrollHeight;
+        serial_line += chr;
+        if(chr === "\n")
+        {
+            if(/virtio|drm|fb0|error|fail|oops|trace|RIP|Call Trace/i.test(serial_line)) console.log("[serial] " + serial_line.trim());
+            serial_line = "";
+        }
+    });
+
+    window.emulator = emulator;
+};
+</script>

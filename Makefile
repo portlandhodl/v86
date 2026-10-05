@@ -88,11 +88,11 @@ CARGO_FLAGS=$(CARGO_FLAGS_SAFE) -C target-feature=+bulk-memory -C target-feature
 CORE_FILES=cjs.js const.js io.js main.js lib.js buffer.js ide.js pci.js floppy.js \
 	   dma.js pit.js vga.js ps2.js rtc.js uart.js parallel.js vmware.js \
 	   acpi.js iso9660.js \
-	   state.js ne2k.js sb16.js virtio.js virtio_console.js virtio_net.js virtio_balloon.js \
+	   state.js ne2k.js sb16.js virtio.js virtio_console.js virtio_net.js virtio_balloon.js virtio_gpu.js \
 	   bus.js log.js cpu.js \
 	   elf.js kernel.js
 LIB_FILES=9p.js filesystem.js marshall.js
-BROWSER_FILES=screen.js keyboard.js mouse.js speaker.js serial.js \
+BROWSER_FILES=screen.js gpu_screen.js keyboard.js mouse.js speaker.js serial.js \
 	      network.js starter.js worker_bus.js dummy_screen.js ansi_screen.js \
 	      inbrowser_network.js fake_network.js wisp_network.js fetch_network.js \
           print_stats.js filestorage.js modem.js
@@ -317,6 +317,29 @@ clean:
 run:
 	python3 -m http.server 2> /dev/null
 
+tests/devices/virtio_gpu_kernel.bin: tests/devices/virtio_gpu_kernel.asm
+	nasm -f bin -o $@ $<
+
+PORT ?= 8080
+demo-gpu: build/libv86.js build/v86.wasm tests/devices/virtio_gpu_kernel.bin
+	@echo ""
+	@echo "virtio-gpu demo (WebGPU): http://localhost:$(PORT)/examples/virtio_gpu.html"
+	@echo ""
+	./tools/serve.mjs --port $(PORT)
+
+demo-debian: PORT = 8081
+demo-debian: build/libv86.js build/v86.wasm
+	@test -f images/debian-live/vmlinuz -a -f images/debian-live/initrd.img -a \
+		-f images/debian-live-testing-amd64-xfce.iso || { \
+		echo "Missing images. Expected:"; \
+		echo "  images/debian-live-testing-amd64-xfce.iso"; \
+		echo "  images/debian-live/{vmlinuz,initrd.img} (see examples/debian-live.html for extraction)"; \
+		exit 1; }
+	@echo ""
+	@echo "Debian live on virtio-gpu (WebGPU): http://localhost:$(PORT)/examples/virtio_gpu_linux.html?debian"
+	@echo ""
+	./tools/serve.mjs --port $(PORT)
+
 update_version:
 	set -e ;\
 	COMMIT=`git log --format="%h" -n 1` ;\
@@ -406,6 +429,7 @@ expect-tests: build/v86-debug.wasm build/libwabt.cjs
 devices-test: build/v86-debug.wasm
 	./tests/devices/virtio_9p.js
 	./tests/devices/virtio_console.js
+	./tests/devices/virtio_gpu.js
 	./tests/devices/fetch_network.js
 	USE_VIRTIO=1 ./tests/devices/fetch_network.js
 	./tests/devices/fetch_network_post.js

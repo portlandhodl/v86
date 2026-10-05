@@ -1,0 +1,52 @@
+<!doctype html>
+<title>v86_64 virtio-gpu (2D, WebGPU)</title>
+
+<script src="../build/libv86.js"></script>
+<script>
+"use strict";
+
+// Boots the bare-metal virtio-gpu test kernel (tests/devices/virtio_gpu_kernel.asm,
+// build with: nasm -f bin -o tests/devices/virtio_gpu_kernel.bin tests/devices/virtio_gpu_kernel.asm).
+// The kernel drives the emulated virtio-gpu device directly and produces a
+// test-pattern frame; the GpuScreenAdapter presents it via WebGPU when
+// available (2D canvas otherwise — watch the console for the chosen backend).
+
+window.onload = function()
+{
+    var emulator = window.emulator = new V86({
+        wasm_path: "../build/v86.wasm",
+        memory_size: 64 * 1024 * 1024,
+        vga_memory_size: 2 * 1024 * 1024,
+        screen_container: document.getElementById("screen_container"),
+        bios: {
+            url: "../bios/seabios.bin",
+        },
+        vga_bios: {
+            url: "../bios/vgabios.bin",
+        },
+        multiboot: {
+            url: "../tests/devices/virtio_gpu_kernel.bin",
+        },
+        virtio_gpu: true, // or { width: 1280, height: 720 }
+        autostart: true,
+    });
+
+    // test kernel progress on the serial port
+    let serial_line = "";
+    emulator.add_listener("serial0-output-byte", function(byte)
+    {
+        const chr = String.fromCharCode(byte);
+        serial_line += chr;
+        if(chr === "\n" || serial_line.length > 80)
+        {
+            console.log("serial: " + serial_line.trim());
+            serial_line = "";
+        }
+    });
+}
+</script>
+
+<div id="screen_container">
+    <div style="white-space: pre; font: 14px monospace; line-height: 14px"></div>
+    <canvas style="display: none"></canvas>
+</div>
