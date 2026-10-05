@@ -255,7 +255,10 @@ function gen_generic(encoding, size, imm, name, postfix)
 {
     if(encoding.e)
     {
-        const reg_args = ["jit64::A::I32((modrm_byte & 7) as i32 | ctx.cpu.rex_b() as i32)"];
+        // fpu register stack indices (st0-st7) are not extended by REX.B
+        const reg_args = [encoding.is_fpu ?
+            "jit64::A::I32((modrm_byte & 7) as i32)" :
+            "jit64::A::I32((modrm_byte & 7) as i32 | ctx.cpu.rex_b() as i32)"];
         const reg_params = ["i32"];
         const mem_args = [];
         const mem_params = ["u64"];
