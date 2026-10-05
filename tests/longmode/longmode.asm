@@ -1125,6 +1125,18 @@ t81_done:
     prefetchw [rax]                   ; unmapped
     mov [r15 + 104*8], r8
 
+    ; ======== test 105: mpx encodings (0F 1A, 0F 1B) are hint nops on cpus without mpx
+    mov r9, 0x4D50582D4E4F5021
+    lea rsi, [r15 + 105*8]
+    db 0x66, 0x0F, 0x1A, 0x06         ; bndmov bnd0, [rsi]
+    db 0x66, 0x0F, 0x1A, 0xC1         ; bndmov bnd0, bnd1
+    db 0xF3, 0x0F, 0x1A, 0x06         ; bndcl bnd0, [rsi]
+    db 0xF2, 0x0F, 0x1A, 0xC0         ; bndcu bnd0, rax
+    db 0xF3, 0x0F, 0x1B, 0x06         ; bndmk bnd0, [rsi]
+    db 0x0F, 0x1B, 0x06               ; bndstx [rsi], bnd0
+    db 0x0F, 0x1A, 0x06               ; bndldx bnd0, [rsi]
+    mov [r15 + 105*8], r9
+
     ; mask all PIC interrupts: user mode runs with IF set below (test 84)
     mov al, 0xFF
     out 0x21, al

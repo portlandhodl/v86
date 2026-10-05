@@ -377,8 +377,8 @@ const encodings = [
 
     { opcode: 0x0F18, e: 1, custom: 1 },
     { opcode: 0x0F19, custom: 1, e: 1 },
-    { opcode: 0x0F1A, skip: 1, block_boundary: 1 },
-    { opcode: 0x0F1B, skip: 1, block_boundary: 1 },
+    { opcode: 0x0F1A, custom: 1, e: 1 }, // mpx bnd*: hint nops without mpx
+    { opcode: 0x0F1B, custom: 1, e: 1 }, // mpx bnd*: hint nops without mpx
     { opcode: 0x0F1C, custom: 1, e: 1 },
     { opcode: 0x0F1D, custom: 1, e: 1 },
     { opcode: 0x0F1E, custom: 1, e: 1 },
