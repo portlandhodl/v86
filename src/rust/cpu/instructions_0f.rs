@@ -30,6 +30,7 @@ use crate::cpu::misc_instr::{
 use crate::cpu::misc_instr::{lar, lsl, verr, verw};
 use crate::cpu::misc_instr::{lss16, lss32};
 use crate::cpu::sse_instr::*;
+pub use crate::cpu::instructions_0f38_0f3a::*;
 
 #[no_mangle]
 pub unsafe fn instr16_0F00_0_mem(addr: u64) {
@@ -960,7 +961,8 @@ pub unsafe fn instr_0F20(r: i32, creg: i32) {
 
     match creg {
         0 => {
-            write_reg64(r, *cr as u64);
+            // zero-extended: bits 63:32 of cr0 are reserved (zero)
+            write_reg64(r, *cr as u32 as u64);
         },
         2 => {
             // cr2 holds the full 64-bit fault address in long mode
@@ -1056,7 +1058,8 @@ pub unsafe fn instr_0F22(r: i32, creg: i32) {
                 }
                 if data & CR4_PAE != 0
                     && *efer & EFER_LME == 0
-                    && 0 != (*cr.offset(4) ^ data) & (CR4_PGE | CR4_PSE | CR4_SMEP)
+                    && *cr.offset(0) & CR0_PG != 0
+                    && 0 != (*cr.offset(4) ^ data) & (CR4_PAE | CR4_PGE | CR4_PSE | CR4_SMEP)
                 {
                     load_pdpte(get_cr3());
                 }
@@ -1539,6 +1542,10 @@ pub unsafe fn instr_0F30() {
                 value & !(EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE) == 0,
                 "Unsupported efer bits"
             );
+            if (value ^ *efer) & EFER_NXE != 0 {
+                // tlb entries carry the nx bit only while nx is enabled
+                full_clear_tlb();
+            }
             // LMA is read-only (set by enabling paging while LME=1)
             *efer = value & !EFER_LMA | *efer & EFER_LMA;
             update_efer_lma();
@@ -1780,12 +1787,20 @@ pub unsafe fn instr_0F37() {
     // getsec
     undefined_instruction();
 }
+/// Undefined opcodes of the three-byte maps (see x86_table.js)
 #[no_mangle]
-pub unsafe fn instr_0F38() { unimplemented_sse(); }
+pub unsafe fn instr_ud() { trigger_ud(); }
+
+// escape to the 0F 38 map, indexed like the 0F table (opcode | operand size tier << 8)
+pub unsafe fn instr16_0F38() { crate::gen::interpreter0f38::run(return_on_pagefault!(read_imm8()) as u32) }
+pub unsafe fn instr32_0F38() { crate::gen::interpreter0f38::run(return_on_pagefault!(read_imm8()) as u32 | 0x100) }
+pub unsafe fn instr64_0F38() { crate::gen::interpreter0f38::run(return_on_pagefault!(read_imm8()) as u32 | 0x200) }
 #[no_mangle]
 pub unsafe fn instr_0F39() { unimplemented_sse(); }
-#[no_mangle]
-pub unsafe fn instr_0F3A() { unimplemented_sse(); }
+// escape to the 0F 3A map, indexed like the 0F table (opcode | operand size tier << 8)
+pub unsafe fn instr16_0F3A() { crate::gen::interpreter0f3a::run(return_on_pagefault!(read_imm8()) as u32) }
+pub unsafe fn instr32_0F3A() { crate::gen::interpreter0f3a::run(return_on_pagefault!(read_imm8()) as u32 | 0x100) }
+pub unsafe fn instr64_0F3A() { crate::gen::interpreter0f3a::run(return_on_pagefault!(read_imm8()) as u32 | 0x200) }
 #[no_mangle]
 pub unsafe fn instr_0F3B() { unimplemented_sse(); }
 #[no_mangle]
@@ -3689,7 +3704,7 @@ pub unsafe fn instr_0FA2() {
         1 => {
             eax = 3 | 7 << 4 | 6 << 8; // pentium3
             ebx = 1 << 16 | 8 << 8; // cpu count, clflush size
-            ecx = 1 << 0 | 1 << 23 | 1 << 30; // sse3, popcnt, rdrand
+            ecx = 1 << 0 | 1 << 9 | 1 << 19 | 1 << 20 | 1 << 23 | 1 << 30; // sse3, ssse3, sse4.1, sse4.2, popcnt, rdrand
             let vme = 0 << 1;
             if config::VMWARE_HYPERVISOR_PORT {
                 ecx |= 1 << 31
@@ -4552,6 +4567,47 @@ pub unsafe fn instr_0FCF() {
 }
 #[no_mangle]
 pub unsafe fn instr_0FD0() { unimplemented_sse(); }
+
+pub unsafe fn instr_660FD0(source: reg128, r: i32) {
+    // addsubpd xmm1, xmm2/m128
+    let destination = read_xmm128s(r);
+    write_xmm_reg128(
+        r,
+        reg128 {
+            f64: [
+                destination.f64[0] - source.f64[0],
+                destination.f64[1] + source.f64[1],
+            ],
+        },
+    );
+}
+#[no_mangle]
+pub unsafe fn instr_660FD0_reg(r1: i32, r2: i32) { instr_660FD0(read_xmm128s(r1), r2); }
+#[no_mangle]
+pub unsafe fn instr_660FD0_mem(addr: u64, r: i32) {
+    instr_660FD0(return_on_pagefault!(safe_read128s(addr)), r);
+}
+pub unsafe fn instr_F20FD0(source: reg128, r: i32) {
+    // addsubps xmm1, xmm2/m128
+    let destination = read_xmm128s(r);
+    write_xmm_reg128(
+        r,
+        reg128 {
+            f32: [
+                destination.f32[0] - source.f32[0],
+                destination.f32[1] + source.f32[1],
+                destination.f32[2] - source.f32[2],
+                destination.f32[3] + source.f32[3],
+            ],
+        },
+    );
+}
+#[no_mangle]
+pub unsafe fn instr_F20FD0_reg(r1: i32, r2: i32) { instr_F20FD0(read_xmm128s(r1), r2); }
+#[no_mangle]
+pub unsafe fn instr_F20FD0_mem(addr: u64, r: i32) {
+    instr_F20FD0(return_on_pagefault!(safe_read128s(addr)), r);
+}
 #[no_mangle]
 pub unsafe fn instr_0FD1(source: u64, r: i32) {
     // psrlw mm, mm/m64
@@ -5410,6 +5466,14 @@ pub unsafe fn instr_660FEF_mem(addr: u64, r: i32) {
 }
 #[no_mangle]
 pub unsafe fn instr_0FF0() { unimplemented_sse(); }
+#[no_mangle]
+pub unsafe fn instr_F20FF0_reg(_r1: i32, _r2: i32) { trigger_ud(); }
+#[no_mangle]
+pub unsafe fn instr_F20FF0_mem(addr: u64, r: i32) {
+    // lddqu xmm, m128
+    let data = return_on_pagefault!(safe_read128s(addr));
+    write_xmm_reg128(r, data);
+}
 #[no_mangle]
 pub unsafe fn instr_0FF1(source: u64, r: i32) {
     // psllw mm, mm/m64

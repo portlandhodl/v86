@@ -2,10 +2,12 @@ CLOSURE_DIR=closure-compiler
 CLOSURE=$(CLOSURE_DIR)/compiler.jar
 NASM_TEST_DIR=./tests/nasm
 
-INSTRUCTION_TABLES=src/rust/gen/jit.rs src/rust/gen/jit0f.rs \
-		   src/rust/gen/jit64.rs src/rust/gen/jit64_0f.rs src/rust/gen/jit64_wrappers.rs \
+INSTRUCTION_TABLES=src/rust/gen/jit.rs src/rust/gen/jit0f.rs src/rust/gen/jit0f38.rs src/rust/gen/jit0f3a.rs \
+		   src/rust/gen/jit64.rs src/rust/gen/jit64_0f.rs src/rust/gen/jit64_0f38.rs src/rust/gen/jit64_0f3a.rs \
+		   src/rust/gen/jit64_wrappers.rs \
 		   src/rust/gen/interpreter.rs src/rust/gen/interpreter0f.rs \
-		   src/rust/gen/analyzer.rs src/rust/gen/analyzer0f.rs \
+		   src/rust/gen/interpreter0f38.rs src/rust/gen/interpreter0f3a.rs \
+		   src/rust/gen/analyzer.rs src/rust/gen/analyzer0f.rs src/rust/gen/analyzer0f38.rs src/rust/gen/analyzer0f3a.rs \
 
 # Only the dependencies common to both generate_{jit,interpreter}.js
 GEN_DEPENDENCIES=$(filter-out gen/generate_interpreter.js gen/generate_jit.js gen/generate_jit64.js gen/generate_analyzer.js, $(wildcard gen/*.js))
@@ -19,7 +21,10 @@ ifeq ($(STRIP_DEBUG),true)
 STRIP_DEBUG_FLAG=--v86-strip-debug
 endif
 
-WASM_OPT ?= false
+# Optimize the release wasm with binaryen's wasm-opt if it's installed (`make WASM_OPT=false` to skip)
+WASM_OPT ?= $(if $(shell command -v wasm-opt),true,false)
+WASM_OPT_FEATURES=--enable-bulk-memory --enable-multivalue --enable-simd --enable-sign-ext \
+	--enable-mutable-globals --enable-nontrapping-float-to-int
 
 default: build/v86-debug.wasm
 all: build/v86_all.js build/libv86.js build/libv86.mjs build/v86.wasm build/v86-mem64.wasm
@@ -92,11 +97,7 @@ BROWSER_FILES=screen.js keyboard.js mouse.js speaker.js serial.js \
 	      inbrowser_network.js fake_network.js wisp_network.js fetch_network.js \
           print_stats.js filestorage.js modem.js
 
-RUST_FILES=$(shell find src/rust/ -name '*.rs') \
-	   src/rust/gen/interpreter.rs src/rust/gen/interpreter0f.rs \
-	   src/rust/gen/jit.rs src/rust/gen/jit0f.rs \
-	   src/rust/gen/jit64.rs src/rust/gen/jit64_0f.rs src/rust/gen/jit64_wrappers.rs \
-	   src/rust/gen/analyzer.rs src/rust/gen/analyzer0f.rs
+RUST_FILES=$(shell find src/rust/ -name '*.rs') $(INSTRUCTION_TABLES)
 
 CORE_FILES:=$(addprefix src/,$(CORE_FILES))
 LIB_FILES:=$(addprefix lib/,$(LIB_FILES))
@@ -198,11 +199,19 @@ src/rust/gen/jit.rs: $(JIT_DEPENDENCIES)
 	./gen/generate_jit.js --output-dir build/ --table jit
 src/rust/gen/jit0f.rs: $(JIT_DEPENDENCIES)
 	./gen/generate_jit.js --output-dir build/ --table jit0f
+src/rust/gen/jit0f38.rs: $(JIT_DEPENDENCIES)
+	./gen/generate_jit.js --output-dir build/ --table jit0f38
+src/rust/gen/jit0f3a.rs: $(JIT_DEPENDENCIES)
+	./gen/generate_jit.js --output-dir build/ --table jit0f3a
 
 src/rust/gen/jit64.rs: $(JIT64_DEPENDENCIES)
 	./gen/generate_jit64.js --output-dir build/ --table jit64
 src/rust/gen/jit64_0f.rs: $(JIT64_DEPENDENCIES)
 	./gen/generate_jit64.js --output-dir build/ --table jit64_0f
+src/rust/gen/jit64_0f38.rs: $(JIT64_DEPENDENCIES)
+	./gen/generate_jit64.js --output-dir build/ --table jit64_0f38
+src/rust/gen/jit64_0f3a.rs: $(JIT64_DEPENDENCIES)
+	./gen/generate_jit64.js --output-dir build/ --table jit64_0f3a
 src/rust/gen/jit64_wrappers.rs: $(JIT64_DEPENDENCIES)
 	./gen/generate_jit64.js --output-dir build/ --table jit64_wrappers
 
@@ -210,18 +219,26 @@ src/rust/gen/interpreter.rs: $(INTERPRETER_DEPENDENCIES)
 	./gen/generate_interpreter.js --output-dir build/ --table interpreter
 src/rust/gen/interpreter0f.rs: $(INTERPRETER_DEPENDENCIES)
 	./gen/generate_interpreter.js --output-dir build/ --table interpreter0f
+src/rust/gen/interpreter0f38.rs: $(INTERPRETER_DEPENDENCIES)
+	./gen/generate_interpreter.js --output-dir build/ --table interpreter0f38
+src/rust/gen/interpreter0f3a.rs: $(INTERPRETER_DEPENDENCIES)
+	./gen/generate_interpreter.js --output-dir build/ --table interpreter0f3a
 
 src/rust/gen/analyzer.rs: $(ANALYZER_DEPENDENCIES)
 	./gen/generate_analyzer.js --output-dir build/ --table analyzer
 src/rust/gen/analyzer0f.rs: $(ANALYZER_DEPENDENCIES)
 	./gen/generate_analyzer.js --output-dir build/ --table analyzer0f
+src/rust/gen/analyzer0f38.rs: $(ANALYZER_DEPENDENCIES)
+	./gen/generate_analyzer.js --output-dir build/ --table analyzer0f38
+src/rust/gen/analyzer0f3a.rs: $(ANALYZER_DEPENDENCIES)
+	./gen/generate_analyzer.js --output-dir build/ --table analyzer0f3a
 
 build/v86.wasm: $(RUST_FILES) build/softfloat.o build/zstddeclib.o Cargo.toml
 	mkdir -p build/
 	-BLOCK_SIZE=K ls -l build/v86.wasm
 	cargo rustc --release $(CARGO_FLAGS)
 	cp build/wasm32-unknown-unknown/release/v86_64.wasm build/v86.wasm
-	-$(WASM_OPT) && wasm-opt -O3 --strip-debug build/v86.wasm -o build/v86.wasm
+	if $(WASM_OPT); then wasm-opt -O3 $(WASM_OPT_FEATURES) --strip-debug build/v86.wasm -o build/v86.wasm; fi
 	BLOCK_SIZE=K ls -l build/v86.wasm
 
 build/v86-debug.wasm: $(RUST_FILES) build/softfloat.o build/zstddeclib.o Cargo.toml
@@ -232,12 +249,14 @@ build/v86-debug.wasm: $(RUST_FILES) build/softfloat.o build/zstddeclib.o Cargo.t
 	BLOCK_SIZE=K ls -l build/v86-debug.wasm
 
 # Guest RAM in a separate 64-bit memory, used for memory sizes above 3 GiB (see src/rust/cpu/guest.rs)
+# wasm-opt runs after patch-mem64.mjs, so it can inline the guest memory accessors into their callers
 build/v86-mem64.wasm: $(RUST_FILES) build/softfloat.o build/zstddeclib.o Cargo.toml tools/patch-mem64.mjs
 	mkdir -p build/
 	cargo rustc --release --features mem64 --target-dir build/mem64 $(CARGO_FLAGS)
 	cp build/mem64/wasm32-unknown-unknown/release/v86_64.wasm build/v86-mem64.wasm
-	-$(WASM_OPT) && wasm-opt -O2 --strip-debug build/v86-mem64.wasm -o build/v86-mem64.wasm
 	./tools/patch-mem64.mjs build/v86-mem64.wasm build/v86-mem64.wasm
+	if $(WASM_OPT); then wasm-opt -O3 $(WASM_OPT_FEATURES) --enable-multimemory --enable-memory64 \
+		--strip-debug build/v86-mem64.wasm -o build/v86-mem64.wasm; fi
 	BLOCK_SIZE=K ls -l build/v86-mem64.wasm
 
 build/v86-mem64-debug.wasm: $(RUST_FILES) build/softfloat.o build/zstddeclib.o Cargo.toml tools/patch-mem64.mjs
@@ -369,6 +388,7 @@ kvm-unit-test: build/v86-debug.wasm
 	tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/taskswitch.flat
 	tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/taskswitch2.flat
 	tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/realmode.flat
+	tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/nx.flat
 	tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/pat.flat
 
 kvm-unit-test-release: build/libv86.mjs build/v86.wasm
@@ -376,6 +396,7 @@ kvm-unit-test-release: build/libv86.mjs build/v86.wasm
 	TEST_RELEASE_BUILD=1 tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/taskswitch.flat
 	TEST_RELEASE_BUILD=1 tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/taskswitch2.flat
 	TEST_RELEASE_BUILD=1 tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/realmode.flat
+	TEST_RELEASE_BUILD=1 tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/nx.flat
 	TEST_RELEASE_BUILD=1 tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/pat.flat
 
 expect-tests: build/v86-debug.wasm build/libwabt.cjs

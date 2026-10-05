@@ -435,6 +435,24 @@ pub fn instr64_0F_jit64(ctx: &mut JitContext, f: &mut u32) {
     let opcode = ctx.cpu.read_imm8() as u32;
     gen::jit64_0f::jit(opcode | 0x200, ctx, f)
 }
+pub fn instr16_0F38_jit64(ctx: &mut JitContext, f: &mut u32) {
+    gen::jit64_0f38::jit(ctx.cpu.read_imm8() as u32, ctx, f)
+}
+pub fn instr32_0F38_jit64(ctx: &mut JitContext, f: &mut u32) {
+    gen::jit64_0f38::jit(ctx.cpu.read_imm8() as u32 | 0x100, ctx, f)
+}
+pub fn instr64_0F38_jit64(ctx: &mut JitContext, f: &mut u32) {
+    gen::jit64_0f38::jit(ctx.cpu.read_imm8() as u32 | 0x200, ctx, f)
+}
+pub fn instr16_0F3A_jit64(ctx: &mut JitContext, f: &mut u32) {
+    gen::jit64_0f3a::jit(ctx.cpu.read_imm8() as u32, ctx, f)
+}
+pub fn instr32_0F3A_jit64(ctx: &mut JitContext, f: &mut u32) {
+    gen::jit64_0f3a::jit(ctx.cpu.read_imm8() as u32 | 0x100, ctx, f)
+}
+pub fn instr64_0F3A_jit64(ctx: &mut JitContext, f: &mut u32) {
+    gen::jit64_0f3a::jit(ctx.cpu.read_imm8() as u32 | 0x200, ctx, f)
+}
 
 // ---------------------------------------------------------------------------------------------
 // Instructions with custom code generation

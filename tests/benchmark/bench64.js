@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs tests/benchmark/bench64.asm in 32-bit protected mode and in 64-bit long
 // mode and reports the wall time of each. Set DISABLE_JIT=1 to compare against
-// the interpreter.
+// the interpreter. BENCH_WASM=build/v86-mem64.wasm runs another build.
 
 import url from "node:url";
 import path from "node:path";
@@ -23,7 +23,8 @@ function run(mode)
 
     return new Promise(resolve => {
         const emulator = new V86({
-            wasm_path: root_path + (BENCH_COLLECT_STATS ? "/build/v86-debug.wasm" : "/build/v86.wasm"),
+            wasm_path: process.env.BENCH_WASM ? path.resolve(process.env.BENCH_WASM) :
+                root_path + (BENCH_COLLECT_STATS ? "/build/v86-debug.wasm" : "/build/v86.wasm"),
             bios: { url: bin_file },
             autostart: true,
             memory_size: 64 * 1024 * 1024,

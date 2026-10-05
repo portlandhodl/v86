@@ -14,7 +14,9 @@ import Rand from "./rand.js";
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url));
 
 // number of tests per instruction
-const NUMBER_TESTS = 5;
+const NUMBER_TESTS = +process.env.NUMBER_TESTS || 5;
+// only generate the instruction tests whose names match (like run.js)
+const TEST_NAME = new RegExp(process.env.TEST_NAME || "", "i");
 // arithmetic tests
 const NUMBER_ARITH_TESTS = 100;
 
@@ -165,10 +167,11 @@ function create_tests()
 
                 for(const asm of create_instruction_test(op, config, nth_test))
                 {
-                    tests.push({
-                        name: "gen_" + format_opcode(op.opcode) + "_" + (op.fixed_g || 0) + "_" + i,
-                        asm,
-                    });
+                    const name = "gen_" + format_encoding(op) + "_" + (op.fixed_g || 0) + "_" + i;
+                    if(TEST_NAME.test(name))
+                    {
+                        tests.push({ name, asm });
+                    }
 
                     i++;
                 }
@@ -188,6 +191,16 @@ function format_opcode(n)
 {
     let x = n.toString(16);
     return (x.length === 1 || x.length === 3) ? "0" + x : x;
+}
+
+// three-byte maps: e.g. 660f3800 for 66 0F 38 00
+function format_encoding(op)
+{
+    if(!op.map)
+    {
+        return format_opcode(op.opcode);
+    }
+    return format_opcode(op.opcode >> 8) + op.map.toString(16) + format_opcode(op.opcode & 0xFF).padStart(2, "0");
 }
 
 function create_nasm_modrm_combinations_16()
@@ -440,6 +453,10 @@ function create_instruction_test(op, config, nth_test)
             assert(c === 0x0F || c === 0xF2 || c === 0xF3, "Expected 0F, F2, or F3 prefix, got " + c.toString(16));
             codes.push("db " + c);
             opcode &= ~0xFF00;
+            if(op.map)
+            {
+                codes.push("db " + op.map);
+            }
         }
         codes.push("db " + opcode);
 

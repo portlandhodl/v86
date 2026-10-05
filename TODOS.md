@@ -537,8 +537,11 @@ What exists:
   fbcon, Xorg's modesetting driver and Wayland compositors have a device.
   There is no 3D: OpenGL is software-only (Mesa llvmpipe/softpipe).
 - **Input**: PS/2 keyboard and mouse (i8042, psmouse), plus virtio devices.
-- **CPU**: CPUID reports x86-64-v1 + SSE3/POPCNT/RDRAND, which is the baseline
-  of Ubuntu's amd64 packages (no SSSE3/SSE4.x/AVX, CX16 not advertised).
+- **CPU**: CPUID reports x86-64-v1 + SSE3/SSSE3/SSE4.1/SSE4.2/POPCNT/RDRAND
+  (x86-64-v2 except CX16, which isn't advertised; no AVX). SSSE3/SSE4 are the
+  three-byte opcode maps 0F 38/0F 3A (`map` entries in gen/x86_table.js,
+  src/rust/cpu/instructions_0f38_0f3a.rs), compiled by both JITs as calls of
+  the interpreter's handlers.
 
 Tasks:
 - Boot an Ubuntu Server live ISO (cdrom with `async: true`, it's several GB)
@@ -551,8 +554,7 @@ Tasks:
   and not 1920x1080x32 (8.3 MB); pass 16-32 MiB for larger modes (max 256).
 - Desktop: GNOME Shell needs GL and is likely unusable with llvmpipe at
   these speeds; try a light X11 session (Xfce, LXQt, i3) on the modesetting
-  driver first. Consider exposing SSSE3/SSE4.1/4.2 (needs implementing and
-  testing the instructions) to speed up llvmpipe/memcpy paths.
+  driver first.
 - Performance work from §4 (module transitions, TLB misses) matters more for
   systemd-heavy boots.
 - Optional: the bochs-display variant (PCI 1234:1111 revision 2 with an MMIO

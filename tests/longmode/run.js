@@ -122,6 +122,17 @@ const expected = [
     0x941949e38be6f2b0n, // 87: hot loop with blocks on two pages
     0x254113b2en,        // 88: cf around inc/dec after add/sub
     0xe4c1f3ac2n,        // 89: registers written by string/sse/x87 instructions
+    0x402000003F000000n, // 90: sse3 addsubps
+    0x4012000000000000n, // 91: sse3 lddqu (unaligned) + addsubpd
+    0x1122334455667788n, // 92: pinsrq/pextrq
+    0x99aabbccn,         // 93: pextrd (zero-extended)
+    0x0ae3273fn,         // 94: crc32 r64, r64
+    0x2a47983an,         // 95: crc32 r32, sil
+    0x88n,               // 96: pshufb xmm10, xmm11
+    5n,                  // 97: pcmpestri with REX.W lengths
+    0x7a87c5aef2b81b06n, // 98: cmpxchg (64/32-bit, memory/register)
+    0x1c8fe0026780e30bn, // 99: xadd, inc/dec/add/sub/or/and (locked)
+    0xa798e5ab28bdd1ccn, // 100: xchg, cmpxchg16b, lock bts/btr
 ];
 
 const emulator = new V86({

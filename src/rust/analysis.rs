@@ -119,6 +119,24 @@ pub fn instr32_0F_analyze(cpu: &mut CpuContext, analysis: &mut Analysis) {
 pub fn instr64_0F_analyze(cpu: &mut CpuContext, analysis: &mut Analysis) {
     gen::analyzer0f::analyzer(cpu.read_imm8() as u32 | 0x200, cpu, analysis)
 }
+pub fn instr16_0F38_analyze(cpu: &mut CpuContext, analysis: &mut Analysis) {
+    gen::analyzer0f38::analyzer(cpu.read_imm8() as u32, cpu, analysis)
+}
+pub fn instr32_0F38_analyze(cpu: &mut CpuContext, analysis: &mut Analysis) {
+    gen::analyzer0f38::analyzer(cpu.read_imm8() as u32 | 0x100, cpu, analysis)
+}
+pub fn instr64_0F38_analyze(cpu: &mut CpuContext, analysis: &mut Analysis) {
+    gen::analyzer0f38::analyzer(cpu.read_imm8() as u32 | 0x200, cpu, analysis)
+}
+pub fn instr16_0F3A_analyze(cpu: &mut CpuContext, analysis: &mut Analysis) {
+    gen::analyzer0f3a::analyzer(cpu.read_imm8() as u32, cpu, analysis)
+}
+pub fn instr32_0F3A_analyze(cpu: &mut CpuContext, analysis: &mut Analysis) {
+    gen::analyzer0f3a::analyzer(cpu.read_imm8() as u32 | 0x100, cpu, analysis)
+}
+pub fn instr64_0F3A_analyze(cpu: &mut CpuContext, analysis: &mut Analysis) {
+    gen::analyzer0f3a::analyzer(cpu.read_imm8() as u32 | 0x200, cpu, analysis)
+}
 pub fn instr_26_analyze(cpu: &mut CpuContext, analysis: &mut Analysis) {
     analyze_step_handle_segment_prefix(ES, cpu, analysis)
 }

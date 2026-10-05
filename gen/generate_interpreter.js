@@ -8,7 +8,7 @@ import url from "node:url";
 
 import x86_table from "./x86_table.js";
 import * as rust_ast from "./rust_ast.js";
-import { hex, get_switch_value, get_switch_exist, finalize_table_rust } from "./util.js";
+import { hex, get_switch_value, get_switch_exist, finalize_table_rust, OPCODE_MAPS, group_by_opcode_map, map_name_part } from "./util.js";
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url));
 const OUT_DIR = path.join(__dirname, "..", "src/rust/gen/");
@@ -20,11 +20,13 @@ const gen_all = get_switch_exist("--all");
 const to_generate = {
     interpreter: gen_all || table_arg === "interpreter",
     interpreter0f: gen_all || table_arg === "interpreter0f",
+    interpreter0f38: gen_all || table_arg === "interpreter0f38",
+    interpreter0f3a: gen_all || table_arg === "interpreter0f3a",
 };
 
 assert(
     Object.keys(to_generate).some(k => to_generate[k]),
-    "Pass --table [interpreter|interpreter0f] or --all to pick which tables to generate"
+    "Pass --table [interpreter|interpreter0f|interpreter0f38|interpreter0f3a] or --all to pick which tables to generate"
 );
 
 gen_table();
@@ -91,7 +93,7 @@ function gen_call(name, args)
 
 /*
  * Current naming scheme:
- * instr(16|32|)_(66|F2|F3)?0F?[0-9a-f]{2}(_[0-7])?(_mem|_reg|)
+ * instr(16|32|64|)_(66|F2|F3)?(0F(38|3A)?)?[0-9a-f]{2}(_[0-7])?(_mem|_reg|)
  */
 function make_instruction_name(encoding, size)
 {
@@ -104,8 +106,15 @@ function make_instruction_name(encoding, size)
 
     assert(first_prefix === "" || first_prefix === "0F" || first_prefix === "F2" || first_prefix === "F3");
     assert(second_prefix === "" || second_prefix === "66" || second_prefix === "F2" || second_prefix === "F3");
+    assert(!encoding.map || first_prefix === "0F");
 
-    return `${module}::instr${suffix}_${second_prefix}${first_prefix}${opcode_hex}${fixed_g_suffix}`;
+    if(encoding.ud)
+    {
+        // undefined opcode of a three-byte map
+        return "instructions_0f::instr_ud";
+    }
+
+    return `${module}::instr${suffix}_${second_prefix}${first_prefix}${map_name_part(encoding)}${opcode_hex}${fixed_g_suffix}`;
 }
 
 function gen_instruction_body(encodings, size)
@@ -361,30 +370,9 @@ function gen_instruction_body_after_fixed_g(encoding, size)
     }
 }
 
-function gen_table()
+function gen_cases(by_opcode)
 {
-    let by_opcode = Object.create(null);
-    let by_opcode0f = Object.create(null);
-
-    for(let o of x86_table)
-    {
-        let opcode = o.opcode;
-
-        if((opcode & 0xFF00) === 0x0F00)
-        {
-            opcode &= 0xFF;
-            by_opcode0f[opcode] = by_opcode0f[opcode] || [];
-            by_opcode0f[opcode].push(o);
-        }
-        else
-        {
-            opcode &= 0xFF;
-            by_opcode[opcode] = by_opcode[opcode] || [];
-            by_opcode[opcode].push(o);
-        }
-    }
-
-    let cases = [];
+    const cases = [];
     for(let opcode = 0; opcode < 0x100; opcode++)
     {
         let encoding = by_opcode[opcode];
@@ -416,7 +404,7 @@ function gen_table()
             });
         }
     }
-    const table = {
+    return {
         type: "switch",
         condition: "opcode",
         cases,
@@ -424,112 +412,61 @@ function gen_table()
             body: ["assert!(false);"]
         },
     };
+}
 
-    // opcodes whose operand size defaults to 64 bit in long mode, even
-    // without a REX.W prefix (push/pop/call/ret/...). The 0x66 prefix
-    // switches them to 16 bit.
-    const d64_opcodes = Object.keys(by_opcode)
-        .filter(o => by_opcode[o][0].d64)
-        .map(o => `0x${hex(+o & 0xFF, 2)}`);
+function gen_table()
+{
+    const by_map = group_by_opcode_map(x86_table);
 
-    if(to_generate.interpreter)
+    for(const map of OPCODE_MAPS)
     {
-        const code = [
-            "#![cfg_attr(rustfmt, rustfmt_skip)]",
+        const name = "interpreter" + map;
+        if(!to_generate[name])
+        {
+            continue;
+        }
+        const by_opcode = by_map[map];
 
+        // opcodes whose operand size defaults to 64 bit in long mode, even
+        // without a REX.W prefix (push/pop/call/ret/...). The 0x66 prefix
+        // switches them to 16 bit.
+        const d64_opcodes = Object.keys(by_opcode)
+            .filter(o => by_opcode[o][0].d64)
+            .map(o => `0x${hex(+o & 0xFF, 2)}`);
+
+        const imports = map === "" ? [
             "use crate::cpu::cpu::{after_block_boundary, modrm_resolve};",
             "use crate::cpu::cpu::{read_imm8, read_imm8s, read_imm16, read_imm32s, read_imm64s, read_moffs};",
             "use crate::cpu::cpu::{rex_b, rex_r};",
             "use crate::cpu::cpu::{task_switch_test, trigger_ud};",
             "use crate::cpu::instructions;",
-            "use crate::cpu::global_pointers::{instruction_pointer, prefixes};",
-            "use crate::prefix;",
-
-            `pub fn is_default_64_operand_size(opcode: u32) -> bool { matches!(opcode, ${d64_opcodes.join(" | ")}) }`,
-
-            "pub unsafe fn run(opcode: u32) {",
-            table,
-            "}",
-        ];
-
-        finalize_table_rust(
-            OUT_DIR,
-            "interpreter.rs",
-            rust_ast.print_syntax_tree([].concat(code)).join("\n") + "\n"
-        );
-    }
-
-    const cases0f = [];
-    for(let opcode = 0; opcode < 0x100; opcode++)
-    {
-        let encoding = by_opcode0f[opcode];
-
-        assert(encoding && encoding.length);
-
-        let opcode_hex = hex(opcode, 2);
-        let opcode_high_hex = hex(opcode | 0x100, 2);
-
-        if(encoding[0].os)
-        {
-            cases0f.push({
-                conditions: [`0x${opcode_hex}`],
-                body: gen_instruction_body(encoding, 16),
-            });
-            cases0f.push({
-                conditions: [`0x${opcode_high_hex}`],
-                body: gen_instruction_body(encoding, 32),
-            });
-            cases0f.push({
-                conditions: [`0x${hex(opcode | 0x200, 2)}`],
-                body: gen_instruction_body(encoding, 64),
-            });
-        }
-        else
-        {
-            let block = {
-                conditions: [`0x${opcode_hex}`, `0x${opcode_high_hex}`, `0x${hex(opcode | 0x200, 2)}`],
-                body: gen_instruction_body(encoding, undefined),
-            };
-            cases0f.push(block);
-        }
-    }
-
-    const table0f = {
-        type: "switch",
-        condition: "opcode",
-        cases: cases0f,
-        default_case: {
-            body: ["assert!(false);"]
-        },
-    };
-
-    const d64_opcodes0f = Object.keys(by_opcode0f)
-        .filter(o => by_opcode0f[o][0].d64)
-        .map(o => `0x${hex(+o & 0xFF, 2)}`);
-
-    if(to_generate.interpreter0f)
-    {
-        const code = [
-            "#![cfg_attr(rustfmt, rustfmt_skip)]",
-
+        ] : [
+            "#![allow(unused_imports)]",
             "use crate::cpu::cpu::{after_block_boundary, modrm_resolve};",
             "use crate::cpu::cpu::{read_imm8, read_imm16, read_imm32s};",
             "use crate::cpu::cpu::{rex_b, rex_r};",
             "use crate::cpu::cpu::{task_switch_test, task_switch_test_mmx, trigger_ud};",
             "use crate::cpu::instructions_0f;",
+        ];
+
+        const code = [
+            "#![cfg_attr(rustfmt, rustfmt_skip)]",
+            ...imports,
             "use crate::cpu::global_pointers::{instruction_pointer, prefixes};",
             "use crate::prefix;",
 
-            `pub fn is_default_64_operand_size(opcode: u32) -> bool { matches!(opcode, ${d64_opcodes0f.join(" | ")}) }`,
+            // only used for the one-byte and 0F maps
+            ...(map === "" || map === "0f" ?
+                [`pub fn is_default_64_operand_size(opcode: u32) -> bool { matches!(opcode, ${d64_opcodes.join(" | ")}) }`] : []),
 
             "pub unsafe fn run(opcode: u32) {",
-            table0f,
+            gen_cases(by_opcode),
             "}",
         ];
 
         finalize_table_rust(
             OUT_DIR,
-            "interpreter0f.rs",
+            name + ".rs",
             rust_ast.print_syntax_tree([].concat(code)).join("\n") + "\n"
         );
     }

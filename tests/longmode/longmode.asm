@@ -908,6 +908,184 @@ t81_func:
     ret
 t81_done:
 
+    ; ======== test 90/91: sse3 addsubps, addsubpd and lddqu (unaligned) on high xmm regs ========
+    movaps xmm9, [rel sse3_data]
+    movaps xmm10, [rel sse3_data + 16]
+    addsubps xmm9, xmm10             ; [1-0.5, 2+0.5, 3-0.5, 4+0.5]
+    movq rbx, xmm9
+    mov [r15 + 90*8], rbx            ; 2.5f:0.5f
+    lddqu xmm13, [rel sse3_unaligned]
+    addsubpd xmm13, xmm13            ; [1.5-1.5, 2.25+2.25]
+    psrldq xmm13, 8
+    movq rbx, xmm13
+    mov [r15 + 91*8], rbx            ; 4.5
+
+    ; ======== test 92-97: ssse3/sse4 in long mode: REX.W forms (pinsrq, pextrq, crc32 r64,
+    ; pcmpestri with 64-bit lengths), crc32 with sil (REX byte register), xmm8-13.
+    ; Expected values from running the same sequence on a host cpu.
+    mov rax, 0x1122334455667788
+    mov rcx, 0x99AABBCCDDEEFF00
+    pinsrq xmm9, rax, 1               ; 66 REX.W 0F 3A 22
+    pinsrq xmm9, rcx, 0
+    pextrq r8, xmm9, 1                ; 66 REX.W 0F 3A 16 -> rax
+    pextrd r9d, xmm9, 1               ; high dword of rcx, zero-extended
+    mov r10, 0xFFFFFFFF12345678
+    crc32 r10, rcx                    ; F2 REX.W 0F 38 F1
+    mov sil, 0xA5
+    mov r11d, 0xDEADBEEF
+    crc32 r11d, sil                   ; F2 REX 0F 38 F0 (sil needs REX)
+    movq xmm10, rax
+    movq xmm11, rcx
+    pshufb xmm10, xmm11               ; 66 REX 0F 38 00 on xmm10/11
+    movq r12, xmm10
+    mov rax, 5
+    mov rdx, 0x100000000              ; |rdx| >= 16 only as a 64-bit length
+    movdqa xmm12, xmm9
+    movdqa xmm13, xmm9
+    o64 pcmpestri xmm12, xmm13, 0x18  ; REX.W: lengths from rax/rdx; equal each, negative
+    mov r13, rcx
+    mov [r15 + 92*8], r8
+    mov [r15 + 93*8], r9
+    mov [r15 + 94*8], r10
+    mov [r15 + 95*8], r11
+    mov [r15 + 96*8], r12
+    mov [r15 + 97*8], r13
+
+    ; ======== test 98-100: locked 64-bit atomics (cmpxchg incl. 32-bit forms with a dirty rax,
+    ; xadd, inc/dec/add/sub/or/and, xchg, cmpxchg16b, bts/btr): checksums of results and flags,
+    ; expected values from running the same sequence on a host cpu
+    ; atomic-op differential test; m = 16-byte aligned scratch (ATOM), checksum in r14 per group
+    ; FOLD x: r14 = r14 * 31 + x ; flags folded via pushfq
+%macro FOLD 1
+    imul r14, r14, 31
+    add r14, %1
+%endmacro
+%macro FOLDF 0
+    pushfq
+    pop r13
+    and r13d, 0x8D5
+    FOLD r13
+%endmacro
+    mov r12, 0x8000000000000000
+    ; ---- group A: cmpxchg qword
+    xor r14d, r14d
+    lea rdi, [rel ATOM]
+    mov qword [rdi], 0
+    xor eax, eax
+    mov rcx, r12
+    lock cmpxchg [rdi], rcx          ; succeeds: [m] = HIGH
+    FOLDF
+    FOLD rax
+    FOLD qword [rdi]
+    xor eax, eax
+    lock cmpxchg [rdi], rcx          ; fails: rax = HIGH
+    FOLDF
+    FOLD rax
+    FOLD qword [rdi]
+    mov rax, 0x0000000100000000
+    mov qword [rdi], rax
+    xor eax, eax
+    lock cmpxchg [rdi], rcx          ; fails only on the upper half
+    FOLDF
+    FOLD rax
+    FOLD qword [rdi]
+    mov rax, -1
+    mov qword [rdi], 0x12345678
+    mov rax, 0xFFFFFFFF12345678
+    mov ecx, 0xAAAA
+    lock cmpxchg dword [rdi], ecx    ; 32-bit, equal (low half), rax upper half dirty
+    FOLDF
+    FOLD rax
+    FOLD qword [rdi]
+    mov rax, 0xFFFFFFFF00000001
+    lock cmpxchg dword [rdi], ecx    ; 32-bit, not equal
+    FOLDF
+    FOLD rax
+    FOLD qword [rdi]
+    mov rbx, 0x5555
+    mov rax, 0xFFFFFFFF00000777
+    mov edx, 0x777
+    cmpxchg ebx, edx                 ; register destination, 32-bit, not equal
+    FOLDF
+    FOLD rax
+    FOLD rbx
+    mov [r15 + 98*8], r14
+    ; ---- group B: xadd / inc / dec / add / sub / or / and qword
+    xor r14d, r14d
+    mov rax, r12
+    dec rax
+    mov [rdi], rax                   ; HIGH - 1
+    mov edx, 1
+    lock xadd [rdi], rdx
+    FOLDF
+    FOLD rdx
+    FOLD qword [rdi]
+    mov rdx, -1
+    lock xadd [rdi], rdx
+    FOLDF
+    FOLD rdx
+    FOLD qword [rdi]
+    mov qword [rdi], 1
+    lock dec qword [rdi]
+    FOLDF
+    FOLD qword [rdi]
+    lock dec qword [rdi]
+    FOLDF
+    FOLD qword [rdi]
+    lock inc qword [rdi]
+    FOLDF
+    FOLD qword [rdi]
+    mov [rdi], r12
+    lock sub qword [rdi], 1
+    FOLDF
+    FOLD qword [rdi]
+    lock add qword [rdi], 1
+    FOLDF
+    FOLD qword [rdi]
+    lock or qword [rdi], 2
+    FOLDF
+    FOLD qword [rdi]
+    lock and qword [rdi], -3
+    FOLDF
+    FOLD qword [rdi]
+    mov edx, 7
+    lock xadd dword [rdi + 4], edx
+    FOLDF
+    FOLD rdx
+    FOLD qword [rdi]
+    mov [r15 + 99*8], r14
+    ; ---- group C: xchg, cmpxchg16b, bts/btr locked
+    xor r14d, r14d
+    mov rax, 0x1111222233334444
+    xchg [rdi], rax
+    FOLD rax
+    FOLD qword [rdi]
+    mov qword [rdi], 5
+    mov qword [rdi + 8], 6
+    mov eax, 5
+    mov edx, 6
+    mov ebx, 7
+    mov ecx, 8
+    lock cmpxchg16b [rdi]            ; equal
+    FOLDF
+    FOLD rax
+    FOLD rdx
+    FOLD qword [rdi]
+    FOLD qword [rdi + 8]
+    mov eax, 1
+    mov edx, 2
+    lock cmpxchg16b [rdi]            ; not equal
+    FOLDF
+    FOLD rax
+    FOLD rdx
+    lock bts qword [rdi], 63
+    FOLDF
+    FOLD qword [rdi]
+    lock btr qword [rdi], 63
+    FOLDF
+    FOLD qword [rdi]
+    mov [r15 + 100*8], r14
+
     ; mask all PIC interrupts: user mode runs with IF set below (test 84)
     mov al, 0xFF
     out 0x21, al
@@ -1041,6 +1219,11 @@ cx16_scratch: dq 0, 0
 
 align 16
 fx_area: times 64 dq 0             ; 512-byte fxsave area (16-byte aligned)
+sse3_data: dd 1.0, 2.0, 3.0, 4.0, 0.5, 0.5, 0.5, 0.5 ; test 90 (16-byte aligned)
+    db 0
+sse3_unaligned: dq 1.5, 2.25          ; test 91
+align 16
+ATOM: times 4 dq 0                 ; tests 98-100
 stos_buf: times 32 dq 0            ; rep stosq playground
 
 idt_ptr:

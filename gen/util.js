@@ -35,3 +35,34 @@ export function finalize_table_rust(out_dir, name, contents)
     fs.writeFileSync(file_path, contents);
     console.log(CYAN_FMT, `[+] Wrote table ${name}.`);
 }
+
+// The opcode maps of the x86 table: one-byte opcodes, 0F xx, 0F 38 xx and 0F 3A xx. Entries of the
+// three-byte maps have a `map` property (0x38 or 0x3A) and are otherwise encoded like 0F entries
+// (opcode: [66|F2|F3]0Fxx).
+export const OPCODE_MAPS = ["", "0f", "0f38", "0f3a"];
+
+export function opcode_map_of(encoding)
+{
+    if(encoding.map) return "0f" + hex(encoding.map, 2).toLowerCase();
+    return (encoding.opcode & 0xFF00) === 0x0F00 ? "0f" : "";
+}
+
+// map -> low opcode byte -> encodings
+export function group_by_opcode_map(table)
+{
+    const result = Object.create(null);
+    for(const map of OPCODE_MAPS) result[map] = Object.create(null);
+    for(const encoding of table)
+    {
+        const by_opcode = result[opcode_map_of(encoding)];
+        const opcode = encoding.opcode & 0xFF;
+        (by_opcode[opcode] = by_opcode[opcode] || []).push(encoding);
+    }
+    return result;
+}
+
+// The part of an instruction name after "0F" that names a three-byte map ("38" or "3A")
+export function map_name_part(encoding)
+{
+    return encoding.map ? hex(encoding.map, 2) : "";
+}
