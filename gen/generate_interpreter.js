@@ -308,7 +308,8 @@ function gen_instruction_body_after_fixed_g(encoding, size)
                 mem_args = [`match modrm_resolve(modrm_byte, ${imm_len}) { Ok(a) => a, Err(()) => return }`];
             }
 
-            const reg_args = ["modrm_byte & 7 | rex_b()"];
+            // fpu register stack indices (st0-st7) are not extended by REX.B
+            const reg_args = [encoding.is_fpu ? "modrm_byte & 7" : "modrm_byte & 7 | rex_b()"];
 
             if(encoding.fixed_g === undefined)
             {

@@ -39,6 +39,7 @@ pub enum A {
 }
 
 /// A decoded memory operand in 64-bit mode (register numbers include the REX extensions)
+#[derive(Copy, Clone, PartialEq)]
 pub struct Modrm64 {
     base: Option<u32>,
     index: Option<u32>,
@@ -1583,6 +1584,7 @@ pub fn gen_flags_logic(ctx: &mut JitContext, bits: u32, result: &Val) {
 // Native instructions
 
 /// An operand of a natively compiled instruction
+#[derive(Copy, Clone, PartialEq)]
 pub enum Opnd {
     Reg(u32),
     Mem(Modrm64),
@@ -2183,10 +2185,26 @@ pub fn gen_cmovcc(ctx: &mut JitContext, condition: u8, bits: u32, r: u32, src: O
 /// shift/rotate by a constant 0: no flags change, but a 32-bit register is written (and so
 /// zero-extended), like the interpreter does
 pub fn gen_shift_by_zero(ctx: &mut JitContext, bits: u32, dst: Opnd) {
-    if let Opnd::Reg(r) = dst {
-        if bits == 32 {
-            gen_alu(ctx, OP_MOV, 32, Opnd::Reg(r), Opnd::Reg(r));
-        }
+    match dst {
+        Opnd::Reg(r) => {
+            if bits == 32 {
+                gen_alu(ctx, OP_MOV, 32, Opnd::Reg(r), Opnd::Reg(r));
+            }
+        },
+        Opnd::Mem(m) => {
+            // A shift by zero doesn't change the value, but the operand is
+            // still read and written back (like the interpreter's
+            // safe_read_write*): it faults on unmapped/read-only memory and
+            // dirties the page
+            let address = gen_modrm_address_local(ctx, &m);
+            gen_safe_read_write(ctx, bits, &address, &|ctx| {
+                let x = set_new_val(ctx, bits);
+                x.get(ctx);
+                x.free(ctx);
+            });
+            ctx.builder.free_local_i64(address);
+        },
+        Opnd::Imm(_) => dbg_assert!(false),
     }
 }
 
@@ -2699,6 +2717,17 @@ pub fn gen_bt(ctx: &mut JitContext, kind: u32, bits: u32, dst: Opnd, offset: Opn
     dbg_assert!(bits == 32 || bits == 64);
     dbg_assert!(!(matches!(dst, Opnd::Mem(_)) && matches!(offset, Opnd::Reg(_))));
     let w = bits == 64;
+    // 64-bit memory operands are a bit string: an immediate offset selects a
+    // bit outside the addressed qword (see the interpreter's bt_mem family).
+    // Move the accessed qword accordingly; the in-qword bit is masked below.
+    // (32-bit memory operands are masked to 31 by both engines.)
+    let dst = match (dst, offset) {
+        (Opnd::Mem(mut m), Opnd::Imm(i)) if w => {
+            m.disp = m.disp.wrapping_add((i as i32 >> 6) << 3);
+            Opnd::Mem(m)
+        },
+        _ => dst,
+    };
     // offset & (bits - 1), as i32
     let off = ctx.builder.new_local();
     match offset {
@@ -2862,6 +2891,9 @@ pub fn gen_xadd(ctx: &mut JitContext, bits: u32, dst: Opnd, r: u32) {
     let reg_value = set_new_val(ctx, bits);
     let old = ctx.builder.new_local();
     let old64 = ctx.builder.new_local_i64();
+    // when dst and r alias (xadd r, r) the destination write happens last:
+    // the register ends up with the sum, not the old value
+    let aliased = matches!(dst, Opnd::Reg(dr) if dr == r);
     {
         let (reg_value, old, old64) = (&reg_value, &old, &old64);
         let compute = |ctx: &mut JitContext, x: &Val| -> Val {
@@ -2874,20 +2906,17 @@ pub fn gen_xadd(ctx: &mut JitContext, bits: u32, dst: Opnd, r: u32) {
             }
             gen_alu_value(ctx, OP_ADD, bits, x, reg_value)
         };
-        let is_reg_dst = match dst {
-            Opnd::Reg(_) => true,
-            _ => false,
-        };
         gen_rmw(ctx, bits, dst, &compute);
-        let _ = is_reg_dst;
     }
-    if bits == 64 {
-        ctx.builder.get_local_i64(&old64);
+    if !aliased {
+        if bits == 64 {
+            ctx.builder.get_local_i64(&old64);
+        }
+        else {
+            ctx.builder.get_local(&old);
+        }
+        gen_set_reg_from_stack(ctx, bits, r);
     }
-    else {
-        ctx.builder.get_local(&old);
-    }
-    gen_set_reg_from_stack(ctx, bits, r);
     ctx.builder.free_local(old);
     ctx.builder.free_local_i64(old64);
     reg_value.free(ctx);

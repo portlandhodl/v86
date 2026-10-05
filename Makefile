@@ -383,6 +383,9 @@ nasmtests-force-jit: build/v86-debug.wasm
 	$(NASM_TEST_DIR)/gen_fixtures.js
 	$(NASM_TEST_DIR)/run.js --force-jit
 
+fuzz-tests: build/v86-debug.wasm
+	./tests/fuzz/run.js
+
 longmode-tests: build/v86-debug.wasm
 	./tests/longmode/run.js
 	JIT_THRESHOLD=1 ./tests/longmode/run.js
@@ -471,7 +474,7 @@ api-tests: build/v86-debug.wasm
 	#./tests/api/reboot-buildroot.js # https://github.com/copy/v86/issues/636
 	./tests/api/pic.js
 
-all-tests: eslint kvm-unit-test qemutests qemutests-release jitpagingtests api-tests nasmtests nasmtests-force-jit rust-test tests expect-tests
+all-tests: eslint kvm-unit-test qemutests qemutests-release jitpagingtests api-tests nasmtests nasmtests-force-jit fuzz-tests rust-test tests expect-tests
 	# Skipping:
 	# - devices-test (hangs)
 
