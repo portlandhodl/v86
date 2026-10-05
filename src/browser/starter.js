@@ -14,6 +14,7 @@ import { WispNetworkAdapter } from "./wisp_network.js";
 import { KeyboardAdapter } from "./keyboard.js";
 import { MouseAdapter } from "./mouse.js";
 import { ScreenAdapter } from "./screen.js";
+import { GpuScreenAdapter } from "./gpu_screen.js";
 import { DummyScreenAdapter } from "./dummy_screen.js";
 import { ANSIScreenAdapter } from "./ansi_screen.js";
 import { SerialAdapter, VirtioConsoleAdapter, SerialAdapterXtermJS, VirtioConsoleAdapterXtermJS } from "./serial.js";
@@ -338,6 +339,14 @@ V86.prototype.continue_init = async function(emulator, options)
     }
     settings.screen = this.screen_adapter;
     settings.screen_options = screen_options;
+
+    settings.virtio_gpu = options.virtio_gpu ?
+        (typeof options.virtio_gpu === "object" ? options.virtio_gpu : {}) : undefined;
+
+    if(settings.virtio_gpu && screen_options.container)
+    {
+        this.gpu_screen_adapter = new GpuScreenAdapter(this.bus, screen_options.container);
+    }
 
     settings.serial_console = options.serial_console || { type: "none" };
 

@@ -60,8 +60,8 @@ The roadmap, design notes and every long-mode bug found so far are in
 bus, an IDE controller with CD-ROM (including a built-in ISO 9660 generator),
 a floppy controller, PS/2 keyboard and mouse, a VGA card with SVGA and Bochs
 VBE extensions (Linux's `bochs` DRM driver binds to it), an NE2000 network
-card, virtio (9p filesystem, network, console, balloon), a SoundBlaster 16, a
-serial port and a Hayes-compatible modem.
+card, virtio (9p filesystem, network, console, balloon, 2D GPU), a
+SoundBlaster 16, a serial port and a Hayes-compatible modem.
 
 **Limits**: one CPU, guest physical memory up to 4 GiB (wasm32), no 1 GiB
 pages, no x2APIC, no AVX, no 3D graphics (OpenGL in guests is
