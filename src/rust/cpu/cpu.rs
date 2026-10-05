@@ -3454,6 +3454,11 @@ pub unsafe fn trigger_pagefault_extended(
     }
     else {
         *instruction_pointer = *previous_ip;
+        if DEBUG {
+            if js::cpu_exception_hook(CPU_EXCEPTION_PF) {
+                return;
+            }
+        }
         if delivering_double_fault {
             // a fault while delivering #DF: triple fault, shut down
             panic!("Triple fault: page fault during #DF delivery, cr2={:x}", addr);
@@ -6189,6 +6194,11 @@ unsafe fn trigger_pagefault_nx(addr: u64) {
     // user<<2 | write<<1 | present | instruction fetch
     let error_code = ((*cpl == 3) as i32) << 2 | 1 | 1 << 4;
     *instruction_pointer = *previous_ip;
+    if DEBUG {
+        if js::cpu_exception_hook(CPU_EXCEPTION_PF) {
+            return;
+        }
+    }
     call_interrupt_vector(CPU_EXCEPTION_PF, false, Some(error_code));
 }
 
