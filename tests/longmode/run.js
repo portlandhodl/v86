@@ -136,6 +136,8 @@ const expected = [
     0xfedcba9876543210n, // 101: movhps xmm10, m64
     0xffffffffffffffffn, // 102: movlhps xmm15, xmm2 (high ^ low)
     0x0f1e2d3c4b5a6978n, // 103: movhpd xmm8, m64
+    0x5052454654434821n, // 104: prefetch/prefetchw (0F 0D) are nops
+    0x4d50582d4e4f5021n, // 105: mpx 0F 1A/0F 1B are nops
 ];
 
 const emulator = new V86({
