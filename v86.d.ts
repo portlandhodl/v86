@@ -527,6 +527,14 @@ export interface V86Options {
     virtio_console?: ConsoleConfig;
 
     /**
+     * Add a virtio-gpu device (2D command set only, no 3D acceleration).
+     * Set to `true` for a 1024x768 preferred mode, or pass dimensions.
+     * Displayed on the screen container (WebGPU when available, 2D canvas otherwise).
+     * @default undefined (device not present)
+     */
+    virtio_gpu?: boolean | { width?: number, height?: number };
+
+    /**
      * Emulator screen element (only browsers).
      * Only provided for backwards compatibility, use {@link V86Options.screen} instead.
      * @deprecated
