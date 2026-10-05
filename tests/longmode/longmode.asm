@@ -1086,6 +1086,31 @@ t81_done:
     FOLD qword [rdi]
     mov [r15 + 100*8], r14
 
+    ; ======== test 101-103: movhps, movlhps and movhpd (0F 16) into xmm8-15: these must
+    ; write the high qword of the REX-extended register (they used to write past reg_xmm)
+    mov rax, 0x0123456789ABCDEF
+    mov rcx, 0xFEDCBA9876543210
+    movq xmm10, rax
+    push rcx
+    movhps xmm10, [rsp]               ; REX.R 0F 16 /m
+    pop rcx
+    pextrq r8, xmm10, 1
+    movq xmm2, rcx
+    movq xmm15, rax
+    movlhps xmm15, xmm2               ; REX.R 0F 16 /r
+    pextrq r9, xmm15, 1
+    movq r10, xmm15
+    xor r9, r10
+    mov rdx, 0x0F1E2D3C4B5A6978
+    movq xmm8, rcx
+    push rdx
+    movhpd xmm8, [rsp]                ; 66 REX.R 0F 16 /m
+    pop rdx
+    pextrq r10, xmm8, 1
+    mov [r15 + 101*8], r8
+    mov [r15 + 102*8], r9
+    mov [r15 + 103*8], r10
+
     ; mask all PIC interrupts: user mode runs with IF set below (test 84)
     mov al, 0xFF
     out 0x21, al

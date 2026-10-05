@@ -133,6 +133,9 @@ const expected = [
     0x7a87c5aef2b81b06n, // 98: cmpxchg (64/32-bit, memory/register)
     0x1c8fe0026780e30bn, // 99: xadd, inc/dec/add/sub/or/and (locked)
     0xa798e5ab28bdd1ccn, // 100: xchg, cmpxchg16b, lock bts/btr
+    0xfedcba9876543210n, // 101: movhps xmm10, m64
+    0xffffffffffffffffn, // 102: movlhps xmm15, xmm2 (high ^ low)
+    0x0f1e2d3c4b5a6978n, // 103: movhpd xmm8, m64
 ];
 
 const emulator = new V86({
