@@ -1111,6 +1111,20 @@ t81_done:
     mov [r15 + 102*8], r9
     mov [r15 + 103*8], r10
 
+    ; ======== test 104: prefetch/prefetchw (0F 0D /r, memory forms) are hints and must not
+    ; fault, including on unmapped addresses (chrome's memcpy uses prefetchw unconditionally)
+    mov r8, 0x5052454654434821
+    lea rsi, [r15 + 104*8]
+    prefetch [rsi]                    ; 0F 0D /0
+    prefetchw [rsi + 64]              ; 0F 0D /1
+    db 0x0F, 0x0D, 0x16               ; 0F 0D /2 [rsi]
+    db 0x0F, 0x0D, 0x3E               ; 0F 0D /7 [rsi]
+    db 0x41, 0x0F, 0x0D, 0x0C, 0x30   ; REX.B 0F 0D /1 [r8 + rsi]: non-canonical address
+    prefetchw [rel $ + 0x100]         ; rip-relative
+    mov rax, 0x7FFF00000000
+    prefetchw [rax]                   ; unmapped
+    mov [r15 + 104*8], r8
+
     ; mask all PIC interrupts: user mode runs with IF set below (test 84)
     mov al, 0xFF
     out 0x21, al

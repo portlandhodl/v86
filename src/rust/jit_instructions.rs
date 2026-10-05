@@ -5070,6 +5070,11 @@ pub fn instr_0F31_jit(ctx: &mut JitContext) {
 
 pub fn instr_0F0B_jit(ctx: &mut JitContext) { codegen::gen_trigger_ud(ctx) }
 
+pub fn instr_0F0D_mem_jit(_ctx: &mut JitContext, _modrm_byte: ModrmByte, _reg: u32) {}
+pub fn instr_0F0D_reg_jit(ctx: &mut JitContext, _r1: u32, _r2: u32) {
+    codegen::gen_trigger_ud(ctx);
+}
+
 pub fn instr_0F18_mem_jit(_ctx: &mut JitContext, _modrm_byte: ModrmByte, _reg: u32) {}
 pub fn instr_0F18_reg_jit(_ctx: &mut JitContext, _r1: u32, _r2: u32) {}
 

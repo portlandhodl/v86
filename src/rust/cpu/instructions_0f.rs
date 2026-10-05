@@ -738,11 +738,11 @@ pub unsafe fn instr_0F0B() {
 }
 #[no_mangle]
 pub unsafe fn instr_0F0C() { undefined_instruction(); }
-#[no_mangle]
-pub unsafe fn instr_0F0D() {
-    // nop
-    undefined_instruction();
+pub unsafe fn instr_0F0D_mem(_addr: u64, _r: i32) {
+    // prefetch (/0), prefetchw (/1) and the other /r: cache hints, nop for us. Every x86-64
+    // cpu executes these (as prefetches or as nops), and software uses them unconditionally
 }
+pub unsafe fn instr_0F0D_reg(_r1: i32, _r2: i32) { trigger_ud(); }
 #[no_mangle]
 pub unsafe fn instr_0F0E() { undefined_instruction(); }
 #[no_mangle]
