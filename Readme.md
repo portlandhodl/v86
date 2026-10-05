@@ -40,12 +40,14 @@ The roadmap, design notes and every long-mode bug found so far are in
 - 64-bit instructions: REX prefixes and 16 GPRs, RIP-relative addressing,
   default-64 opcodes, `movsxd`, `cmpxchg16b`, qword string ops including
   `rep` forms, `moffs64`, `rdrand`, 64-bit far calls, jumps and returns.
-- SSE through SSE3, with all 16 xmm registers in 64-bit mode, REX.W GPR<->XMM
-  moves and conversions, and `fxsave`/`fxrstor` in 64-bit format.
+- SSE through SSE4.2 (SSE3, SSSE3, SSE4.1, SSE4.2), with all 16 xmm registers in
+  64-bit mode, REX.W GPR<->XMM moves and conversions, and `fxsave`/`fxrstor` in
+  64-bit format.
 - System: 16-byte IDT gates, 64-bit interrupt frames, TSS RSP0-2 and IST stack
   switches, `iretq`, `syscall`/`sysret`, `swapgs`, FS/GS/KERNEL_GS_BASE MSRs,
   NMIs.
-- CPUID reports the x86-64-v1 baseline plus SSE3, POPCNT, RDRAND, NX,
+- CPUID reports the x86-64-v1 baseline plus SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT,
+  RDRAND, NX,
   LAHF/SAHF and SMEP, with 48 linear and 32 physical address bits.
 - An x87 FPU using Berkeley SoftFloat (precise, but slow).
 - Two execution engines that share one instruction table: an interpreter and
@@ -62,7 +64,7 @@ card, virtio (9p filesystem, network, console, balloon), a SoundBlaster 16, a
 serial port and a Hayes-compatible modem.
 
 **Limits**: one CPU, guest physical memory up to 4 GiB (wasm32), no 1 GiB
-pages, no x2APIC, no SSSE3/SSE4/AVX, no 3D graphics (OpenGL in guests is
+pages, no x2APIC, no AVX, no 3D graphics (OpenGL in guests is
 software-rendered).
 
 ## Getting started

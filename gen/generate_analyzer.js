@@ -8,7 +8,7 @@ import url from "node:url";
 
 import x86_table from "./x86_table.js";
 import * as rust_ast from "./rust_ast.js";
-import { hex, get_switch_value, get_switch_exist, finalize_table_rust } from "./util.js";
+import { hex, get_switch_value, get_switch_exist, finalize_table_rust, OPCODE_MAPS, group_by_opcode_map, map_name_part } from "./util.js";
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url));
 const OUT_DIR = path.join(__dirname, "..", "src/rust/gen/");
@@ -20,11 +20,13 @@ const gen_all = get_switch_exist("--all");
 const to_generate = {
     analyzer: gen_all || table_arg === "analyzer",
     analyzer0f: gen_all || table_arg === "analyzer0f",
+    analyzer0f38: gen_all || table_arg === "analyzer0f38",
+    analyzer0f3a: gen_all || table_arg === "analyzer0f3a",
 };
 
 assert(
     Object.keys(to_generate).some(k => to_generate[k]),
-    "Pass --table [analyzer|analyzer0f] or --all to pick which tables to generate"
+    "Pass --table [analyzer|analyzer0f|analyzer0f38|analyzer0f3a] or --all to pick which tables to generate"
 );
 
 gen_table();
@@ -97,8 +99,9 @@ function make_instruction_name(encoding, size)
 
     assert(first_prefix === "" || first_prefix === "0F" || first_prefix === "F2" || first_prefix === "F3");
     assert(second_prefix === "" || second_prefix === "66" || second_prefix === "F2" || second_prefix === "F3");
+    assert(!encoding.map || first_prefix === "0F");
 
-    return `instr${suffix}_${second_prefix}${first_prefix}${opcode_hex}${fixed_g_suffix}`;
+    return `instr${suffix}_${second_prefix}${first_prefix}${map_name_part(encoding)}${opcode_hex}${fixed_g_suffix}`;
 }
 
 function gen_instruction_body(encodings, size)
@@ -387,30 +390,9 @@ function gen_instruction_body_after_fixed_g(encoding, size)
     }
 }
 
-function gen_table()
+function gen_cases(by_opcode)
 {
-    let by_opcode = Object.create(null);
-    let by_opcode0f = Object.create(null);
-
-    for(let o of x86_table)
-    {
-        let opcode = o.opcode;
-
-        if((opcode & 0xFF00) === 0x0F00)
-        {
-            opcode &= 0xFF;
-            by_opcode0f[opcode] = by_opcode0f[opcode] || [];
-            by_opcode0f[opcode].push(o);
-        }
-        else
-        {
-            opcode &= 0xFF;
-            by_opcode[opcode] = by_opcode[opcode] || [];
-            by_opcode[opcode].push(o);
-        }
-    }
-
-    let cases = [];
+    const cases = [];
     for(let opcode = 0; opcode < 0x100; opcode++)
     {
         let encoding = by_opcode[opcode];
@@ -442,7 +424,7 @@ function gen_table()
             });
         }
     }
-    const table = {
+    return {
         type: "switch",
         condition: "opcode",
         cases,
@@ -450,86 +432,34 @@ function gen_table()
             body: ["dbg_assert!(false);"]
         },
     };
+}
 
-    if(to_generate.analyzer)
+function gen_table()
+{
+    const by_map = group_by_opcode_map(x86_table);
+
+    for(const map of OPCODE_MAPS)
     {
+        const name = "analyzer" + map;
+        if(!to_generate[name])
+        {
+            continue;
+        }
+
         const code = [
+            ...(map === "" ? [] : ["#![allow(unused)]"]),
             "#[cfg_attr(rustfmt, rustfmt_skip)]",
             "use crate::analysis;",
             "use crate::prefix;",
             "use crate::cpu_context;",
             "pub fn analyzer(opcode: u32, cpu: &mut cpu_context::CpuContext, analysis: &mut analysis::Analysis) {",
-            table,
+            gen_cases(by_map[map]),
             "}",
         ];
 
         finalize_table_rust(
             OUT_DIR,
-            "analyzer.rs",
-            rust_ast.print_syntax_tree([].concat(code)).join("\n") + "\n"
-        );
-    }
-
-    const cases0f = [];
-    for(let opcode = 0; opcode < 0x100; opcode++)
-    {
-        let encoding = by_opcode0f[opcode];
-
-        assert(encoding && encoding.length);
-
-        let opcode_hex = hex(opcode, 2);
-        let opcode_high_hex = hex(opcode | 0x100, 2);
-
-        if(encoding[0].os)
-        {
-            cases0f.push({
-                conditions: [`0x${opcode_hex}`],
-                body: gen_instruction_body(encoding, 16),
-            });
-            cases0f.push({
-                conditions: [`0x${opcode_high_hex}`],
-                body: gen_instruction_body(encoding, 32),
-            });
-            cases0f.push({
-                conditions: [`0x${hex(opcode | 0x200, 2)}`],
-                body: gen_instruction_body(encoding, 64),
-            });
-        }
-        else
-        {
-            let block = {
-                conditions: [`0x${opcode_hex}`, `0x${opcode_high_hex}`, `0x${hex(opcode | 0x200, 2)}`],
-                body: gen_instruction_body(encoding, undefined),
-            };
-            cases0f.push(block);
-        }
-    }
-
-    const table0f = {
-        type: "switch",
-        condition: "opcode",
-        cases: cases0f,
-        default_case: {
-            body: ["dbg_assert!(false);"]
-        },
-    };
-
-    if(to_generate.analyzer0f)
-    {
-        const code = [
-            "#![allow(unused)]",
-            "#[cfg_attr(rustfmt, rustfmt_skip)]",
-            "use crate::analysis;",
-            "use crate::prefix;",
-            "use crate::cpu_context;",
-            "pub fn analyzer(opcode: u32, cpu: &mut cpu_context::CpuContext, analysis: &mut analysis::Analysis) {",
-            table0f,
-            "}"
-        ];
-
-        finalize_table_rust(
-            OUT_DIR,
-            "analyzer0f.rs",
+            name + ".rs",
             rust_ast.print_syntax_tree([].concat(code)).join("\n") + "\n"
         );
     }

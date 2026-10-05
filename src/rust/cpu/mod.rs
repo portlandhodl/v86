@@ -8,6 +8,7 @@ pub mod guest;
 pub mod instructions;
 pub mod instructions_0f;
 pub mod instructions_64;
+pub mod instructions_0f38_0f3a;
 pub mod ioapic;
 pub mod memory;
 pub mod misc_instr;

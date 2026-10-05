@@ -30,6 +30,7 @@ use crate::cpu::misc_instr::{
 use crate::cpu::misc_instr::{lar, lsl, verr, verw};
 use crate::cpu::misc_instr::{lss16, lss32};
 use crate::cpu::sse_instr::*;
+pub use crate::cpu::instructions_0f38_0f3a::*;
 
 #[no_mangle]
 pub unsafe fn instr16_0F00_0_mem(addr: u64) {
@@ -1786,12 +1787,20 @@ pub unsafe fn instr_0F37() {
     // getsec
     undefined_instruction();
 }
+/// Undefined opcodes of the three-byte maps (see x86_table.js)
 #[no_mangle]
-pub unsafe fn instr_0F38() { unimplemented_sse(); }
+pub unsafe fn instr_ud() { trigger_ud(); }
+
+// escape to the 0F 38 map, indexed like the 0F table (opcode | operand size tier << 8)
+pub unsafe fn instr16_0F38() { crate::gen::interpreter0f38::run(return_on_pagefault!(read_imm8()) as u32) }
+pub unsafe fn instr32_0F38() { crate::gen::interpreter0f38::run(return_on_pagefault!(read_imm8()) as u32 | 0x100) }
+pub unsafe fn instr64_0F38() { crate::gen::interpreter0f38::run(return_on_pagefault!(read_imm8()) as u32 | 0x200) }
 #[no_mangle]
 pub unsafe fn instr_0F39() { unimplemented_sse(); }
-#[no_mangle]
-pub unsafe fn instr_0F3A() { unimplemented_sse(); }
+// escape to the 0F 3A map, indexed like the 0F table (opcode | operand size tier << 8)
+pub unsafe fn instr16_0F3A() { crate::gen::interpreter0f3a::run(return_on_pagefault!(read_imm8()) as u32) }
+pub unsafe fn instr32_0F3A() { crate::gen::interpreter0f3a::run(return_on_pagefault!(read_imm8()) as u32 | 0x100) }
+pub unsafe fn instr64_0F3A() { crate::gen::interpreter0f3a::run(return_on_pagefault!(read_imm8()) as u32 | 0x200) }
 #[no_mangle]
 pub unsafe fn instr_0F3B() { unimplemented_sse(); }
 #[no_mangle]
@@ -3695,7 +3704,7 @@ pub unsafe fn instr_0FA2() {
         1 => {
             eax = 3 | 7 << 4 | 6 << 8; // pentium3
             ebx = 1 << 16 | 8 << 8; // cpu count, clflush size
-            ecx = 1 << 0 | 1 << 23 | 1 << 30; // sse3, popcnt, rdrand
+            ecx = 1 << 0 | 1 << 9 | 1 << 19 | 1 << 20 | 1 << 23 | 1 << 30; // sse3, ssse3, sse4.1, sse4.2, popcnt, rdrand
             let vme = 0 << 1;
             if config::VMWARE_HYPERVISOR_PORT {
                 ecx |= 1 << 31

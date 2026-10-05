@@ -1255,6 +1255,14 @@ pub fn set_tlb_code(
     entries: &Vec<(u16, u16)>,
     state_flags: CachedStateFlags,
 ) {
+    // no entry points for non-executable pages: cycle_internal enters the jitted code through
+    // them without fetching (and checking nx) first
+    let entry = unsafe { cpu::tlb_pick_entry(virt_page << 12) } as i32;
+    if entry & (cpu::TLB_VALID | cpu::TLB_NOT_EXECUTABLE) != cpu::TLB_VALID {
+        cpu::clear_tlb_code(virt_page);
+        return;
+    }
+
     let slot = match unsafe { cpu::tlb_code_slot(virt_page) } {
         Some(slot) => slot,
         None => {

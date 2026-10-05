@@ -404,9 +404,9 @@ const encodings = [
     { opcode: 0x0F37, skip: 1, block_boundary: 1 }, // getsec
 
     // ssse3+
-    { opcode: 0x0F38, skip: 1, block_boundary: 1 },
+    { opcode: 0x0F38, os: 1, prefix: 1 }, // escape to the 0F 38 map
     { opcode: 0x0F39, skip: 1, block_boundary: 1 },
-    { opcode: 0x0F3A, skip: 1, block_boundary: 1 },
+    { opcode: 0x0F3A, os: 1, prefix: 1 }, // escape to the 0F 3A map
     { opcode: 0x0F3B, skip: 1, block_boundary: 1 },
     { opcode: 0x0F3C, skip: 1, block_boundary: 1 },
     { opcode: 0x0F3D, skip: 1, block_boundary: 1 },
@@ -867,6 +867,58 @@ for(let i = 0; i < 8; i++)
         { opcode: 0x0F90 | i, e: 1, custom: 1 },
         { opcode: 0x0F98 | i, e: 1, custom: 1 },
     ]);
+}
+
+// SSSE3, SSE4.1 and SSE4.2: the three-byte maps 0F 38 xx and 0F 3A xx (implemented in
+// src/rust/cpu/instructions_0f38_0f3a.rs). The forms without prefix operate on mmx registers.
+for(const op of [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x1C, 0x1D, 0x1E])
+{
+    // ssse3: pshufb, phaddw/d/sw, pmaddubsw, phsubw/d/sw, psignb/w/d, pmulhrsw, pabsb/w/d
+    encodings.push({ sse: 1, map: 0x38, opcode: 0x0F00 | op, e: 1 });
+    encodings.push({ sse: 1, map: 0x38, opcode: 0x660F00 | op, e: 1 });
+}
+encodings.push({ sse: 1, map: 0x3A, opcode: 0x0F0F, e: 1, imm8: 1 }); // palignr mm
+encodings.push({ sse: 1, map: 0x3A, opcode: 0x660F0F, e: 1, imm8: 1 }); // palignr xmm
+for(const op of [
+    0x10, 0x14, 0x15, // pblendvb, blendvps, blendvpd
+    0x17, // ptest
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, // pmovsx
+    0x28, 0x29, 0x2B, // pmuldq, pcmpeqq, packusdw
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, // pmovzx
+    0x37, // pcmpgtq (sse4.2)
+    0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, // pmin/pmax
+    0x40, 0x41, // pmulld, phminposuw
+])
+{
+    encodings.push({ sse: 1, map: 0x38, opcode: 0x660F00 | op, e: 1 });
+}
+encodings.push({ sse: 1, map: 0x38, opcode: 0x660F2A, e: 1, reg_ud: 1 }); // movntdqa
+encodings.push({ map: 0x38, opcode: 0xF20FF0, os: 1, e: 1 }); // crc32 r, r/m8 (sse4.2)
+encodings.push({ map: 0x38, opcode: 0xF20FF1, os: 1, e: 1 }); // crc32 r, r/m16/32/64 (sse4.2)
+for(const op of [
+    0x08, 0x09, 0x0A, 0x0B, // roundps, roundpd, roundss, roundsd
+    0x0C, 0x0D, 0x0E, // blendps, blendpd, pblendw
+    0x14, 0x15, 0x16, 0x17, // pextrb, pextrw, pextrd/q, extractps
+    0x20, 0x21, 0x22, // pinsrb, insertps, pinsrd/q
+    0x40, 0x41, 0x42, // dpps, dppd, mpsadbw
+    0x60, 0x61, 0x62, 0x63, // pcmpestrm, pcmpestri, pcmpistrm, pcmpistri (sse4.2)
+])
+{
+    encodings.push({ sse: 1, map: 0x3A, opcode: 0x660F00 | op, e: 1, imm8: 1 });
+}
+
+// The three-byte maps (0F 38 xx, 0F 3A xx): opcodes without an entry, and the no-prefix form of
+// opcodes that only exist with a prefix, are undefined (handled by instr_ud). These entries come
+// last within their opcode, so the defined ones decide how the opcode is decoded.
+for(const map of [0x38, 0x3A])
+{
+    for(let op = 0; op < 0x100; op++)
+    {
+        if(!encodings.some(e => e.map === map && e.opcode === (0x0F00 | op)))
+        {
+            encodings.push({ opcode: 0x0F00 | op, map, ud: 1, skip: 1, block_boundary: 1 });
+        }
+    }
 }
 
 encodings.sort((e1, e2) => {
