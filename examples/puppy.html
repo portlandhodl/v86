@@ -1,0 +1,157 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Puppy Linux (x86-64) in v86</title>
+<!--
+    Boots BookwormPup64 (Puppy Linux, x86-64) from its ISO, streamed with HTTP
+    range requests. Same parameters as xubuntu.html (?direct, ?mem, ?iso,
+    ?serial, ?net, ?nic, ?doh). For ?direct, extract the kernel and initrd:
+
+        mkdir -p images/puppy
+        bsdtar -xf images/bookwormpup64-10.0.12.iso -C images/puppy vmlinuz initrd.gz
+-->
+<style>
+    body { background: #1b1b1b; color: #ddd; font: 14px sans-serif; margin: 0; }
+    #bar { padding: 6px 10px; background: #2a2a2a; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    #bar button { background: #444; color: #eee; border: 1px solid #666; padding: 3px 8px; cursor: pointer; }
+    #status { margin-left: auto; font-family: monospace; }
+    #screen_container { margin: 10px; display: inline-block; }
+    #screen_container canvas { image-rendering: pixelated; }
+    #serial { display: none; width: calc(100% - 20px); height: 200px; margin: 0 10px 10px; background: #000;
+        color: #ccc; font: 12px monospace; }
+</style>
+<div id="bar">
+    <b>BookwormPup64 10.0.12 (x86-64)</b>
+    <button id="enter">Enter</button>
+    <button id="cad">Ctrl+Alt+Del</button>
+    <button id="lock">Lock mouse</button>
+    <button id="fullscreen">Fullscreen</button>
+    <span id="status">loading...</span>
+</div>
+<div id="screen_container">
+    <div style="white-space: pre; font: 14px monospace; line-height: 14px"></div>
+    <canvas style="display: none"></canvas>
+</div>
+<textarea id="serial" readonly></textarea>
+<script src="../build/libv86.js"></script>
+<script>
+"use strict";
+window.onload = function()
+{
+    const params = new URLSearchParams(location.search);
+    const iso = params.get("iso") || "../images/bookwormpup64-10.0.12.iso";
+    const memory_mb = +params.get("mem") || 12 * 1024;
+    const direct = params.has("direct");
+
+    const net = params.get("net") || "wisp";
+    const relay_url =
+        net === "none" ? undefined :
+        net === "wisp" ? `${location.protocol === "https:" ? "wisps" : "wisp"}://${location.host}/wisp/` :
+        net;
+    const net_device = {
+        type: params.get("nic") || "ne2k",
+        relay_url,
+        ...(params.has("doh") ? { doh_server: params.get("doh") } : {}),
+    };
+
+    // more than 3 GiB of guest RAM needs the mem64 build (WebAssembly 3.0: memory64 and
+    // multi-memory)
+    const mem64 = memory_mb > 3072;
+    if(mem64 && !supports_wasm_mem64())
+    {
+        document.getElementById("status").textContent =
+            `${memory_mb} MiB of RAM need WebAssembly memory64 + multi-memory ` +
+            "(Chrome 133+); this browser lacks them. Try ?mem=3072.";
+        return;
+    }
+
+    const emulator = new V86({
+        wasm_path: mem64 ? "../build/v86-mem64.wasm" : "../build/v86.wasm",
+        memory_size: memory_mb * 1024 * 1024,
+        // 32 MiB allows up to 1920x1080 at 32 bits per pixel
+        vga_memory_size: 32 * 1024 * 1024,
+        screen_container: document.getElementById("screen_container"),
+        bios: { url: "../bios/seabios.bin" },
+        vga_bios: { url: "../bios/vgabios.bin" },
+        cdrom: { url: iso, async: true },
+        // no floppy drives (otherwise the guest probes two empty ones and logs i/o errors)
+        fdc: { fda: { drive_type: 0 }, fdb: { drive_type: 0 } },
+        // The kernel uses the io apic (described by SeaBIOS's MP table), which
+        // v86 only enables together with acpi
+        acpi: true,
+        net_device,
+        ...(direct ? {
+            bzimage: { url: "../images/puppy/vmlinuz" },
+            initrd: { url: "../images/puppy/initrd.gz" },
+            cmdline: "pmedia=cd console=tty0 console=ttyS0",
+        } : {}),
+        autostart: true,
+    });
+
+    const status = document.getElementById("status");
+    let last_counter = 0;
+    let last_time = performance.now();
+    let download = "";
+
+    emulator.add_listener("download-progress", function(e)
+    {
+        if(e.lengthComputable && e.total > 1e6)
+        {
+            download = `loading ${e.file_name}: ${(e.loaded / e.total * 100).toFixed(0)}% | `;
+        }
+    });
+    emulator.add_listener("emulator-ready", () => { download = ""; });
+
+    setInterval(function()
+    {
+        const counter = emulator.get_instruction_counter();
+        const now = performance.now();
+        const mips = ((counter - last_counter) >>> 0) / (now - last_time) / 1000;
+        last_counter = counter;
+        last_time = now;
+        status.textContent = `${download}${emulator.is_running() ? mips.toFixed(0) + " MIPS" : "stopped"} | ${memory_mb} MiB | net: ${net_status()}`;
+    }, 1000);
+
+    function net_status()
+    {
+        if(!relay_url) return "off";
+        const ws = emulator.network_adapter && emulator.network_adapter.wispws;
+        if(!ws) return `${net_device.type}, ${net}`;
+        return `${net_device.type}, ${net} ` +
+            (ws.readyState === WebSocket.OPEN ? "connected" : "not connected (serve.mjs --wisp?)");
+    }
+
+    // keyboard helpers (scancode set 1)
+    document.getElementById("enter").onclick = () => emulator.keyboard_send_scancodes([0x1C, 0x9C]);
+    document.getElementById("cad").onclick = () => emulator.keyboard_send_scancodes([
+        0x1D, 0x38, 0xE0, 0x53, // ctrl, alt, delete down
+        0xE0, 0xD3, 0xB8, 0x9D, // and up
+    ]);
+    document.getElementById("lock").onclick = () => emulator.lock_mouse();
+    document.getElementById("fullscreen").onclick = () => emulator.screen_go_fullscreen();
+
+    if(params.has("serial"))
+    {
+        const serial = document.getElementById("serial");
+        serial.style.display = "block";
+        emulator.add_listener("serial0-output-byte", function(byte)
+        {
+            serial.value += String.fromCharCode(byte);
+            if(serial.value.length > 200000) serial.value = serial.value.slice(-100000);
+            serial.scrollTop = serial.scrollHeight;
+        });
+    }
+
+    window.emulator = emulator;
+};
+
+// a module with two memories, the second one 64-bit
+function supports_wasm_mem64()
+{
+    return WebAssembly.validate(new Uint8Array([
+        0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, // magic, version
+        0x05, 0x05, 0x02, // memory section, 5 bytes, 2 memories
+        0x00, 0x00, // 32-bit, min 0
+        0x04, 0x00, // 64-bit, min 0
+    ]));
+}
+</script>
