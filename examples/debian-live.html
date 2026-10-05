@@ -11,7 +11,9 @@
             --strip-components 1 live/vmlinuz live/initrd.img
 
     The display is the emulated virtio-gpu (presented through WebGPU, 2D canvas
-    fallback). ?vga uses the VGA card instead.
+    fallback), which implies ?direct: booting the ISO stops at the ISOLINUX menu,
+    which is drawn on the VGA card. ?vga uses the VGA card (and ISO boot, unless
+    ?direct) instead.
 -->
 <style>
     body { background: #1b1b1b; color: #ddd; font: 14px sans-serif; margin: 0; }
@@ -45,7 +47,7 @@ window.onload = function()
     const iso = params.get("iso") || "../images/debian-live-testing-amd64-xfce.iso";
     const memory_mb = +params.get("mem") || 12 * 1024;
     const virtio_gpu = !params.has("vga");
-    const direct = params.has("direct");
+    const direct = params.has("direct") || virtio_gpu;
 
     const net = params.get("net") || "wisp";
     const relay_url =
