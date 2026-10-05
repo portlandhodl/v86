@@ -59,7 +59,7 @@ window.onload = function()
         bzimage: { url: kernel },
         initrd: { url: initrd },
         cdrom: { url: iso, async: true },
-        cmdline: boot + " console=ttyS0 modprobe.blacklist=bochs" + (params.has("nographconsole") ? "" : " console=tty0"),
+        cmdline: boot + " console=ttyS0" + (params.has("nographconsole") ? "" : " console=tty0"),
         fdc: { fda: { drive_type: 0 }, fdb: { drive_type: 0 } },
         acpi: true,
         // no NIC: the guest's skb_segment_list oops (a CPU emulation bug in

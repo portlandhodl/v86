@@ -9,6 +9,9 @@
         mkdir -p images/debian-live
         bsdtar -xf images/debian-live-testing-amd64-xfce.iso -C images/debian-live \
             --strip-components 1 live/vmlinuz live/initrd.img
+
+    The display is the emulated virtio-gpu (presented through WebGPU, 2D canvas
+    fallback). ?vga uses the VGA card instead.
 -->
 <style>
     body { background: #1b1b1b; color: #ddd; font: 14px sans-serif; margin: 0; }
@@ -41,6 +44,7 @@ window.onload = function()
     const params = new URLSearchParams(location.search);
     const iso = params.get("iso") || "../images/debian-live-testing-amd64-xfce.iso";
     const memory_mb = +params.get("mem") || 12 * 1024;
+    const virtio_gpu = !params.has("vga");
     const direct = params.has("direct");
 
     const net = params.get("net") || "wisp";
@@ -83,8 +87,12 @@ window.onload = function()
         ...(direct ? {
             bzimage: { url: "../images/debian-live/vmlinuz" },
             initrd: { url: "../images/debian-live/initrd.img" },
-            cmdline: "boot=live components console=tty0 console=ttyS0 quiet splash",
+            // udev coldplug takes longer than systemd's default 90 s device timeout at
+            // v86 speeds, so dev-ttyS0.device would time out (no serial getty)
+            cmdline: "boot=live components console=tty0 console=ttyS0 quiet splash " +
+                "systemd.default_device_timeout_sec=900",
         } : {}),
+        virtio_gpu,
         autostart: true,
     });
 
@@ -102,6 +110,15 @@ window.onload = function()
     });
     emulator.add_listener("emulator-ready", () => { download = ""; });
 
+    let gpu = virtio_gpu ? "gpu: waiting" : "vga";
+    if(virtio_gpu)
+    {
+        emulator.bus.register("virtio-gpu-set-scanout", function(s)
+        {
+            gpu = s.enabled ? `gpu: ${s.width}x${s.height}` : "gpu: off";
+        });
+    }
+
     setInterval(function()
     {
         const counter = emulator.get_instruction_counter();
@@ -109,7 +126,7 @@ window.onload = function()
         const mips = ((counter - last_counter) >>> 0) / (now - last_time) / 1000;
         last_counter = counter;
         last_time = now;
-        status.textContent = `${download}${emulator.is_running() ? mips.toFixed(0) + " MIPS" : "stopped"} | ${memory_mb} MiB | net: ${net_status()}`;
+        status.textContent = `${download}${emulator.is_running() ? mips.toFixed(0) + " MIPS" : "stopped"} | ${memory_mb} MiB | ${gpu} | net: ${net_status()}`;
     }, 1000);
 
     function net_status()

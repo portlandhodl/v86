@@ -58,8 +58,9 @@ const VGA_HOST_MEMORY_SPACE_SIZE = Uint32Array.from([
  * @param {BusConnector} bus
  * @param {ScreenAdapter|DummyScreenAdapter} screen
  * @param {number} vga_memory_size
+ * @param {boolean=} hide_pci_device
  */
-export function VGAScreen(cpu, bus, screen, vga_memory_size)
+export function VGAScreen(cpu, bus, screen, vga_memory_size, hide_pci_device)
 {
     this.cpu = cpu;
 
@@ -386,7 +387,13 @@ export function VGAScreen(cpu, bus, screen, vga_memory_size)
         (addr, value) => this.vga_memory_write(addr, value),
     );
 
-    cpu.devices.pci.register_device(this);
+    // With another display device (virtio-gpu) the PCI function is left out and only the
+    // legacy ISA VGA remains: Xorg takes the PCI boot_vga device as its primary GPU, so it
+    // would ignore the virtio-gpu KMS device and fail to start
+    if(!hide_pci_device)
+    {
+        cpu.devices.pci.register_device(this);
+    }
 }
 
 VGAScreen.prototype.get_state = function()
