@@ -888,7 +888,7 @@ pub unsafe fn instr_660F15_mem(addr: u64, r: i32) {
 }
 
 #[no_mangle]
-pub unsafe fn instr_0F16(source: u64, r: i32) { (*reg_xmm.offset(r as isize)).u64[1] = source; }
+pub unsafe fn instr_0F16(source: u64, r: i32) { (*reg_xmm_ptr(r)).u64[1] = source; }
 pub unsafe fn instr_0F16_mem(addr: u64, r: i32) {
     // movhps xmm, m64
     instr_0F16(return_on_pagefault!(safe_read64s(addr)), r);
