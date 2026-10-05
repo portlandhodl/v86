@@ -960,7 +960,8 @@ pub unsafe fn instr_0F20(r: i32, creg: i32) {
 
     match creg {
         0 => {
-            write_reg64(r, *cr as u64);
+            // zero-extended: bits 63:32 of cr0 are reserved (zero)
+            write_reg64(r, *cr as u32 as u64);
         },
         2 => {
             // cr2 holds the full 64-bit fault address in long mode
@@ -1056,7 +1057,8 @@ pub unsafe fn instr_0F22(r: i32, creg: i32) {
                 }
                 if data & CR4_PAE != 0
                     && *efer & EFER_LME == 0
-                    && 0 != (*cr.offset(4) ^ data) & (CR4_PGE | CR4_PSE | CR4_SMEP)
+                    && *cr.offset(0) & CR0_PG != 0
+                    && 0 != (*cr.offset(4) ^ data) & (CR4_PAE | CR4_PGE | CR4_PSE | CR4_SMEP)
                 {
                     load_pdpte(get_cr3());
                 }
@@ -1539,6 +1541,10 @@ pub unsafe fn instr_0F30() {
                 value & !(EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE) == 0,
                 "Unsupported efer bits"
             );
+            if (value ^ *efer) & EFER_NXE != 0 {
+                // tlb entries carry the nx bit only while nx is enabled
+                full_clear_tlb();
+            }
             // LMA is read-only (set by enabling paging while LME=1)
             *efer = value & !EFER_LMA | *efer & EFER_LMA;
             update_efer_lma();

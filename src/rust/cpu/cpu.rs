@@ -168,11 +168,12 @@ pub const PAGE_TABLE_DIRTY_MASK: i32 = 1 << 6;
 pub const PAGE_TABLE_PSE_MASK: i32 = 1 << 7;
 pub const PAGE_TABLE_GLOBAL_MASK: i32 = 1 << 8;
 // Reserved bits in 64-bit paging-structure entries (PAE/long mode): physical
-// address bits PHYSICAL_ADDRESS_BITS..51. Bits 52..62 are ignored (available to
-// software on real hardware), bit 63 is NX (handled separately against
-// EFER.NXE)
+// address bits PHYSICAL_ADDRESS_BITS..51. In long mode bits 52..62 are ignored
+// (available to software), bit 63 is NX (handled separately against EFER.NXE)
 pub const PHYSICAL_ADDRESS_BITS: u32 = 36;
 pub const PAE_ENTRY_RSVD: u64 = 0x000F_FFFF_FFFF_FFFF & !((1 << PHYSICAL_ADDRESS_BITS) - 1);
+// PAE paging outside of long mode also reserves bits 52..62
+pub const PAE_LEGACY_ENTRY_RSVD: u64 = 0x7FFF_FFFF_FFFF_FFFF & !((1 << PHYSICAL_ADDRESS_BITS) - 1);
 // The address field (bits 12..51) of 64-bit paging-structure entries
 pub const PAE_ENTRY_ADDRESS: u64 = 0x000F_FFFF_FFFF_F000;
 // Reserved bits 20:13 in 2 MiB PDEs (PAE/long mode); 4 MiB PDEs in legacy
@@ -2803,14 +2804,15 @@ pub unsafe fn do_page_walk(
 
     let cr0 = *cr;
     let cr4 = *cr.offset(4);
+    // NX needs EFER.NXE and 64-bit page table entries (PAE or long mode, which implies PAE);
+    // 32-bit entries are sign-extended, so their bit 63 isn't an NX bit
+    let nx_enabled = *efer & EFER_NXE != 0 && cr4 & CR4_PAE != 0;
     // I/D (bit 4) of the page-fault error code: set for instruction fetches
-    // when EFER.NXE or CR4.SMEP is enabled (matches PAE/long-mode hw behavior
-    // and kvm-unit-tests' expectations)
-    let pfec_fetch = for_fetch && (*efer & EFER_NXE != 0 || cr4 & CR4_SMEP != 0);
+    // when NX (see above) or CR4.SMEP is enabled
+    let pfec_fetch = for_fetch && (nx_enabled || cr4 & CR4_SMEP != 0);
     // fetch faults determined by the final permissions (NX, SMEP): raised
     // before any accessed/dirty bits touch the entries
-    let long_mode_nx = *efer & EFER_LMA != 0 && *efer & EFER_NXE != 0;
-    let nx_fetch_fault = for_fetch && long_mode_nx;
+    let nx_fetch_fault = for_fetch && nx_enabled;
     let smep_fetch_fault = for_fetch && cr0 & CR0_PG != 0 && cr4 & CR4_SMEP != 0 && !user;
 
     if cr0 & CR0_PG == 0 {
@@ -2916,8 +2918,9 @@ pub unsafe fn do_page_walk(
         // bits (v86 maps memory below 4 GiB) and NX while EFER.NXE=0. Only
         // 64-bit-entry (PAE/long-mode) formats; 32-bit entries are
         // read32s-sign-extended, so gate on pae
+        let entry_rsvd = if long_mode { PAE_ENTRY_RSVD } else { PAE_LEGACY_ENTRY_RSVD };
         if pae
-            && (page_dir_entry & PAE_ENTRY_RSVD != 0
+            && (page_dir_entry & entry_rsvd != 0
                 || *efer & EFER_NXE == 0 && page_dir_entry & (1u64 << 63) != 0)
         {
             if side_effects {
@@ -2932,7 +2935,8 @@ pub unsafe fn do_page_walk(
         allow_user &= page_dir_entry as i32 & PAGE_TABLE_USER_MASK != 0;
         allow_fetch &= page_dir_entry & 0x8000_0000_0000_0000u64 == 0;
 
-        if 0 != page_dir_entry as i32 & PAGE_TABLE_PSE_MASK && (long_mode || 0 != cr4 & CR4_PSE) {
+        // PAE (and long mode) always honour the size bit, 32-bit paging only with CR4.PSE
+        if 0 != page_dir_entry as i32 & PAGE_TABLE_PSE_MASK && (pae || 0 != cr4 & CR4_PSE) {
             // size bit is set
 
             if pae && page_dir_entry & PAE_PDE_PS_RSVD != 0 {
@@ -2993,7 +2997,7 @@ pub unsafe fn do_page_walk(
             let present = page_table_entry as i32 & PAGE_TABLE_PRESENT_MASK != 0;
             if pae
                 && present
-                && (page_table_entry & PAE_ENTRY_RSVD != 0
+                && (page_table_entry & entry_rsvd != 0
                     || *efer & EFER_NXE == 0 && page_table_entry & (1u64 << 63) != 0)
             {
                 if side_effects {
@@ -3074,14 +3078,14 @@ pub unsafe fn do_page_walk(
         // address part)
         true
     };
-    // long_mode_nx computed at the top of this function
+    // nx_enabled computed at the top of this function
     let info_bits = TLB_VALID
         | if for_writing { 0 } else { TLB_READONLY }
         | if allow_user { 0 } else { TLB_NO_USER }
         | if is_in_mapped_range { TLB_IN_MAPPED_RANGE } else { 0 }
         | if global && 0 != cr4 & CR4_PGE { TLB_GLOBAL } else { 0 }
         | if has_code { TLB_HAS_CODE } else { 0 }
-        | if long_mode_nx && !allow_fetch { TLB_NOT_EXECUTABLE } else { 0 };
+        | if nx_enabled && !allow_fetch { TLB_NOT_EXECUTABLE } else { 0 };
 
     if side_effects {
         // bake in the host address (the addition with memory::mem8) to save an instruction
@@ -4262,7 +4266,7 @@ pub fn translate_address_read_code(address: u64) -> OrPageFault<u64> {
         }
         let phys = phys_of_tlb_entry(full_entry, address);
         let entry = full_entry as i32;
-        let check_nx = *efer & EFER_NXE != 0 && *efer & EFER_LMA != 0;
+        let check_nx = *efer & EFER_NXE != 0 && *cr.offset(4) & CR4_PAE != 0;
         let check_smep = *cr.offset(0) & CR0_PG != 0 && *cr.offset(4) & CR4_SMEP != 0 && *cpl != 3;
         if check_nx && entry & (TLB_VALID | TLB_NOT_EXECUTABLE) == TLB_VALID | TLB_NOT_EXECUTABLE {
             trigger_pagefault_nx(address);
