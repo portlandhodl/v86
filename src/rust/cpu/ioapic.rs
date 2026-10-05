@@ -1,6 +1,6 @@
 // http://download.intel.com/design/chipsets/datashts/29056601.pdf
 
-use crate::cpu::{apic, global_pointers::acpi_enabled};
+use crate::cpu::apic;
 use std::sync::{Mutex, MutexGuard};
 
 const IOAPIC_LOG_VERBOSE: bool = false;
@@ -191,9 +191,7 @@ fn clear_irq_internal(ioapic: &mut Ioapic, i: u8) {
 }
 
 pub fn read32(addr: u32) -> u32 {
-    if unsafe { !*acpi_enabled } {
-        return 0;
-    }
+    // present regardless of ACPI, as on real hardware
     read32_internal(&mut get_ioapic(), addr)
 }
 
@@ -241,9 +239,6 @@ fn read32_internal(ioapic: &mut Ioapic, addr: u32) -> u32 {
 }
 
 pub fn write32(addr: u32, value: u32) {
-    if unsafe { !*acpi_enabled } {
-        return;
-    }
     write32_internal(&mut get_ioapic(), &mut apic::get_apic(), addr, value)
 }
 

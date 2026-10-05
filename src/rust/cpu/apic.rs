@@ -374,8 +374,10 @@ fn write32_internal(apic: &mut Apic, addr: u32, value: u32) {
                 );
             }
             else if destination_shorthand == 1 {
-                // self
-                deliver(apic, vector, IOAPIC_DELIVERY_FIXED, is_level);
+                // self: the shorthand selects the destination, not the
+                // delivery mode — keep the requested mode (INIT-to-self is
+                // used by kvm-unit-tests' init.flat)
+                deliver(apic, vector, delivery_mode, is_level);
             }
             else if destination_shorthand == 2 {
                 // all including self
@@ -557,7 +559,10 @@ fn deliver(apic: &mut Apic, vector: u8, mode: u8, is_level: bool) {
     }
 
     if mode == IOAPIC_DELIVERY_INIT {
-        // TODO
+        // INIT resets the target CPU (single-processor: always us). Deferred
+        // to the next instruction boundary so JIT-compiled code can't run on
+        // with stale state
+        unsafe { crate::cpu::cpu::request_cpu_init() };
         return;
     }
 

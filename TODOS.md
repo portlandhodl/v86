@@ -6,11 +6,15 @@ modern 64-bit Linux distributions can boot. It is written to be picked up by
 another engineer (human or LLM) with no prior context.
 
 **Status: Alpine 3.19 x86_64 boots from its ISO (SeaBIOS + ISOLINUX) to a
-root shell in ~28s with the 64-bit JIT (`tests/longmode/alpine.js`), and the
-shell is interactive (bench64: ~530 MIPS for 64-bit code vs ~80 interpreted).
-M1-M3 are complete (apart from optional items), M4 (64-bit JIT) meets its goal
-and has optional performance work left (§4). Next: graphical distributions
-such as Ubuntu (§4b). The work lives on branch `x86-64-long-mode`
+root shell in ~30s with the 64-bit JIT (`tests/longmode/alpine.js`), and the
+shell is interactive. 32-bit userspace runs on the 64-bit kernel
+(compatibility mode, `tests/api/compat32.js`). M1-M3 are complete, M4 (64-bit
+JIT) meets its goal and has optional performance work left (§4), and the
+CPU-completeness campaign (§3b) landed: no unimplemented instructions remain
+in the advertised feature set, the debug registers/TF/INT1 work, and every
+CPU-relevant kvm-unit-test passes. Guest RAM beyond 4 GiB works (§4c,
+merged; saved-state support open). Next: graphical distributions such as
+Ubuntu (§4b). The work lives on branch `x86-64-long-mode`
 (repo: https://github.com/portlandhodl/v86_64).**
 
 ---
@@ -53,26 +57,23 @@ such as Ubuntu (§4b). The work lives on branch `x86-64-long-mode`
 - 64-bit modrm/SIB resolution with RIP-relative addressing
   (`resolve_modrm64` in `src/rust/cpu/modrm.rs`).
 - ~330 core 64-bit instruction implementations in
-  `src/rust/cpu/instructions_64.rs`; 142 remain as `unimplemented!()` stubs
-  (see §3).
+  `src/rust/cpu/instructions_64.rs`; as of 2026-10 no `unimplemented!()`
+  stubs remain there or in the 0F map for the advertised feature set (the
+  surviving #UD sites are reserved/unsupported encodings by design).
 - Long-mode entry: EFER.LME/LMA, IA32_STAR/LSTAR/CSTAR/SFMASK,
   FS/GS/KERNEL_GS_BASE MSRs, CPUID 0x80000001/0x80000008, CS descriptor L-bit
   → `is_64`, 4-level page walk with 2 MiB pages.
 - Test: `make longmode-tests` (tests/longmode/) — enters long mode from the
-  reset vector for real and checks 39 results. Passes with and without JIT.
+  reset vector for real and checks 104 results. Passes with and without JIT.
 
-### M1 limitations (deliberate, marked "M1" in code)
+### M1 limitations (all resolved by M2/M4, kept for the record)
 
-- **Linear addresses are 32-bit everywhere.** `translate_address`, the TLB,
-  `instruction_pointer`, `modrm64` results etc. are i32; 64-bit addresses are
-  truncated to the low 4 GiB. This is the single biggest blocker for real
-  kernels. Sites: `grep -rn "M1 limitation\|M1:" src/rust/`
-- The JIT never compiles 64-bit pages (guard in
-  `jit_increase_hotness_and_maybe_compile`); all 64-bit code is interpreted.
-- No 64-bit interrupt/trap delivery (16-byte IDT gates, IST, iretq), no
-  SYSCALL/SYSRET/SWAPGS, no NX enforcement, no qword string ops, no moffs64
-  (0xA0–A3 in long mode would desync the instruction stream — must not be
-  reached), no cmpxchg16b, no 1 GiB pages.
+- ~~Linear addresses are 32-bit everywhere~~ (2.1 widened everything to 48
+  bits; physical addresses went to 52 bits in §4c).
+- ~~The JIT never compiles 64-bit pages~~ (M4).
+- ~~No 64-bit interrupt/trap delivery, SYSCALL/SYSRET/SWAPGS, NX, qword
+  string ops, moffs64, cmpxchg16b~~ (all in M2); no 1 GiB pages (still,
+  harmless).
 
 ### Build & test quick reference
 
@@ -323,8 +324,10 @@ Ordered tasks:
   `undefined_instruction()`.
 - Use IA32_STAR (CS/SS selectors), LSTAR (RIP), SFMASK (RFLAGS mask),
   EFER.SCE enable bit, KERNEL_GS_BASE for swapgs.
-- Also: sysenter/sysexit in compatibility mode should already mostly work;
-  check `instr_0F34/0F35`.
+- Also: ~~sysenter/sysexit in compatibility mode~~ — done 2026-10-04:
+  sysenter enters a 64-bit CS with the full-width MSRs when EFER.LMA=1;
+  sysexit returns to compat mode (64-bit REX.W sysexit is not implemented,
+  nothing known uses it).
 - rdfsbase/wrfsbase family (0F AE /0-3 with F3) if the kernel requires it
   (CPUID bit exists in real HW; only advertise if implemented).
 
@@ -333,49 +336,49 @@ Ordered tasks:
   TLB entries (new TLB flag, check on instruction fetch — see
   `translate_address_read` vs execution paths), EFER.NXE already accepted.
 
-### 2.5 Remaining instruction surface (stubs in instructions_64.rs)
-Run `grep -n unimplemented src/rust/cpu/instructions_64.rs`. Notable groups:
-- 0F 00/01 groups: sldt/str/lldt/ltr/verr/verw (mostly fine to #UD/ignore in
-  long mode for a Linux boot, but `sgdt`/`sidt`/`lgdt`/`lidt` need 10-byte
-  64-bit pseudo-descriptor forms — required!), swapgs (see 2.3),
-  monitor/mwait, invlpg 64-bit is same, invpcid optional.
-- 0F B2/B4/B5: lss/lfs/lgs (64-bit far pointer forms).
-- 0F C7 /1: cmpxchg16b (REX.W) — Linux uses it for some lockless paths;
-  implement early.
-- 0F C7 /6: rdrand (can return garbage-but-constant initially; check
-  carry-flag contract).
-- 0F B8: jmpe (Itanium — leave #UD), 0F 38/3C groups (SSE-ish, mostly fine to
-  leave).
-- String ops with 64-bit registers: movsq/stosq/cmpsq/scasq/lodsq — extend
-  `string.rs` (`Size::Q`, full-width RSI/RDI/RCX); the existing 32-bit forms
-  must use 64-bit address registers in long mode (today they truncate via
-  `read_reg32`, fine only because addresses are <4G).
-- moffs64 (A0–A3): in 64-bit mode the moffs immediate is 8 bytes. Today
-  `read_moffs` reads 4 — reaching these in long mode would desync execution.
-  Implement properly (they're rare in practice; GCC prefers RIP-relative).
-- FPU in long mode: forward the 0x2D9/0x2DD etc. stubs to the 32-bit
-  implementations (operand size is ignored for x87; REX.W is a no-op there).
-- SSE with REX: xmm8-15 register extension (reg_xmm array is 8 entries at
-  offset 832 — needs 16), 64-bit GPR<->XMM moves (66 48 0F 6E/7E),
-  `cvtsi2ss/sd r64`. The SSE interpreter bodies are shared; extend the xmm
-  register file and let REX.R/B extend xmm indices.
-- fxsave/fxrstor 64-bit format (RIP instead of CS:EIP fields).
+### 2.5 Remaining instruction surface — DONE (2026-10)
+
+No `unimplemented!()` stubs remain for the advertised feature set. Everything
+listed here was implemented by M2/M4: sgdt/sidt/lgdt/lidt 64-bit forms,
+swapgs, cmpxchg16b, rdrand, lss/lfs/lgs, qword string ops, moffs64, x87/SSE
+forwarding, xmm8-15, fxsave/fxrstor 64-bit format. monitor/mwait and invpcid
+are not advertised and #UD, as on hardware without the features.
+
+Still open (accuracy, not coverage — nothing known hits them):
+- The aligned SSE moves (`movaps`/`movapd`/`movdqa`, `movnt*`) don't #GP on
+  unaligned addresses (marked `XXX` in instructions_0f.rs / sse_instr.rs).
+- SSE conversion instructions ignore the MXCSR rounding mode (always
+  round-to-nearest) and never raise the precision exception.
+- The x87 BCD instructions (fbld/fbstp, 0xDF /4 /6) and the denormal flag
+  are unimplemented (the opcode is marked `skip` in the table).
+- rdpmc (0F 33) always #UDs; on hardware with CR4.PCE it works at any ring.
 
 ### 2.6 Mode-transition correctness
 - Opcodes invalid in 64-bit mode must #UD: daa/das/aaa/aas (27/2F/37/3F),
   push/pop es/ss/ds (06/07/17/1E — done), pusha/popa (60/61 — done), bound
   (62), salc (D6), les/lds (C4/C5 — done), far call/jmp immediate (9A/EA —
-  done). The non-os ones (daa family) still need the check.
+  done). All done, including the daa family.
 - Leaving long mode (clearing PG with LMA set): currently only partially
   handled (see `set_cr0`); real kernels may do this on kexec/panic paths.
 - Task switches, VM86: not needed for a Linux boot; leave.
-- **Compatibility mode (long mode with a 32-bit code segment) is largely
-  unimplemented**: 32-bit binaries under a 64-bit kernel don't work. The page
-  walk keys on EFER.LMA, but interrupt/exception delivery, iret, far
-  transfers and syscall paths key on `is_64` (CS.L), so an interrupt from
-  compat mode goes through the legacy path (`get_tss_ss_esp`), page-faults
-  and recurses until the JS stack overflows. Repro: run the 32-bit
-  `tests/api/memhog` on Alpine x86_64 (found 2026-10-04).
+- ~~**Compatibility mode (long mode with a 32-bit code segment) is largely
+  unimplemented**~~ — done (2026-10-04): exception/interrupt delivery keys on
+  EFER.LMA instead of CS.L (an interrupt from compat mode no longer takes the
+  legacy path and recurses), `syscall` works from compat mode (CSTAR, 32-bit
+  RCX), `sysret` without REX.W returns to a compat segment (the table entry
+  gained `os: 1`; the longmode test's plain `sysret` was fixed to `o64
+  sysret` — on real hardware 0F 07 without REX.W *is* the 32-bit form),
+  sysenter in IA-32e mode enters a 64-bit CS with the full-width MSRs, and
+  TF-single-stepped syscall/sysret deliver #DB preemptively in the
+  pre-syscall context (Intel semantics, per kvm-unit-tests' syscall.flat).
+  Regression test: `tests/api/compat32.js` runs the 32-bit memhog on Alpine
+  x86_64 (interpreter and JIT).
+  Remaining compat gaps: iret with a 32-bit operand in compat mode pops a
+  legacy 3/5-slot frame (an IA-32e frame has 64-bit slots; only matters for
+  compat-mode user code doing its own iret), 64-bit sysexit (REX.W) not
+  implemented, and a TF-preempt check in jit_run_interpreted peeks the second
+  opcode byte only within the page (0F at the last byte of a page falls back
+  to normal execution).
 
 ### 2.7 Validation for M2
 - Extend `tests/longmode/` with: page faults in long mode, syscall/sysret
@@ -415,20 +418,77 @@ Run `grep -n unimplemented src/rust/cpu/instructions_64.rs`. Notable groups:
 
 ---
 
-### Test status (2026-10-03)
+### Test status (2026-10-04)
 
-CI targets run locally (images from i.copy.sh as in .github/workflows/ci.yml):
-rust-test, expect-tests, nasmtests (+force-jit), longmode-tests, `make
-tests` (16 tests with public images) and the devices tests (virtio console,
-fetch network with/without virtio, POST, balloon) pass, except for the tests
-using `images/linux4.iso` ("Linux 4" in tests/full, jitpagingtests,
-api/state.js, devices/virtio_9p.js, devices/wisp_network.js; qemutests needs
-a qemu install and wasn't run): that 32-bit guest stops after
-"Freeing SMP alternatives memory", spinning in APIC timer calibration with
-only one PIT interrupt (vector 0x30) ever delivered. `master` behaves the
-same on this machine, so it's not caused by this branch; not investigated
-further (check on another host/CI first). Running `make tests` found a real
-regression from M2 (null SS loads allowed outside 64-bit mode), fixed.
+CI targets pass locally: rust-test, expect-tests, nasmtests 18929/18929
+(both variants), longmode-tests (104 + 5 multiboot64), `make tests` (19
+guest boots, 0 failures — including "Linux 4", whose APIC-calibration hang
+from earlier notes is gone; not root-caused, plausibly fixed by the
+IOAPIC/APIC changes below), api/state.js, and api/compat32.js. The 32-bit
+jitpagingtests harness and qemutests were not run (qemutests need a qemu
+install).
+
+All CPU-relevant kvm-unit-tests pass (run via `node
+tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/<t>.flat`): access
+(3.5M checks), apic, debug, eventinj, idt_test, ioapic (19), memory, msr,
+pcid, port80, realmode, setjmp, sieve, smptest, syscall, xsave. init.flat
+cycles all five reset phases but still reports the BIOS warm-resume vector
+as unused on the hard-reset paths (see below). Not applicable to v86 (listed
+to avoid future confusion): emulator (tests KVM's own instruction emulator
+via MMIO fetches), asyncpf (KVM paravirt MSRs), svm/vmx/pmu/hyperv/
+intel-iommu/s3 (hardware features v86 doesn't advertise), tsc tests
+(calibration harness-specific).
+
+### 3b. CPU completeness campaign (2026-10-04) — DONE
+
+Changes, all covered by the suites above:
+
+- **#UD policy**: `undefined_instruction()`/`unimplemented_sse()` no longer
+  `dbg_assert!` — every call site is a spec-correct #UD (reserved opcodes,
+  unadvertised features), and test suites deliberately trigger them. invd is
+  a ring-0 nop (like wbinvd); the 66-prefixed 0F AE /6 and /7 encodings
+  (fake clwb, pcommit, unadvertised clflushopt) #UD now.
+- **Faults save RFLAGS with RF=1** (fault-class vectors, Intel Table 6-1),
+  and iret (but not popf/retf) restores RF from the image; RF is cleared
+  after one instruction in the interpreter loop.
+- **CR4 feature gating**: setting CR4 bits for unadvertised features
+  (VMXE/SMXE/PCIDE/OSXSAVE/SMAP/…) raises #GP.
+- **Debug facilities**: DR0-3 execution breakpoints and data watchpoints
+  (DR7 L/G + RW/LEN), DR6 B0-B3/BS semantics with the reserved read-as-1
+  bits, TF single-stepping (sampled at instruction start), and INT1 (0xF1).
+  While any of these are armed the CPU runs interpreter-only (JIT dispatch
+  and compilation are gated; popf/iret force a JIT64 exit so arming takes
+  effect immediately). Watchpoints are checked in the safe_read*/safe_write*
+  family; the rep-string fast path is disabled while armed. LIMITATIONS:
+  debug registers are 32-bit (no >4 GiB breakpoint addresses), no I/O
+  breakpoints (CR4.DE), no GD (general detect), and the MOV SS/POP SS/STI
+  debug-trap shadow is not modelled. 32-bit JIT's compiled popf bails to the
+  interpreter when TF becomes set.
+- **Reset paths**: port 0x92 fast reset (bit-0 rising edge), i8042 output
+  port bit 0 (its reset value is 1: deasserted), 0xCF9 now resets only on a
+  single-byte write (a rising edge of bit 2; the old 2→6 pattern check fired
+  on dword config-address writes to 0xCF8), and APIC INIT IPIs reset the CPU
+  (the self-shorthand no longer overrides the delivery mode to FIXED; INIT
+  is deferred to the next instruction boundary). RTC CMOS writes to
+  non-special indices are stored (0x0F shutdown status was dropped, breaking
+  the BIOS warm-boot path). init.flat cycles all five reset phases; the
+  warm-resume stub only fires for the INIT path because reboot_internal's
+  load_bios() wipes SeaBIOS's HaveRunPost — full support needs PAM
+  shadow-ROM registers so the ROM image doesn't need reloading.
+- **IOAPIC works without ACPI** (the hardware is independent; redirection
+  entries reset to masked) and ports 0x2000-0x2017 drive irq lines (QEMU
+  kvm-unit-tests testdev), so ioapic.flat runs: 19/19.
+- **Unknown MSRs** log but don't abort the debug build (the release policy
+  is ignore-write/zero-read).
+- **TLB**: tlb_set_has_code* skip TLB_IN_MAPPED_RANGE entries (their host
+  base can exceed 4 GiB and doesn't survive the i32 entry encoding — used to
+  panic when the BIOS alias page was in the TLB).
+- **jit64 chaining**: the chain exit also requires the target entry to be a
+  64-bit module — a module that iret'd to compat mode would otherwise
+  tail-call a 32-bit module and trap ("null function or function signature
+  mismatch"). Previously reachable only with compat-mode churn.
+- **Compatibility mode** (32-bit userspace on the 64-bit kernel) works —
+  see §2.6 for the details and the remaining compat gaps.
 
 ---
 
@@ -545,11 +605,12 @@ What exists:
 
 Tasks:
 - Boot an Ubuntu Server live ISO (cdrom with `async: true`, it's several GB)
-  to a shell; expect systemd/snapd to take minutes. Find missing 64-bit
-  instructions (`unimplemented!()` in instructions_64.rs aborts loudly) and
-  CPU bugs the way Alpine was brought up (serial console, `console=ttyS0`).
-- Memory: Ubuntu's live desktop wants >= 4 GiB, server ~1-2 GiB. Work to
-  lift the limit is in progress (branch `guest-ram-64bit`), see §4c.
+  to a shell; expect systemd/snapd to take minutes. The CPU surface is
+  believed complete (§3b), so this is a hunt for behavioral bugs, not
+  missing instructions — bring it up the way Alpine was (serial console,
+  `console=ttyS0`).
+- Memory: Ubuntu's live desktop wants >= 4 GiB, server ~1-2 GiB. Guest RAM
+  beyond 4 GiB works (§4c, merged).
 - VGA memory: `vga_memory_size` defaults to 8 MiB, enough for 1024x768x32
   and not 1920x1080x32 (8.3 MB); pass 16-32 MiB for larger modes (max 256).
 - Desktop: GNOME Shell needs GL and is likely unusable with llvmpipe at
@@ -563,7 +624,7 @@ Tasks:
 
 ---
 
-## 4c. Guest RAM beyond 4 GiB (branch `guest-ram-64bit`, in progress)
+## 4c. Guest RAM beyond 4 GiB (merged 2026-10; phase 4 open)
 
 Goal: guest RAM up to 16 GiB (V8's limit for 64-bit wasm memories). Design,
 agreed with the user:
@@ -749,6 +810,10 @@ memory in the saved state, bump STATE_VERSION.
 
 ## 6. Definition of done
 
-`make tests` + `make nasmtests` (+force-jit) + `make longmode-tests` all pass;
-a modern 64-bit Linux distribution ISO boots to a userspace shell over serial
-with the JIT enabled, at interactive speed.
+Met for the CPU-core scope: `make tests` + `make nasmtests` (+force-jit) +
+`make longmode-tests` + the CPU-relevant kvm-unit-tests all pass, a modern
+64-bit Linux distribution ISO boots to a userspace shell over serial with
+the JIT enabled at interactive speed, and 32-bit userspace runs on it
+(compat mode). Remaining headline work: graphical distributions (§4b),
+saved-state images above 2 GiB (§4c phase 4), and the accuracy gaps listed
+in §2.5.

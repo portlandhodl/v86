@@ -298,7 +298,7 @@ const encodings = [
     { opcode: 0xEF, block_boundary: 1, os: 1, skip: 1 },
 
     { opcode: 0xF0, prefix: 1 },
-    { opcode: 0xF1, skip: 1 },
+    { opcode: 0xF1, skip: 1, block_boundary: 1 }, // int1 (icebp): #DB
     { opcode: 0xF2, prefix: 1 },
     { opcode: 0xF3, prefix: 1 },
     { opcode: 0xF4, block_boundary: 1, no_next_instruction: 1, skip: 1 }, // hlt
@@ -361,7 +361,7 @@ const encodings = [
     { opcode: 0x0F04, skip: 1, block_boundary: 1 },
     { opcode: 0x0F05, skip: 1, block_boundary: 1 },
     { opcode: 0x0F06, skip: 1, block_boundary: 1 }, // clts
-    { opcode: 0x0F07, skip: 1, block_boundary: 1 },
+    { opcode: 0x0F07, os: 1, skip: 1, block_boundary: 1 }, // sysret (32-bit form returns to compat mode)
     { opcode: 0x0F08, skip: 1, block_boundary: 1 },
     { opcode: 0x0F09, skip: 1, block_boundary: 1 }, // wbinvd
     { opcode: 0x0F0A, skip: 1, block_boundary: 1 },

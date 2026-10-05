@@ -1160,7 +1160,7 @@ syscall_handler:
     or r11, 0x200
     swapgs
     mov rcx, r14
-    sysret
+    o64 sysret    ; REX.W form: return to a 64-bit segment (plain sysret is the 32-bit compat form)
 
 .second:
     ; entered from cpl 3; gs base is the kernel base (swapped on entry)
@@ -1174,7 +1174,7 @@ syscall_handler:
     mov [r15 + 43*8], rax        ; 0x1234000
     swapgs
     mov rcx, r14
-    sysret
+    o64 sysret    ; REX.W form (see above)
 
 ; ---- #PF handler: demand-paging for 0x40000000, skip for the NX page ----
 pf_handler:
