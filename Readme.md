@@ -59,7 +59,8 @@ The roadmap, design notes and every long-mode bug found so far are in
 **Devices**: local APIC and IOAPIC, 8259 PIC, 8254 PIT, CMOS RTC, ACPI, a PCI
 bus, an IDE controller with CD-ROM (including a built-in ISO 9660 generator),
 a floppy controller, PS/2 keyboard and mouse, a VGA card with SVGA and Bochs
-VBE extensions (Linux's `bochs` DRM driver binds to it), an NE2000 network
+VBE extensions (Linux's `bochs` DRM driver binds to it; with virtio-gpu enabled
+only the legacy ISA part is exposed, so Xorg picks virtio-gpu), an NE2000 network
 card, virtio (9p filesystem, network, console, balloon, 2D GPU), a
 SoundBlaster 16, a serial port and a Hayes-compatible modem.
 
