@@ -2733,10 +2733,15 @@ pub unsafe fn translate_address_write_jit(address: u64, wasm_table_index: u16) -
     }
     let has_code = entry as i32 & TLB_HAS_CODE != 0;
     let phys_addr = phys_of_tlb_entry(entry, address);
-    let page = Page::page_of(phys_addr);
     if !has_code {
         return Ok(phys_addr);
     }
+    // mmio-backed pages never have code (do_page_walk), so phys_addr is
+    // unusable for them: their host base doesn't survive the 32-bit tlb
+    // entry encoding (see tlb_set_has_code). Computing a Page from it would
+    // trip the page bounds assertion
+    dbg_assert!(entry as i32 & TLB_IN_MAPPED_RANGE == 0);
+    let page = Page::page_of(phys_addr);
     let is_smc = jit::jit_page_has_wasm_table_index(page, wasm_table_index);
     jit::jit_dirty_page(page);
     if !is_smc {
@@ -6447,6 +6452,10 @@ pub unsafe fn reset_cpu() {
     *cr.offset(4) = 0;
     *dreg.offset(6) = 0xFFFF0FF0u32 as i32;
     *dreg.offset(7) = 0x400;
+    // EFER is cleared on reset (SCE/LME/NXE/etc. all off); without this a
+    // reset from long mode would leave LMA set and the next boot's page
+    // walks would run in the wrong mode
+    *efer = 0;
     *cpl = 0;
 
     *is_32 = false;
