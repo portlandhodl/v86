@@ -437,6 +437,7 @@ pub unsafe fn fpu_fldenv32(addr: u64) {
     *fpu_dp = safe_read32s(addr + 20).unwrap();
     *fpu_dp_selector = safe_read16(addr + 24).unwrap()
 }
+#[allow(dead_code)] // kept for future unimplemented fpu instructions
 pub unsafe fn fpu_unimpl() {
     dbg_assert!(false);
     trigger_ud();
@@ -518,9 +519,16 @@ pub unsafe fn fpu_fprem(ieee: bool) {
     }
 }
 
-pub unsafe fn fpu_frstor16(_addr: u64) {
-    dbg_log!("frstor16");
-    fpu_unimpl();
+#[no_mangle]
+pub unsafe fn fpu_frstor16(mut addr: u64) {
+    return_on_pagefault!(readable_or_pagefault(addr, 14 + 8 * 10));
+    fpu_fldenv16(addr);
+    addr += 14;
+    for i in 0..8 {
+        let reg_index = *fpu_stack_ptr as i32 + i & 7;
+        *fpu_st.offset(reg_index as isize) = fpu_load_m80(addr).unwrap();
+        addr += 10;
+    }
 }
 pub unsafe fn fpu_frstor32(mut addr: u64) {
     return_on_pagefault!(readable_or_pagefault(addr, 28 + 8 * 10));
@@ -533,9 +541,17 @@ pub unsafe fn fpu_frstor32(mut addr: u64) {
     }
 }
 
-pub unsafe fn fpu_fsave16(_addr: u64) {
-    dbg_log!("fsave16");
-    fpu_unimpl();
+#[no_mangle]
+pub unsafe fn fpu_fsave16(mut addr: u64) {
+    return_on_pagefault!(writable_or_pagefault(addr, 94));
+    fpu_fstenv16(addr);
+    addr += 14;
+    for i in 0..8 {
+        let reg_index = i + *fpu_stack_ptr as i32 & 7;
+        fpu_store_m80(addr, *fpu_st.offset(reg_index as isize));
+        addr += 10;
+    }
+    fpu_finit();
 }
 pub unsafe fn fpu_fsave32(mut addr: u64) {
     return_on_pagefault!(writable_or_pagefault(addr, 108));
@@ -614,6 +630,7 @@ pub unsafe fn fpu_fstcw(addr: u64) {
 }
 
 pub unsafe fn fpu_fstm32(addr: u64) {
+    return_on_pagefault!(writable_or_pagefault(addr, 4));
     return_on_pagefault!(fpu_store_m32(addr, fpu_get_st0()));
 }
 pub unsafe fn fpu_store_m32(addr: u64, x: F80) -> OrPageFault<()> {
@@ -623,15 +640,24 @@ pub unsafe fn fpu_store_m32(addr: u64, x: F80) -> OrPageFault<()> {
     Ok(())
 }
 pub unsafe fn fpu_fstm32p(addr: u64) {
+    return_on_pagefault!(writable_or_pagefault(addr, 4));
     return_on_pagefault!(fpu_store_m32(addr, fpu_get_st0()));
     fpu_pop();
 }
 pub unsafe fn fpu_fstm64(addr: u64) {
+    return_on_pagefault!(writable_or_pagefault(addr, 8));
     return_on_pagefault!(fpu_store_m64(addr, fpu_get_st0()));
 }
-pub unsafe fn fpu_store_m64(addr: u64, x: F80) -> OrPageFault<()> { safe_write64(addr, x.to_f64()) }
+pub unsafe fn fpu_store_m64(addr: u64, x: F80) -> OrPageFault<()> {
+    // conversion exceptions are recorded only when the write succeeds (see
+    // fpu_store_m32)
+    F80::clear_exception_flags();
+    safe_write64(addr, x.to_f64())?;
+    *fpu_status_word |= F80::get_exception_flags() as u16;
+    Ok(())
+}
 pub unsafe fn fpu_fstm64p(addr: u64) {
-    // XXX: writable_or_pagefault before get_st0
+    return_on_pagefault!(writable_or_pagefault(addr, 8));
     return_on_pagefault!(fpu_store_m64(addr, fpu_get_st0()));
     fpu_pop();
 }
@@ -639,6 +665,21 @@ pub unsafe fn fpu_fstm64p(addr: u64) {
 pub unsafe fn fpu_fstp(r: i32) {
     fpu_fst(r);
     fpu_pop();
+}
+
+/// fbld: load 80-bit packed BCD (18 digits + sign). 18 digits fit in an
+/// i64, so this conversion is exact. Invalid BCD digits (0xA-0xF) yield an
+/// undefined result on hardware (no fault); we just compute with them.
+#[no_mangle]
+pub unsafe fn fpu_fbld(addr: u64) {
+    return_on_pagefault!(readable_or_pagefault(addr, 10));
+    let mut value: u64 = 0;
+    for i in (0..9).rev() {
+        let byte = safe_read8(addr + i).unwrap() as u64;
+        value = value * 100 + (byte >> 4) * 10 + (byte & 0xF);
+    }
+    let negative = safe_read8(addr + 9).unwrap() & 0x80 != 0;
+    fpu_push(F80::of_i64(if negative { -(value as i64) } else { value as i64 }));
 }
 
 #[no_mangle]

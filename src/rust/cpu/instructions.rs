@@ -1927,7 +1927,7 @@ pub unsafe fn instr16_DD_4_mem(addr: u64) { fpu_frstor16(addr); }
 #[no_mangle]
 pub unsafe fn instr32_DD_4_mem(addr: u64) { fpu_frstor32(addr); }
 pub unsafe fn instr16_DD_5_mem(_addr: u64) {
-    dbg_log!("dd/5");
+    // unassigned encoding
     trigger_ud();
 }
 #[no_mangle]
@@ -2031,10 +2031,7 @@ pub unsafe fn instr_DF_0_mem(addr: u64) { fpu_fildm16(addr) }
 pub unsafe fn instr_DF_1_mem(addr: u64) { fpu_fisttpm16(addr); }
 pub unsafe fn instr_DF_2_mem(addr: u64) { fpu_fistm16(addr); }
 pub unsafe fn instr_DF_3_mem(addr: u64) { fpu_fistm16p(addr); }
-pub unsafe fn instr_DF_4_mem(_addr: u64) {
-    dbg_log!("fbld");
-    fpu_unimpl();
-}
+pub unsafe fn instr_DF_4_mem(addr: u64) { fpu_fbld(addr); }
 pub unsafe fn instr_DF_5_mem(addr: u64) { fpu_fildm64(addr); }
 pub unsafe fn instr_DF_6_mem(addr: u64) {
     return_on_pagefault!(writable_or_pagefault(addr, 10));

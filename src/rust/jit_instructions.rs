@@ -158,17 +158,18 @@ pub fn instr_F3_jit(ctx: &mut JitContext, instr_flags: &mut u32) {
 }
 
 fn sse_read_f32_xmm_mem(ctx: &mut JitContext, name: &str, modrm_byte: ModrmByte, r: u32) {
+    // the f32 operand is passed as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
     codegen::gen_modrm_resolve_safe_read32(ctx, modrm_byte);
-    ctx.builder.reinterpret_i32_as_f32();
     ctx.builder.const_i32(r as i32);
-    ctx.builder.call_fn2_f32_i32(name);
+    ctx.builder.call_fn2(name);
 }
 fn sse_read_f32_xmm_xmm(ctx: &mut JitContext, name: &str, r1: u32, r2: u32) {
     ctx.builder
         .const_i32(global_pointers::get_reg_xmm_offset(r1) as i32);
-    ctx.builder.load_aligned_f32(0);
+    ctx.builder.load_aligned_i32(0);
     ctx.builder.const_i32(r2 as i32);
-    ctx.builder.call_fn2_f32_i32(name);
+    ctx.builder.call_fn2(name);
 }
 
 fn sse_read64_xmm_mem(ctx: &mut JitContext, name: &str, modrm_byte: ModrmByte, r: u32) {
@@ -1152,6 +1153,11 @@ fn gen_adc32(ctx: &mut JitContext, dest_operand: &WasmLocal, source_operand: &Lo
     source_operand.gen_get(ctx.builder);
     ctx.builder.add_i32();
     codegen::gen_getcf(ctx, ConditionNegate::False);
+    // keep last_op1 up to date (like the interpreter's adc): a following
+    // instruction whose flags_changed includes FLAG_ADJUST recomputes AF
+    // from last_op1/last_result. Must happen after gen_getcf, which reads
+    // the incoming CF from the previous instruction's lazy flag state.
+    codegen::gen_set_last_op1(ctx.builder, &dest_operand);
     ctx.builder.add_i32();
     let res = ctx.builder.set_new_local();
 
@@ -1251,6 +1257,9 @@ fn gen_sbb32(ctx: &mut JitContext, dest_operand: &WasmLocal, source_operand: &Lo
     source_operand.gen_get(ctx.builder);
     ctx.builder.sub_i32();
     codegen::gen_getcf(ctx, ConditionNegate::False);
+    // keep last_op1 up to date (like the interpreter's sbb), after gen_getcf
+    // has read the incoming CF (see gen_adc32)
+    codegen::gen_set_last_op1(ctx.builder, &dest_operand);
     ctx.builder.sub_i32();
     let res = ctx.builder.set_new_local();
 
@@ -3530,6 +3539,9 @@ pub fn instr32_D9_1_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
 pub fn instr16_D9_2_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
     codegen::gen_modrm_resolve(ctx, modrm_byte);
     let address_local = ctx.builder.set_new_local();
+    // check writability before touching fpu state (the conversion
+    // updates the fpu status word; the interpreter checks first)
+    codegen::gen_writable_or_pagefault(ctx, &address_local, 4);
     codegen::gen_fpu_get_sti(ctx, 0);
     ctx.builder.call_fn2_i64_i32_ret("f80_to_f32");
     let value_local = ctx.builder.set_new_local();
@@ -3550,6 +3562,9 @@ pub fn instr32_D9_2_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
 pub fn instr16_D9_3_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
     codegen::gen_modrm_resolve(ctx, modrm_byte);
     let address_local = ctx.builder.set_new_local();
+    // check writability before touching fpu state (the conversion
+    // updates the fpu status word; the interpreter checks first)
+    codegen::gen_writable_or_pagefault(ctx, &address_local, 4);
     codegen::gen_fpu_get_sti(ctx, 0);
     ctx.builder.call_fn2_i64_i32_ret("f80_to_f32");
     let value_local = ctx.builder.set_new_local();
@@ -3721,6 +3736,9 @@ pub fn instr_DB_0_reg_jit(ctx: &mut JitContext, r: u32) {
 pub fn instr_DB_1_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
     codegen::gen_modrm_resolve(ctx, modrm_byte);
     let address_local = ctx.builder.set_new_local();
+    // check writability before touching fpu state (the conversion
+    // updates the fpu status word; the interpreter checks first)
+    codegen::gen_writable_or_pagefault(ctx, &address_local, 4);
     codegen::gen_fpu_get_sti(ctx, 0);
     ctx.builder.call_fn2_i64_i32_ret("fpu_truncate_to_i32");
     let value_local = ctx.builder.set_new_local();
@@ -3736,6 +3754,9 @@ pub fn instr_DB_1_reg_jit(ctx: &mut JitContext, r: u32) {
 pub fn instr_DB_2_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
     codegen::gen_modrm_resolve(ctx, modrm_byte);
     let address_local = ctx.builder.set_new_local();
+    // check writability before touching fpu state (the conversion
+    // updates the fpu status word; the interpreter checks first)
+    codegen::gen_writable_or_pagefault(ctx, &address_local, 4);
     codegen::gen_fpu_get_sti(ctx, 0);
     ctx.builder.call_fn2_i64_i32_ret("fpu_convert_to_i32");
     let value_local = ctx.builder.set_new_local();
@@ -3749,6 +3770,9 @@ pub fn instr_DB_2_reg_jit(ctx: &mut JitContext, r: u32) {
 pub fn instr_DB_3_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
     codegen::gen_modrm_resolve(ctx, modrm_byte);
     let address_local = ctx.builder.set_new_local();
+    // check writability before touching fpu state (the conversion
+    // updates the fpu status word; the interpreter checks first)
+    codegen::gen_writable_or_pagefault(ctx, &address_local, 4);
     codegen::gen_fpu_get_sti(ctx, 0);
     ctx.builder.call_fn2_i64_i32_ret("fpu_convert_to_i32");
     let value_local = ctx.builder.set_new_local();
@@ -3862,6 +3886,9 @@ pub fn instr32_DD_0_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
 pub fn instr16_DD_1_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
     codegen::gen_modrm_resolve(ctx, modrm_byte);
     let address_local = ctx.builder.set_new_local();
+    // check writability before touching fpu state (the conversion
+    // updates the fpu status word; the interpreter checks first)
+    codegen::gen_writable_or_pagefault(ctx, &address_local, 8);
     codegen::gen_fpu_get_sti(ctx, 0);
     ctx.builder.call_fn2_i64_i32_ret_i64("fpu_truncate_to_i64");
     let value_local = ctx.builder.set_new_local_i64();
@@ -3881,6 +3908,9 @@ pub fn instr32_DD_1_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
 pub fn instr16_DD_2_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
     codegen::gen_modrm_resolve(ctx, modrm_byte);
     let address_local = ctx.builder.set_new_local();
+    // check writability before touching fpu state (the conversion
+    // updates the fpu status word; the interpreter checks first)
+    codegen::gen_writable_or_pagefault(ctx, &address_local, 8);
     codegen::gen_fpu_get_sti(ctx, 0);
     ctx.builder.call_fn2_i64_i32_ret_i64("f80_to_f64");
     let value_local = ctx.builder.set_new_local_i64();
@@ -3899,6 +3929,9 @@ pub fn instr32_DD_2_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
 pub fn instr16_DD_3_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
     codegen::gen_modrm_resolve(ctx, modrm_byte);
     let address_local = ctx.builder.set_new_local();
+    // check writability before touching fpu state (the conversion
+    // updates the fpu status word; the interpreter checks first)
+    codegen::gen_writable_or_pagefault(ctx, &address_local, 8);
     codegen::gen_fpu_get_sti(ctx, 0);
     ctx.builder.call_fn2_i64_i32_ret_i64("f80_to_f64");
     let value_local = ctx.builder.set_new_local_i64();
@@ -4003,6 +4036,9 @@ pub fn instr_DE_7_reg_jit(ctx: &mut JitContext, r: u32) {
 pub fn instr_DF_1_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
     codegen::gen_modrm_resolve(ctx, modrm_byte);
     let address_local = ctx.builder.set_new_local();
+    // check writability before touching fpu state (the conversion
+    // updates the fpu status word; the interpreter checks first)
+    codegen::gen_writable_or_pagefault(ctx, &address_local, 2);
     codegen::gen_fpu_get_sti(ctx, 0);
     ctx.builder.call_fn2_i64_i32_ret("fpu_truncate_to_i16");
     let value_local = ctx.builder.set_new_local();
@@ -4018,6 +4054,9 @@ pub fn instr_DF_1_reg_jit(ctx: &mut JitContext, r: u32) {
 pub fn instr_DF_2_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
     codegen::gen_modrm_resolve(ctx, modrm_byte);
     let address_local = ctx.builder.set_new_local();
+    // check writability before touching fpu state (the conversion
+    // updates the fpu status word; the interpreter checks first)
+    codegen::gen_writable_or_pagefault(ctx, &address_local, 2);
     codegen::gen_fpu_get_sti(ctx, 0);
     ctx.builder.call_fn2_i64_i32_ret("fpu_convert_to_i16");
     let value_local = ctx.builder.set_new_local();
@@ -4031,6 +4070,9 @@ pub fn instr_DF_2_reg_jit(ctx: &mut JitContext, r: u32) {
 pub fn instr_DF_3_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
     codegen::gen_modrm_resolve(ctx, modrm_byte);
     let address_local = ctx.builder.set_new_local();
+    // check writability before touching fpu state (the conversion
+    // updates the fpu status word; the interpreter checks first)
+    codegen::gen_writable_or_pagefault(ctx, &address_local, 2);
     codegen::gen_fpu_get_sti(ctx, 0);
     ctx.builder.call_fn2_i64_i32_ret("fpu_convert_to_i16");
     let value_local = ctx.builder.set_new_local();
@@ -4044,9 +4086,10 @@ pub fn instr_DF_3_reg_jit(ctx: &mut JitContext, r: u32) {
 }
 
 pub fn instr_DF_4_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
-    dbg_log!("fbld");
+    // fbld (implemented in the interpreter; it checks readability itself)
     codegen::gen_modrm_resolve(ctx, modrm_byte);
-    codegen::gen_trigger_ud(ctx);
+    ctx.builder.extend_unsigned_i32_to_i64();
+    ctx.builder.call_fn1_i64("fpu_fbld");
 }
 pub fn instr_DF_4_reg_jit(ctx: &mut JitContext, r: u32) {
     if r == 0 {
@@ -4084,6 +4127,9 @@ pub fn instr_DF_7_reg_jit(ctx: &mut JitContext, _r: u32) { codegen::gen_trigger_
 pub fn instr_DF_7_mem_jit(ctx: &mut JitContext, modrm_byte: ModrmByte) {
     codegen::gen_modrm_resolve(ctx, modrm_byte);
     let address_local = ctx.builder.set_new_local();
+    // check writability before touching fpu state (the conversion
+    // updates the fpu status word; the interpreter checks first)
+    codegen::gen_writable_or_pagefault(ctx, &address_local, 8);
     codegen::gen_fpu_get_sti(ctx, 0);
     ctx.builder.call_fn2_i64_i32_ret_i64("fpu_convert_to_i64");
     let value_local = ctx.builder.set_new_local_i64();
