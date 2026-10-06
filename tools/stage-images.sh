@@ -28,12 +28,17 @@ for iso in "$@"; do
         echo "$name.iso -> $iso"
     fi
 
-    listing="$(bsdtar -tf "$iso")"
+    listing="$(bsdtar -tvf "$iso")"
     for path in $CANDIDATES; do
-        if printf '%s\n' "$listing" | grep -qx "\(\./\)\?$path"; then
+        if printf '%s\n' "$listing" | grep -q " \(\./\)\?$path\( link to .*\)\?$"; then
             mkdir -p "$IMAGES/$name/$(dirname "$path")"
-            # -O follows hard links in the ISO, which -x would otherwise leave empty
             bsdtar -xOf "$iso" "$path" > "$IMAGES/$name/$path"
+            if [ ! -s "$IMAGES/$name/$path" ]; then
+                # a hard link: depending on the libarchive version, the data is streamed
+                # under the other name of the pair (e.g. live/vmlinuz-<version>)
+                other="$(printf '%s\n' "$listing" | sed -n "s| \(\./\)\?\([^ ]*\) link to \(\./\)\?$path\$|\2|p; s| \(\./\)\?$path link to \(\./\)\?\([^ ]*\)\$|\3|p" | head -n 1)"
+                [ -n "$other" ] && bsdtar -xOf "$iso" "$other" > "$IMAGES/$name/$path"
+            fi
             echo "  $name/$path ($(du -h "$IMAGES/$name/$path" | cut -f1))"
         fi
     done

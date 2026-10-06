@@ -168,24 +168,67 @@ async function download(distro, dest)
     await fsp.rename(part, dest);
 }
 
+/**
+ * Names in the ISO sharing data with `inner` (hard links): live media often ship a kernel as
+ * "live/vmlinuz" plus "live/vmlinuz-<version>", and which entry holds the data when streamed
+ * with -O depends on the libarchive version
+ */
+function hard_link_names(listing, inner)
+{
+    const names = new Set([inner]);
+    for(const line of listing.split("\n"))
+    {
+        const m = / (\S+) link to (\S+)$/.exec(line);
+        if(!m) continue;
+        const [, a, b] = m.map(n => n.replace(/^\.\//, ""));
+        if(a === inner) names.add(b);
+        if(b === inner) names.add(a);
+    }
+    return [...names];
+}
+
+function capture(cmd, argv)
+{
+    return new Promise((resolve, reject) => {
+        const child = spawn(cmd, argv, { stdio: ["ignore", "pipe", "ignore"] });
+        let out = "";
+        child.stdout.on("data", d => out += d);
+        child.on("error", reject);
+        child.on("close", code => code === 0 ? resolve(out) : reject(new Error(`${cmd} exited with ${code}`)));
+    });
+}
+
 async function extract(distro, iso_file, items)
 {
     distro.state = "extracting";
+    const listing = await capture("bsdtar", ["-tvf", iso_file]);
     for(const { path: inner, file } of items)
     {
         const dest = image_path(file);
         await fsp.mkdir(path.dirname(dest), { recursive: true });
-        // -O follows hard links in the ISO, which -x would leave as empty files
-        const out = fs.openSync(dest + ".part", "w");
-        try
+        let extracted = false;
+        for(const name of hard_link_names(listing, inner))
         {
-            await run("bsdtar", ["-xOf", iso_file, inner], { stdout: out });
+            const out = fs.openSync(dest + ".part", "w");
+            try
+            {
+                await run("bsdtar", ["-xOf", iso_file, name], { stdout: out });
+            }
+            finally
+            {
+                fs.closeSync(out);
+            }
+            if((await fsp.stat(dest + ".part")).size)
+            {
+                extracted = true;
+                break;
+            }
         }
-        finally
+        if(!extracted)
         {
-            fs.closeSync(out);
+            await fsp.rm(dest + ".part", { force: true });
+            throw new Error(`${inner} not found in ${distro.iso.file}`);
         }
-        if(!(await fsp.stat(dest + ".part")).size) throw new Error(`${inner} not found in ${distro.iso.file}`);
         await fsp.rename(dest + ".part", dest);
         log(`[${distro.iso.file}] extracted ${inner}`);
     }
