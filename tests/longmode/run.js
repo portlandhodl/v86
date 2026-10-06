@@ -141,6 +141,9 @@ const expected = [
     0x1000000001n,       // 106: bt/bts m64, imm8 mask the offset to 63
     0x1234567800000001n, // 107: REX before lock is annulled (32-bit add)
     320n,                // 108: single-step traps armed by iretq in a hot loop (40 * 8)
+    120n,                // 109: #GP on non-canonical data addresses (40 * 3)
+    0x2828282828n,       // 110: loads through the canonical alias still work (40 * value)
+    0n,                  // 111: #GP error codes are 0
 ];
 
 const emulator = new V86({
