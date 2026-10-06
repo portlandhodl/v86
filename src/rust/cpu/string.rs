@@ -382,9 +382,20 @@ unsafe fn string_instruction(
                         i = count_until_end_of_page;
                         break;
                     },
-                    Size::W => memory::write16_no_mmap_or_dirty_check(phys_dst, src_val as i32),
-                    Size::D => memory::write32_no_mmap_or_dirty_check(phys_dst, src_val as i32),
-                    Size::Q => memory::write64_no_mmap_or_dirty_check(phys_dst, src_val),
+                    // bulk fill with the repeated value (the splat is direction-independent)
+                    Size::W | Size::D | Size::Q => {
+                        if direction == -1 {
+                            phys_dst -= (count_until_end_of_page - 1) as u64 * size_bytes as u64
+                        }
+                        memory::memset_pattern_no_mmap_or_dirty_check(
+                            phys_dst,
+                            src_val,
+                            size_bytes as u32,
+                            count_until_end_of_page,
+                        );
+                        i = count_until_end_of_page;
+                        break;
+                    },
                 },
             };
 

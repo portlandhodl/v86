@@ -363,6 +363,42 @@ pub unsafe fn memset_no_mmap_or_dirty_check(addr: u64, value: u8, count: u32) {
     guest::fill(phys_to_host(addr), value, count as u64)
 }
 
+/// Fill with the little-endian repetition of a 16/32/64-bit value (rep stosw/d/q): the
+/// splat is position-independent, so 64-bit stores plus a tail suffice (the address is
+/// size-aligned; store64 doesn't require 8-byte alignment)
+pub unsafe fn memset_pattern_no_mmap_or_dirty_check(
+    addr: u64,
+    value: u64,
+    size: u32,
+    count: u32,
+) {
+    let v = match size {
+        2 => (value & 0xFFFF) * 0x0001_0001_0001_0001,
+        4 => (value & 0xFFFF_FFFF) * 0x0000_0001_0000_0001,
+        _ => value,
+    };
+    let mut addr = phys_to_host(addr);
+    let mut n = count as u64 * size as u64;
+    while n >= 8 {
+        guest::store64(addr, v);
+        addr += 8;
+        n -= 8;
+    }
+    if n >= 4 {
+        guest::store32(addr, v as u32);
+        addr += 4;
+        n -= 4;
+    }
+    if n >= 2 {
+        guest::store16(addr, v as u16);
+        addr += 2;
+        n -= 2;
+    }
+    if n != 0 {
+        guest::store8(addr, v as u8);
+    }
+}
+
 pub unsafe fn memcpy_no_mmap_or_dirty_check(src_addr: u64, dst_addr: u64, count: u32) {
     dbg_assert!(!in_mapped_range(src_addr));
     dbg_assert!(!in_mapped_range(dst_addr));
