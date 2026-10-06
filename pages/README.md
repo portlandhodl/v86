@@ -1,0 +1,26 @@
+# GitHub Pages (optional)
+
+Publishes the machine manager as a static site that loads its machines and ISOs from the
+image server in [../server](../server/README.md). Nothing outside this directory and
+`.github/workflows/pages.yml` depends on it.
+
+- [site.json](site.json): the site's public url, the catalogue url of the image server, and
+  the text and image of link previews. The repository variables `V86_SITE_URL` and
+  `V86_CATALOGUE_URL` override it without a commit.
+- [build.mjs](build.mjs): copies a release build (`make all`) into `_site/`, adding a
+  `<meta name="v86-catalogue">` tag (which `src/browser/machines.js` reads) and Open Graph /
+  Twitter card tags.
+- [og.png](og.png): the 1200×630 link preview, rendered from [og-card.html](og-card.html)
+  around a screenshot of a booted machine (`terminal.png`).
+
+To publish: Settings → Pages → Source: **GitHub Actions**; the workflow then deploys on every
+push to master. The image server must list the Pages origin (`https://<user>.github.io`) in
+its `allowed_origins`.
+
+Locally:
+
+```sh
+make all build/v86-fallback.wasm
+node pages/build.mjs --catalogue http://localhost:8080/catalogue.json
+./tools/serve.mjs --root _site --port 8000
+```

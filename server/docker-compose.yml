@@ -1,0 +1,22 @@
+# ISO hosting for the machine manager.
+#
+#   cd server && UID=$(id -u) GID=$(id -g) docker compose up -d --build
+#
+# Downloads the ISOs listed in config.json into ./data/images (or $IMAGE_DIR) and serves
+# them on port 8080. Put it behind your TLS reverse proxy (see README.md); it binds to
+# localhost only by default.
+services:
+  images:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: v86-64-images
+    init: true
+    user: "${UID:-1000}:${GID:-1000}"
+    ports:
+      - "${BIND:-127.0.0.1}:${PORT:-8080}:8080"
+    volumes:
+      - ./config.json:/app/server/config.json:ro
+      - ../profiles:/app/profiles:ro
+      - ${IMAGE_DIR:-./data/images}:/data/images
+    restart: unless-stopped

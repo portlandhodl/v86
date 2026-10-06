@@ -1,0 +1,36 @@
+{
+    "public_url": "https://v86-64.qrsnap.io",
+    "allowed_origins": [
+        "https://portlandhodl.github.io",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+    ],
+    "distros": [
+        {
+            "profile": "alpine-virt.json",
+            "iso": {
+                "url": "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-virt-3.19.9-x86_64.iso",
+                "file": "alpine-virt-3.19.9-x86_64.iso",
+                "sha256": "5389ca9c2ed206d9c1f7a92d213668de9c1c76493faf8cb1d7680a03cf9a0513"
+            }
+        },
+        {
+            "profile": "debian-live-xfce.json",
+            "iso": {
+                "url": "https://cdimage.debian.org/cdimage/weekly-live-builds/amd64/iso-hybrid/debian-live-testing-amd64-xfce.iso",
+                "file": "debian-live-testing-amd64-xfce.iso",
+                "sha256_url": "https://cdimage.debian.org/cdimage/weekly-live-builds/amd64/iso-hybrid/SHA256SUMS"
+            },
+            "extract": ["live/vmlinuz", "live/initrd.img"]
+        },
+        {
+            "profile": "ubuntu-desktop.json",
+            "iso": {
+                "url": "https://releases.ubuntu.com/26.04.1/ubuntu-26.04.1-desktop-amd64.iso",
+                "file": "ubuntu-26.04.1-desktop-amd64.iso",
+                "sha256": "601e30fbf5d97759367c632e2c33630665039b7e2158fd068403da3ccf1bda1f"
+            },
+            "extract": ["casper/vmlinuz", "casper/initrd"]
+        }
+    ]
+}

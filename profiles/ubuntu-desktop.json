@@ -1,0 +1,24 @@
+{
+    "schema": "v86-machine/1",
+    "id": "ubuntu-desktop",
+    "name": "Ubuntu 26.04.1 LTS Desktop",
+    "os": { "family": "Linux", "distro": "ubuntu", "version": "26.04.1 LTS", "arch": "x86_64", "ui": "graphical" },
+    "description": "The Ubuntu GNOME desktop live session (casper). The kernel and initrd are booted directly, skipping GRUB; the squashfs is streamed from the ISO.",
+    "homepage": "https://ubuntu.com/desktop",
+    "download": "https://releases.ubuntu.com/26.04.1/ubuntu-26.04.1-desktop-amd64.iso",
+    "notes": "Needs images/ubuntu-26.04.1-desktop-amd64/casper/{vmlinuz,initrd}: run tools/stage-images.sh on the ISO. GNOME is heavy at emulated speeds: expect a long boot.",
+    "machine": {
+        "memory_mb": 8192,
+        "vram_mb": 32,
+        "acpi": true,
+        "floppy_drives": false,
+        "net_device_type": "ne2k",
+        "relay_url": ""
+    },
+    "media": {
+        "cdrom": { "url": "ubuntu-26.04.1-desktop-amd64.iso", "size": 6482409472, "async": true },
+        "bzimage": "ubuntu-26.04.1-desktop-amd64/casper/vmlinuz",
+        "initrd": "ubuntu-26.04.1-desktop-amd64/casper/initrd"
+    },
+    "cmdline": "boot=casper console=tty0 console=ttyS0 quiet splash"
+}

@@ -86,6 +86,20 @@ Use `tools/serve.mjs` rather than `make run`: 64-bit distribution ISOs are
 several GB and are streamed with range requests, which Python's http.server
 doesn't support.
 
+**The machine manager.** `index.html` lists the machines described by the JSON
+profiles in [profiles/](profiles/README.md) (one per OS, listed in
+`profiles/index.json`). Stage the ISOs they refer to with
+`./tools/stage-images.sh path/to/*.iso`, which links them into `images/` and
+extracts the kernels that direct-boot profiles need. More machines can be
+imported in the page (a file, a URL or pasted JSON, or drag and drop); those
+and any settings changes are stored in the browser. `?profile=<id>` boots a
+machine directly.
+
+**Hosting ISOs.** [server/](server/README.md) is a Docker image server that
+downloads the ISOs listed in its config file, verifies and serves them with range
+requests and CORS, and reports the machines that are ready to boot. The page can
+then be hosted anywhere static, e.g. GitHub Pages ([pages/](pages/README.md)).
+
 **Xubuntu 24.04 in the browser.** Download the ISO into `images/` (the
 commands are at the top of [examples/xubuntu.html](examples/xubuntu.html)) and
 open http://localhost:8000/examples/xubuntu.html. Add `?serial` to see the

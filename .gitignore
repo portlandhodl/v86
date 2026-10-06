@@ -41,3 +41,4 @@ bench-results
 .devcontainer/devcontainer-lock.json
 package-lock.json
 tests/devices/virtio_gpu_kernel.bin
+_site/
