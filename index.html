@@ -373,11 +373,12 @@
 
     <div id="runtime_options" style="display: none">
         <div class="rt-title">
+            <button id="back_to_manager" class="rt-back" title="Power off this machine and return to the machine manager">&#x25C0; Machines</button>
             <span class="brand-glyph">&#x259A;</span>
             <span id="vm_title" class="glow">custom machine</span>
-            <span class="rt-state">[Running]</span>
+            <span id="vm_state" class="rt-state">[Loading]</span>
             <span class="tb-spacer"></span>
-            <span class="dim">v86_64</span>
+            <a id="rt_brand" class="dim" title="Back to the machine manager">v86_64</a>
         </div>
         <div class="rt-groups">
             <div class="rt-group">

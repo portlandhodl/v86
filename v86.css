@@ -971,6 +971,25 @@ dialog::backdrop {
     color: var(--dim);
     font-weight: normal;
 }
+.rt-back {
+    padding: 2px 10px;
+    margin-right: 6px;
+    font-size: 12px;
+    font-weight: normal;
+}
+#rt_brand {
+    font-weight: normal;
+}
+#rt_brand:hover {
+    color: var(--green);
+}
+/* until the machine is running, only the title bar (with the way back) is shown */
+#runtime_options.rt-loading .rt-groups {
+    display: none;
+}
+#runtime_options.rt-loading .rt-title {
+    border-bottom: 0;
+}
 .rt-groups {
     display: flex;
     flex-wrap: wrap;
