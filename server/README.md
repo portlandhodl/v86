@@ -8,7 +8,7 @@ network traffic.
 
 ```sh
 cd server
-UID=$(id -u) GID=$(id -g) docker compose up -d --build
+IMAGES_UID=$(id -u) IMAGES_GID=$(id -g) docker compose up -d --build
 docker compose logs -f          # download progress
 curl localhost:8080/status.json # or watch it here
 ```
