@@ -1443,7 +1443,10 @@ pub unsafe fn instr_F30F2D_mem(addr: u64, r: i32) {
 }
 
 #[no_mangle]
-pub unsafe fn instr_0F2E(source: f32, r: i32) {
+pub unsafe fn instr_0F2E(source: i32, r: i32) {
+    // the f32 arrives as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
+    let source = f32::from_bits(source as u32);
     // ucomiss xmm1, xmm2/m32
     let destination = read_xmm_f32(r);
     *flags_changed = 0;
@@ -1462,9 +1465,9 @@ pub unsafe fn instr_0F2E(source: f32, r: i32) {
         *flags |= FLAG_ZERO | FLAG_PARITY | FLAG_CARRY
     }
 }
-pub unsafe fn instr_0F2E_reg(r1: i32, r2: i32) { instr_0F2E(read_xmm_f32(r1), r2) }
+pub unsafe fn instr_0F2E_reg(r1: i32, r2: i32) { instr_0F2E(read_xmm32(r1), r2) }
 pub unsafe fn instr_0F2E_mem(addr: u64, r: i32) {
-    instr_0F2E(return_on_pagefault!(safe_read_f32(addr)), r);
+    instr_0F2E(return_on_pagefault!(safe_read32s(addr)), r);
 }
 
 #[no_mangle]
@@ -1494,7 +1497,10 @@ pub unsafe fn instr_660F2E_mem(addr: u64, r: i32) {
 }
 
 #[no_mangle]
-pub unsafe fn instr_0F2F(source: f32, r: i32) {
+pub unsafe fn instr_0F2F(source: i32, r: i32) {
+    // the f32 arrives as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
+    let source = f32::from_bits(source as u32);
     // comiss xmm1, xmm2/m32
     let destination = read_xmm_f32(r);
     *flags_changed = 0;
@@ -1513,9 +1519,9 @@ pub unsafe fn instr_0F2F(source: f32, r: i32) {
         *flags |= FLAG_ZERO | FLAG_PARITY | FLAG_CARRY
     }
 }
-pub unsafe fn instr_0F2F_reg(r1: i32, r2: i32) { instr_0F2F(read_xmm_f32(r1), r2) }
+pub unsafe fn instr_0F2F_reg(r1: i32, r2: i32) { instr_0F2F(read_xmm32(r1), r2) }
 pub unsafe fn instr_0F2F_mem(addr: u64, r: i32) {
-    instr_0F2F(return_on_pagefault!(safe_read_f32(addr)), r);
+    instr_0F2F(return_on_pagefault!(safe_read32s(addr)), r);
 }
 
 #[no_mangle]
@@ -2090,14 +2096,17 @@ pub unsafe fn instr_F20F51_mem(addr: u64, r: i32) {
     instr_F20F51(return_on_pagefault!(safe_read64s(addr)), r);
 }
 #[no_mangle]
-pub unsafe fn instr_F30F51(source: f32, r: i32) {
+pub unsafe fn instr_F30F51(source: i32, r: i32) {
+    // the f32 arrives as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
+    let source = f32::from_bits(source as u32);
     // sqrtss xmm, xmm/mem32
     // XXX: Should round according to round control
     write_xmm_f32(r, source.sqrt());
 }
-pub unsafe fn instr_F30F51_reg(r1: i32, r2: i32) { instr_F30F51(read_xmm_f32(r1), r2); }
+pub unsafe fn instr_F30F51_reg(r1: i32, r2: i32) { instr_F30F51(read_xmm32(r1), r2); }
 pub unsafe fn instr_F30F51_mem(addr: u64, r: i32) {
-    instr_F30F51(return_on_pagefault!(safe_read_f32(addr)), r);
+    instr_F30F51(return_on_pagefault!(safe_read32s(addr)), r);
 }
 
 #[no_mangle]
@@ -2118,13 +2127,16 @@ pub unsafe fn instr_0F52_mem(addr: u64, r: i32) {
     instr_0F52(return_on_pagefault!(safe_read128s(addr)), r);
 }
 #[no_mangle]
-pub unsafe fn instr_F30F52(source: f32, r: i32) {
+pub unsafe fn instr_F30F52(source: i32, r: i32) {
+    // the f32 arrives as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
+    let source = f32::from_bits(source as u32);
     // rsqrtss xmm1, xmm2/m32
     write_xmm_f32(r, 1.0 / source.sqrt());
 }
-pub unsafe fn instr_F30F52_reg(r1: i32, r2: i32) { instr_F30F52(read_xmm_f32(r1), r2); }
+pub unsafe fn instr_F30F52_reg(r1: i32, r2: i32) { instr_F30F52(read_xmm32(r1), r2); }
 pub unsafe fn instr_F30F52_mem(addr: u64, r: i32) {
-    instr_F30F52(return_on_pagefault!(safe_read_f32(addr)), r);
+    instr_F30F52(return_on_pagefault!(safe_read32s(addr)), r);
 }
 
 #[no_mangle]
@@ -2145,13 +2157,16 @@ pub unsafe fn instr_0F53_mem(addr: u64, r: i32) {
     instr_0F53(return_on_pagefault!(safe_read128s(addr)), r);
 }
 #[no_mangle]
-pub unsafe fn instr_F30F53(source: f32, r: i32) {
+pub unsafe fn instr_F30F53(source: i32, r: i32) {
+    // the f32 arrives as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
+    let source = f32::from_bits(source as u32);
     // rcpss xmm, xmm/m32
     write_xmm_f32(r, 1.0 / source);
 }
-pub unsafe fn instr_F30F53_reg(r1: i32, r2: i32) { instr_F30F53(read_xmm_f32(r1), r2); }
+pub unsafe fn instr_F30F53_reg(r1: i32, r2: i32) { instr_F30F53(read_xmm32(r1), r2); }
 pub unsafe fn instr_F30F53_mem(addr: u64, r: i32) {
-    instr_F30F53(return_on_pagefault!(safe_read_f32(addr)), r);
+    instr_F30F53(return_on_pagefault!(safe_read32s(addr)), r);
 }
 
 #[no_mangle]
@@ -2280,15 +2295,18 @@ pub unsafe fn instr_F20F58_mem(addr: u64, r: i32) {
     instr_F20F58(return_on_pagefault!(safe_read64s(addr)), r);
 }
 #[no_mangle]
-pub unsafe fn instr_F30F58(source: f32, r: i32) {
+pub unsafe fn instr_F30F58(source: i32, r: i32) {
+    // the f32 arrives as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
+    let source = f32::from_bits(source as u32);
     // addss xmm, xmm/mem32
     let destination = read_xmm_f32(r);
     let result = source + destination;
     write_xmm_f32(r, result);
 }
-pub unsafe fn instr_F30F58_reg(r1: i32, r2: i32) { instr_F30F58(read_xmm_f32(r1), r2); }
+pub unsafe fn instr_F30F58_reg(r1: i32, r2: i32) { instr_F30F58(read_xmm32(r1), r2); }
 pub unsafe fn instr_F30F58_mem(addr: u64, r: i32) {
-    instr_F30F58(return_on_pagefault!(safe_read_f32(addr)), r);
+    instr_F30F58(return_on_pagefault!(safe_read32s(addr)), r);
 }
 
 #[no_mangle]
@@ -2336,15 +2354,18 @@ pub unsafe fn instr_F20F59_mem(addr: u64, r: i32) {
     instr_F20F59(return_on_pagefault!(safe_read64s(addr)), r);
 }
 #[no_mangle]
-pub unsafe fn instr_F30F59(source: f32, r: i32) {
+pub unsafe fn instr_F30F59(source: i32, r: i32) {
+    // the f32 arrives as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
+    let source = f32::from_bits(source as u32);
     // mulss xmm, xmm/mem32
     let destination = read_xmm_f32(r);
     let result = source * destination;
     write_xmm_f32(r, result);
 }
-pub unsafe fn instr_F30F59_reg(r1: i32, r2: i32) { instr_F30F59(read_xmm_f32(r1), r2); }
+pub unsafe fn instr_F30F59_reg(r1: i32, r2: i32) { instr_F30F59(read_xmm32(r1), r2); }
 pub unsafe fn instr_F30F59_mem(addr: u64, r: i32) {
-    instr_F30F59(return_on_pagefault!(safe_read_f32(addr)), r);
+    instr_F30F59(return_on_pagefault!(safe_read32s(addr)), r);
 }
 
 #[no_mangle]
@@ -2384,13 +2405,16 @@ pub unsafe fn instr_F20F5A_mem(addr: u64, r: i32) {
     instr_F20F5A(return_on_pagefault!(safe_read64s(addr)), r);
 }
 #[no_mangle]
-pub unsafe fn instr_F30F5A(source: f32, r: i32) {
+pub unsafe fn instr_F30F5A(source: i32, r: i32) {
+    // the f32 arrives as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
+    let source = f32::from_bits(source as u32);
     // cvtss2sd xmm1, xmm2/m32
     write_xmm_f64(r, source as f64);
 }
-pub unsafe fn instr_F30F5A_reg(r1: i32, r2: i32) { instr_F30F5A(read_xmm_f32(r1), r2); }
+pub unsafe fn instr_F30F5A_reg(r1: i32, r2: i32) { instr_F30F5A(read_xmm32(r1), r2); }
 pub unsafe fn instr_F30F5A_mem(addr: u64, r: i32) {
-    instr_F30F5A(return_on_pagefault!(safe_read_f32(addr)), r);
+    instr_F30F5A(return_on_pagefault!(safe_read32s(addr)), r);
 }
 
 #[no_mangle]
@@ -2493,15 +2517,18 @@ pub unsafe fn instr_F20F5C_mem(addr: u64, r: i32) {
     instr_F20F5C(return_on_pagefault!(safe_read64s(addr)), r);
 }
 #[no_mangle]
-pub unsafe fn instr_F30F5C(source: f32, r: i32) {
+pub unsafe fn instr_F30F5C(source: i32, r: i32) {
+    // the f32 arrives as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
+    let source = f32::from_bits(source as u32);
     // subss xmm, xmm/mem32
     let destination = read_xmm_f32(r);
     let result = destination - source;
     write_xmm_f32(r, result);
 }
-pub unsafe fn instr_F30F5C_reg(r1: i32, r2: i32) { instr_F30F5C(read_xmm_f32(r1), r2); }
+pub unsafe fn instr_F30F5C_reg(r1: i32, r2: i32) { instr_F30F5C(read_xmm32(r1), r2); }
 pub unsafe fn instr_F30F5C_mem(addr: u64, r: i32) {
-    instr_F30F5C(return_on_pagefault!(safe_read_f32(addr)), r);
+    instr_F30F5C(return_on_pagefault!(safe_read32s(addr)), r);
 }
 #[no_mangle]
 pub unsafe fn instr_0F5D(source: reg128, r: i32) {
@@ -2551,15 +2578,18 @@ pub unsafe fn instr_F20F5D_mem(addr: u64, r: i32) {
     instr_F20F5D(return_on_pagefault!(safe_read64s(addr)), r);
 }
 #[no_mangle]
-pub unsafe fn instr_F30F5D(source: f32, r: i32) {
+pub unsafe fn instr_F30F5D(source: i32, r: i32) {
+    // the f32 arrives as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
+    let source = f32::from_bits(source as u32);
     // minss xmm, xmm/mem32
     let destination = read_xmm_f32(r);
     let result = sse_min(destination as f64, source as f64) as f32;
     write_xmm_f32(r, result);
 }
-pub unsafe fn instr_F30F5D_reg(r1: i32, r2: i32) { instr_F30F5D(read_xmm_f32(r1), r2); }
+pub unsafe fn instr_F30F5D_reg(r1: i32, r2: i32) { instr_F30F5D(read_xmm32(r1), r2); }
 pub unsafe fn instr_F30F5D_mem(addr: u64, r: i32) {
-    instr_F30F5D(return_on_pagefault!(safe_read_f32(addr)), r);
+    instr_F30F5D(return_on_pagefault!(safe_read32s(addr)), r);
 }
 #[no_mangle]
 pub unsafe fn instr_0F5E(source: reg128, r: i32) {
@@ -2606,15 +2636,18 @@ pub unsafe fn instr_F20F5E_mem(addr: u64, r: i32) {
     instr_F20F5E(return_on_pagefault!(safe_read64s(addr)), r);
 }
 #[no_mangle]
-pub unsafe fn instr_F30F5E(source: f32, r: i32) {
+pub unsafe fn instr_F30F5E(source: i32, r: i32) {
+    // the f32 arrives as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
+    let source = f32::from_bits(source as u32);
     // divss xmm, xmm/mem32
     let destination = read_xmm_f32(r);
     let result = destination / source;
     write_xmm_f32(r, result);
 }
-pub unsafe fn instr_F30F5E_reg(r1: i32, r2: i32) { instr_F30F5E(read_xmm_f32(r1), r2); }
+pub unsafe fn instr_F30F5E_reg(r1: i32, r2: i32) { instr_F30F5E(read_xmm32(r1), r2); }
 pub unsafe fn instr_F30F5E_mem(addr: u64, r: i32) {
-    instr_F30F5E(return_on_pagefault!(safe_read_f32(addr)), r);
+    instr_F30F5E(return_on_pagefault!(safe_read32s(addr)), r);
 }
 #[no_mangle]
 pub unsafe fn instr_0F5F(source: reg128, r: i32) {
@@ -2664,15 +2697,18 @@ pub unsafe fn instr_F20F5F_mem(addr: u64, r: i32) {
     instr_F20F5F(return_on_pagefault!(safe_read64s(addr)), r);
 }
 #[no_mangle]
-pub unsafe fn instr_F30F5F(source: f32, r: i32) {
+pub unsafe fn instr_F30F5F(source: i32, r: i32) {
+    // the f32 arrives as raw bits: NaN payloads don't survive f32
+    // parameters across the jit call boundary (wasm NaN canonicalisation)
+    let source = f32::from_bits(source as u32);
     // maxss xmm, xmm/mem32
     let destination = read_xmm_f32(r);
     let result = sse_max(destination as f64, source as f64) as f32;
     write_xmm_f32(r, result);
 }
-pub unsafe fn instr_F30F5F_reg(r1: i32, r2: i32) { instr_F30F5F(read_xmm_f32(r1), r2); }
+pub unsafe fn instr_F30F5F_reg(r1: i32, r2: i32) { instr_F30F5F(read_xmm32(r1), r2); }
 pub unsafe fn instr_F30F5F_mem(addr: u64, r: i32) {
-    instr_F30F5F(return_on_pagefault!(safe_read_f32(addr)), r);
+    instr_F30F5F(return_on_pagefault!(safe_read32s(addr)), r);
 }
 
 #[no_mangle]
