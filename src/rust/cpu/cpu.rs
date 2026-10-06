@@ -412,6 +412,7 @@ pub unsafe fn tlb_high_evict(idx: usize) {
     tlb_high_entry[idx] = 0;
     if let Some(c) = tlb_code_high[idx].take() {
         drop(Box::from_raw(c.as_ptr()));
+        bump_jit_module_generation();
     }
 }
 
@@ -6198,11 +6199,21 @@ pub unsafe fn get_opstats_buffer(
 #[cfg(not(feature = "profiler"))]
 pub unsafe fn get_opstats_buffer() -> f64 { 0.0 }
 
+/// Bumped whenever a compiled module's wasm table index is freed (jit.rs
+/// free_wasm_table_index) or a tlb code slot is dropped (clear_tlb_code, tlb_high_evict):
+/// the 64-bit chain cache (jit64::CHAIN_CACHE) is only valid within one generation.
+pub static mut JIT_MODULE_GENERATION: u64 = 0;
+
+pub fn bump_jit_module_generation() {
+    unsafe { JIT_MODULE_GENERATION = JIT_MODULE_GENERATION.wrapping_add(1) };
+}
+
 pub fn clear_tlb_code(page: u64) {
     unsafe {
         if let Some(slot) = tlb_code_slot(page) {
             if let Some(c) = slot.take() {
                 drop(Box::from_raw(c.as_ptr()));
+                bump_jit_module_generation();
             }
         }
     }

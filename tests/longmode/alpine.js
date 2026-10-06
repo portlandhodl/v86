@@ -53,6 +53,18 @@ if(process.env.JIT_MAX_PAGES)
     });
 }
 
+// JIT64_DEFER_FLAGS=0, JIT64_TLB_CACHE=0, JIT64_CHAIN_CACHE=0: disable individual jit64
+// optimizations (for A/B benchmarking and bisection)
+for(const [env, slot] of [["JIT64_DEFER_FLAGS", 8], ["JIT64_TLB_CACHE", 9], ["JIT64_CHAIN_CACHE", 10]])
+{
+    if(process.env[env] === "0")
+    {
+        emulator.bus.register("emulator-started", () => {
+            emulator.v86.cpu.wm.exports["set_jit_config"](slot, 0);
+        });
+    }
+}
+
 const start = Date.now();
 const elapsed = () => ((Date.now() - start) / 1000).toFixed(0) + "s";
 

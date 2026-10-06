@@ -1200,6 +1200,65 @@ pub unsafe fn jit64_interpret_one(start: i32) -> i32 {
     1
 }
 
+/// Whether the chain exit caches its last resolution (guest page -> module + entry state).
+/// set_jit_config(10, 0) disables it.
+pub static mut JIT64_CHAIN_CACHE: bool = true;
+
+/// The last successful chain resolution (single entry, in wasm memory), keyed by the exact
+/// guest eip: the resolved state indexes the target module's dispatcher, so it is only valid
+/// for the address it was resolved for. Validity: the generation must equal
+/// cpu::JIT_MODULE_GENERATION, which is bumped whenever a module's wasm table index is freed
+/// (the slot may be reused) or a tlb code slot is dropped (the page may be remapped or made
+/// non-executable). The state flags must equal the current ones (which also guarantees the
+/// target is a 64-bit module).
+#[repr(C)]
+pub struct ChainCache {
+    pub eip: i64,
+    pub generation: u64,
+    pub cpu_flags: u32,
+    pub state: u32,
+    pub wasm_table_index: u32,
+}
+pub static mut CHAIN_CACHE: ChainCache = ChainCache {
+    eip: 0,
+    generation: u64::MAX, // != the initial generation 0: never hits before the first store
+    cpu_flags: 0,
+    state: 0,
+    wasm_table_index: 0,
+};
+
+/// Store a successful chain resolution in the chain cache (no-op when it's disabled:
+/// the chain-cache hit path only exists in the module then, so this is never reached)
+fn gen_chain_cache_store(
+    ctx: &mut JitContext,
+    enabled: bool,
+    eip: &WasmLocalI64,
+    state: &WasmLocal,
+    wasm_table_index: &dyn Fn(&mut JitContext),
+) {
+    if !enabled {
+        return;
+    }
+    let base = &raw const CHAIN_CACHE as u32;
+    ctx.builder.const_i32(base as i32);
+    ctx.builder.get_local_i64(eip);
+    ctx.builder.store_aligned_i64(0);
+    ctx.builder.const_i32((base + 8) as i32);
+    ctx.builder
+        .load_fixed_i64(&raw const cpu::JIT_MODULE_GENERATION as u32);
+    ctx.builder.store_aligned_i64(0);
+    ctx.builder.const_i32((base + 16) as i32);
+    ctx.builder
+        .load_fixed_u8(global_pointers::state_flags as u32);
+    ctx.builder.store_aligned_i32(0);
+    ctx.builder.const_i32((base + 20) as i32);
+    ctx.builder.get_local(state);
+    ctx.builder.store_aligned_i32(0);
+    ctx.builder.const_i32((base + 24) as i32);
+    wasm_table_index(ctx);
+    ctx.builder.store_aligned_i32(0);
+}
+
 #[no_mangle]
 pub unsafe fn jit64_test_cc(condition: i32) -> i32 {
     use crate::cpu::misc_instr::*;
@@ -1266,6 +1325,57 @@ pub fn gen_chain_to_next_module(ctx: &mut JitContext, reenter_label: Label) {
     {
         codegen::gen_get_eip64(ctx.builder);
         let eip = ctx.builder.set_new_local_i64();
+
+        // the chain cache: the last successful resolution of a guest address to a module
+        // and entry state (see CHAIN_CACHE). A hit skips the tlb_code lookup and the Code*
+        // dereferences; misses populate it on the success paths below.
+        let chain_cache = unsafe { JIT64_CHAIN_CACHE };
+        if chain_cache {
+            let base = &raw const CHAIN_CACHE as u32;
+            // hit: cached eip == eip && generation alive && state flags match
+            ctx.builder.load_fixed_i64(base);
+            ctx.builder.get_local_i64(&eip);
+            ctx.builder.eq_i64();
+            ctx.builder.load_fixed_i64(base + 8);
+            ctx.builder
+                .load_fixed_i64(&raw const cpu::JIT_MODULE_GENERATION as u32);
+            ctx.builder.eq_i64();
+            ctx.builder.and_i32();
+            ctx.builder.load_fixed_i32(base + 16);
+            ctx.builder
+                .load_fixed_u8(global_pointers::state_flags as u32);
+            ctx.builder.eq_i32();
+            ctx.builder.and_i32();
+            ctx.builder.if_void();
+            {
+                // in this module?
+                ctx.builder.load_fixed_i32(base + 24);
+                ctx.builder
+                    .const_i32(ctx.wasm_table_index.to_u16() as i32);
+                ctx.builder.eq_i32();
+                ctx.builder.if_void();
+                {
+                    ctx.builder.load_fixed_i32(base + 20);
+                    ctx.builder
+                        .set_local(&ctx.builder.arg_local_initial_state.unsafe_clone());
+                    // counted in the instruction counter already
+                    ctx.builder.const_i32(0);
+                    ctx.builder.set_local(&ctx.instruction_counter);
+                    ctx.builder.br(reenter_label);
+                }
+                ctx.builder.block_end();
+
+                ctx.builder.load_fixed_i32(base + 20);
+                for r in 0..16 {
+                    ctx.builder.get_local_i64(&reg_local(ctx, r));
+                }
+                ctx.builder.load_fixed_i32(base + 24);
+                ctx.builder.const_i32(WASM_TABLE_OFFSET as i32);
+                ctx.builder.add_i32();
+                ctx.builder.return_call_indirect_jit64();
+            }
+            ctx.builder.else_();
+        }
 
         // code = tlb_code_get(canonicalize(eip) >> 12), a pointer to the page's Code or 0
         ctx.builder.get_local_i64(&eip);
@@ -1371,6 +1481,10 @@ pub fn gen_chain_to_next_module(ctx: &mut JitContext, reenter_label: Label) {
                     ctx.builder.eq_i32();
                     ctx.builder.if_void();
                     {
+                        gen_chain_cache_store(ctx, chain_cache, &eip, &state, &|ctx| {
+                            ctx.builder
+                                .const_i32(ctx.wasm_table_index.to_u16() as i32)
+                        });
                         ctx.builder.get_local(&state);
                         ctx.builder
                             .set_local(&ctx.builder.arg_local_initial_state.unsafe_clone());
@@ -1385,6 +1499,11 @@ pub fn gen_chain_to_next_module(ctx: &mut JitContext, reenter_label: Label) {
                         ctx.builder,
                         crate::profiler::stat::RUN_FROM_CACHE,
                     );
+                    gen_chain_cache_store(ctx, chain_cache, &eip, &state, &|ctx| {
+                        ctx.builder.get_local(&code);
+                        ctx.builder
+                            .load_aligned_u16(offset_of!(Code, wasm_table_index) as u32);
+                    });
                     ctx.builder.get_local(&state);
                     for r in 0..16 {
                         ctx.builder.get_local_i64(&reg_local(ctx, r));
@@ -1404,6 +1523,9 @@ pub fn gen_chain_to_next_module(ctx: &mut JitContext, reenter_label: Label) {
         ctx.builder.block_end();
         ctx.builder.free_local(code);
         ctx.builder.free_local_i64(eip);
+        if chain_cache {
+            ctx.builder.block_end(); // chain cache hit/miss
+        }
     }
     ctx.builder.block_end();
 }

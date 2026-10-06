@@ -596,6 +596,20 @@ Done since (branch jit-perf, bench64 64-bit 508 -> ~620-685 MIPS):
   `set_jit_config(9, 0)` / `JIT64_TLB_CACHE=0` disables it. Not done: a second
   entry (or a per-block rsp range validation) for blocks that alternate between
   two pages (stack + one data page).
+- Chain cache (branch jit64-chain-cache; Alpine boot 57s -> 53s interleaved,
+  bench64 neutral): the chain exit caches its last resolution (exact guest eip
+  -> target module + dispatcher state) in a fixed memory location, keyed with
+  the cpu state flags and guarded by cpu::JIT_MODULE_GENERATION (bumped when a
+  module's table index is freed and when a tlb code slot is dropped). A hit
+  skips the tlb_code hash lookup and the Code* dereferences (8 KiB state_tables
+  - host-cache-cold on real workloads) and goes straight to the reenter branch
+  or the tail call. Keyed by exact eip, not page: the state is per offset.
+  Kernel text mappings are global, so their code slots and the cache survive
+  clear_tlb (syscall-heavy paths keep hitting). `set_jit_config(10, 0)` /
+  `JIT64_CHAIN_CACHE=0` disables it.
+- rep stosw/d/q use a bulk splat fill (memset_pattern_no_mmap_or_dirty_check)
+  on the rep fast path instead of per-element stores; page zeroing without
+  ERMS (clear_page is rep stosq here) is no longer a per-element loop.
 
 Where the Alpine boot time goes now (6.1G instructions; note that
 `get_instruction_counter` is u32 and wraps): host profile ~55% jitted code,
@@ -617,8 +631,9 @@ Next:
 - ~~Lazy flags in wasm locals with a liveness pass per block (flags are 3-4
   stores to memory per arithmetic instruction), cmp+jcc fused on locals~~ —
   done per block (see above); cross-block liveness is the remaining part.
-- Remaining interpreter calls: 8/16-bit shifts, mul/div, cli, rep movs/stos
-  (could be memory.copy/fill within a page), popf, SSE moves, mov cr, rdtsc.
+- Remaining interpreter calls: 8/16-bit shifts, mul/div, cli, popf, SSE moves,
+  mov cr, rdtsc. (rep stos got a bulk fill; rep movs already memcpy's per
+  page.)
 - Inline flags for 8/16-bit operations (conditions currently fall back to a
   call for them).
 - Code in the last 16 bytes of a page always runs interpreted (5.6M

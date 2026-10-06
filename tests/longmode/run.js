@@ -189,6 +189,14 @@ if(process.env.JIT64_TLB_CACHE === "0")
     });
 }
 
+// JIT64_CHAIN_CACHE=0: no chain-resolution cache
+if(process.env.JIT64_CHAIN_CACHE === "0")
+{
+    emulator.bus.register("emulator-started", () => {
+        emulator.v86.cpu.wm.exports["set_jit_config"](10, 0);
+    });
+}
+
 const timeout = setTimeout(() => {
     throw new Error("Timeout waiting for longmode test to finish");
 }, 60 * 1000);

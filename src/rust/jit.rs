@@ -2387,6 +2387,9 @@ pub fn jit_increase_hotness_and_maybe_compile(
 }
 
 fn free_wasm_table_index(ctx: &mut JitState, wasm_table_index: WasmTableIndex) {
+    // the 64-bit chain cache resolves pages to wasm table indices: a freed index may be
+    // reused by another module, so cache entries must die with it
+    cpu::bump_jit_module_generation();
     if CHECK_JIT_STATE_INVARIANTS {
         dbg_assert!(!ctx.wasm_table_index_free_list.contains(&wasm_table_index));
 
@@ -2723,6 +2726,7 @@ pub unsafe fn set_jit_config(index: u32, value: u32) {
         7 => JIT64_CHAINING = value != 0,
         8 => crate::jit64::JIT64_DEFER_FLAGS = value != 0,
         9 => crate::jit64::JIT64_TLB_CACHE = value != 0,
+        10 => crate::jit64::JIT64_CHAIN_CACHE = value != 0,
         _ => dbg_assert!(false),
     }
 }
@@ -2739,6 +2743,7 @@ pub unsafe fn get_jit_config(index: u32) -> u32 {
         7 => JIT64_CHAINING as u32,
         8 => crate::jit64::JIT64_DEFER_FLAGS as u32,
         9 => crate::jit64::JIT64_TLB_CACHE as u32,
+        10 => crate::jit64::JIT64_CHAIN_CACHE as u32,
         _ => 0,
     }
 }
