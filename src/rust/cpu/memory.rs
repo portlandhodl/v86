@@ -14,7 +14,7 @@ mod ext {
 
 use crate::cpu::apic;
 use crate::cpu::cpu::{
-    handle_irqs, reg128, APIC_MEM_ADDRESS, APIC_MEM_SIZE, IOAPIC_MEM_ADDRESS, IOAPIC_MEM_SIZE,
+    handle_irqs_or_defer, reg128, APIC_MEM_ADDRESS, APIC_MEM_SIZE, IOAPIC_MEM_ADDRESS, IOAPIC_MEM_SIZE,
 };
 use crate::cpu::global_pointers::{high_memory_size, memory_size};
 use crate::cpu::guest;
@@ -406,11 +406,11 @@ pub unsafe fn mmap_write32(addr: u64, value: i32) {
     }
     else if in_apic(addr) {
         apic::write32(addr as u32 - APIC_MEM_ADDRESS, value as u32);
-        handle_irqs();
+        handle_irqs_or_defer();
     }
     else if in_ioapic(addr) {
         ioapic::write32(addr as u32 - IOAPIC_MEM_ADDRESS, value as u32);
-        handle_irqs();
+        handle_irqs_or_defer();
     }
     else if above_mmio_space(addr) {
     }

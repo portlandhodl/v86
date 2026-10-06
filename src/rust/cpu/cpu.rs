@@ -3281,7 +3281,36 @@ pub static mut delivering_double_fault: bool = false;
 pub static mut cpu_init_pending: bool = false;
 
 #[no_mangle]
-pub unsafe fn request_cpu_init() { cpu_init_pending = true; }
+pub unsafe fn request_cpu_init() {
+    cpu_init_pending = true;
+    stop_jit_chaining();
+}
+
+/// True while do_many_cycles_native runs instructions. Device, APIC and port
+/// handlers called from there run in the middle of an instruction (possibly
+/// inside compiled code whose registers live in wasm locals), so interrupts
+/// they raise must not be delivered until the next instruction boundary.
+pub static mut in_cpu_execution: bool = false;
+
+/// An interrupt may have become deliverable during the current instruction;
+/// checked at the next instruction boundary (cycle_internal)
+pub static mut irq_check_pending: bool = false;
+
+/// Make compiled 64-bit code return to cycle_internal at its next chaining point
+unsafe fn stop_jit_chaining() { jit_chain_instruction_limit = *instruction_counter; }
+
+/// handle_irqs for callers that may run in the middle of an instruction:
+/// delivering the interrupt there would push a stale rip and switch stacks
+/// under compiled code that keeps running with its cached registers
+pub unsafe fn handle_irqs_or_defer() {
+    if in_cpu_execution {
+        irq_check_pending = true;
+        stop_jit_chaining();
+    }
+    else {
+        handle_irqs();
+    }
+}
 
 
 /// Debug facilities (DR0-3 breakpoints via DR7, TF single-stepping, INT1).
@@ -4244,6 +4273,13 @@ pub unsafe fn cycle_internal() {
         reset_cpu();
         return;
     }
+    if irq_check_pending {
+        irq_check_pending = false;
+        handle_irqs();
+        if *in_hlt {
+            return;
+        }
+    }
     let mut jit_entry = None;
     let initial_eip = *instruction_pointer;
     let initial_state_flags = *state_flags;
@@ -4713,10 +4749,16 @@ pub unsafe fn do_many_cycles_native() {
     profiler::stat_increment(stat::DO_MANY_CYCLES);
     let initial_instruction_counter = *instruction_counter;
     jit_chain_instruction_limit = initial_instruction_counter.wrapping_add(LOOP_COUNTER as u32);
+    in_cpu_execution = true;
     while (*instruction_counter).wrapping_sub(initial_instruction_counter) < LOOP_COUNTER as u32
         && !*in_hlt
     {
         cycle_internal();
+    }
+    in_cpu_execution = false;
+    if irq_check_pending {
+        irq_check_pending = false;
+        handle_irqs();
     }
 }
 
@@ -6260,7 +6302,7 @@ pub unsafe fn handle_irqs() {
 #[no_mangle]
 pub unsafe fn raise_nmi() {
     *nmi_pending = true;
-    handle_irqs();
+    handle_irqs_or_defer();
 }
 
 unsafe fn pic_call_irq(interrupt_nr: u8) {
@@ -6278,14 +6320,14 @@ unsafe fn device_raise_irq(i: u8) {
     // the ioapic is present regardless of ACPI (its redirection entries
     // reset to masked, so a guest that never programs it sees nothing)
     ioapic::set_irq(i);
-    handle_irqs()
+    handle_irqs_or_defer()
 }
 
 #[no_mangle]
 unsafe fn device_lower_irq(i: u8) {
     pic::clear_irq(i);
     ioapic::clear_irq(i);
-    handle_irqs()
+    handle_irqs_or_defer()
 }
 
 pub fn io_port_read8(port: i32) -> i32 {
@@ -6317,7 +6359,7 @@ pub fn io_port_write8(port: i32, value: i32) {
                     0x4D1 => pic::port4D1_write(value as u8),
                     _ => dbg_assert!(false),
                 };
-                handle_irqs()
+                handle_irqs_or_defer()
             },
             _ => js::io_port_write8(port, value),
         }
