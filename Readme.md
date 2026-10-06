@@ -8,6 +8,11 @@ in wasm.
 It started as a fork of [v86](https://github.com/copy/v86) and has diverged
 into its own project. Everything 32-bit that v86 runs still runs, bit for bit.
 
+**Try it: <https://portlandhodl.github.io/v86_64/>**, a VirtualBox-style machine
+manager: pick a machine and start it, or import your own as a JSON profile. The ISOs
+are streamed from an [image server](server/README.md); Alpine is also bundled with
+the site.
+
 ## Status
 
 | Guest | State |
@@ -16,6 +21,7 @@ into its own project. Everything 32-bit that v86 runs still runs, bit for bit.
 | Linux x86_64 kernels | Full early init, arch selftests and userspace, booted from an ISO or directly from a bzImage |
 | ELF64 multiboot kernels | Higher-half ELF64 entry points are loaded and run |
 | Xubuntu 24.04 (amd64 live ISO) | Being brought up: [examples/xubuntu.html](examples/xubuntu.html) |
+| Debian testing, Ubuntu 26.04 (amd64 live ISOs) | Being brought up: profiles in [profiles/](profiles/README.md); the kernel boots directly, desktops not yet verified |
 | 32-bit guests | Unchanged from v86 (Linux, Windows 1.01-2000, DOS, BSDs, hobby OSes) |
 
 | Milestone | |
