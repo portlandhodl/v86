@@ -495,7 +495,8 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(204, {
             ...cors_headers(req),
             "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-            "Access-Control-Allow-Headers": "Range",
+            // src/lib.js sends X-Accept-Encoding with every ranged read
+            "Access-Control-Allow-Headers": "Range, X-Accept-Encoding",
             "Access-Control-Max-Age": "86400",
         }).end();
         return;
