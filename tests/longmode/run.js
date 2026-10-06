@@ -138,6 +138,9 @@ const expected = [
     0x0f1e2d3c4b5a6978n, // 103: movhpd xmm8, m64
     0x5052454654434821n, // 104: prefetch/prefetchw (0F 0D) are nops
     0x4d50582d4e4f5021n, // 105: mpx 0F 1A/0F 1B are nops
+    0x1000000001n,       // 106: bt/bts m64, imm8 mask the offset to 63
+    0x1234567800000001n, // 107: REX before lock is annulled (32-bit add)
+    320n,                // 108: single-step traps armed by iretq in a hot loop (40 * 8)
 ];
 
 const emulator = new V86({

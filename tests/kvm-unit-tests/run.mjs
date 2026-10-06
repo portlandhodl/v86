@@ -21,6 +21,8 @@ var emulator = new V86({
     memory_size: 256 * 1024 * 1024,
     disable_jit: +process.env.DISABLE_JIT,
     log_level: 0,
+    // V86_WASM_PATH overrides the core build, e.g. build/v86-mem64-debug.wasm
+    wasm_path: process.env.V86_WASM_PATH,
 });
 
 emulator.bus.register("emulator-started", function()
@@ -35,6 +37,15 @@ emulator.bus.register("emulator-started", function()
         function() {},
         function() {});
 });
+
+// JIT_THRESHOLD=<n>: compile code after n executed instructions instead of the default
+// (a low value exercises the jit on all of the test's code)
+if(process.env.JIT_THRESHOLD)
+{
+    emulator.bus.register("emulator-started", () => {
+        emulator.v86.cpu.wm.exports["set_jit_config"](5, +process.env.JIT_THRESHOLD);
+    });
+}
 
 emulator.add_listener("serial0-output-byte", function(byte)
 {

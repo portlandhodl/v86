@@ -787,6 +787,7 @@ pub fn gen_chain_to_next_module(ctx: &mut JitContext, reenter_label: Label) {
     use std::mem::offset_of;
 
     // !in_hlt && (int)(jit_chain_instruction_limit - instruction_counter) > 0
+    //     && !debug_mode_active()
     ctx.builder.load_fixed_u8(global_pointers::in_hlt as u32);
     ctx.builder.eqz_i32();
     ctx.builder
@@ -796,6 +797,22 @@ pub fn gen_chain_to_next_module(ctx: &mut JitContext, reenter_label: Label) {
     ctx.builder.sub_i32();
     ctx.builder.const_i32(0);
     ctx.builder.gt_i32();
+    ctx.builder.and_i32();
+    // Breakpoints and single-stepping are only checked by the interpreter: cycle_internal
+    // doesn't run compiled code while they are armed (see cpu::debug_mode_active), so chaining
+    // must not either. They are armed by instructions run through the interpreter's handlers
+    // (popf, iret, sysret, mov dr7, ...), which set JIT64_EXIT to leave the module.
+    ctx.builder.load_fixed_i32(global_pointers::flags as u32);
+    ctx.builder
+        .const_i32(crate::cpu::cpu::FLAG_TRAP | crate::cpu::cpu::FLAG_RF);
+    ctx.builder.and_i32();
+    ctx.builder
+        .load_fixed_u8(&raw const cpu::debug_exec_bp_armed as u32);
+    ctx.builder.or_i32();
+    ctx.builder
+        .load_fixed_u8(&raw const cpu::debug_data_wp_armed as u32);
+    ctx.builder.or_i32();
+    ctx.builder.eqz_i32();
     ctx.builder.and_i32();
     ctx.builder.if_void();
     {
@@ -997,11 +1014,12 @@ pub fn gen_page_switch_check64(ctx: &mut JitContext, next_block_phys: u64) {
 }
 
 /// After jumping to another page within compiled code: returns 1 if the new page isn't mapped
-/// to the physical page the code was compiled for
+/// to the physical page the code was compiled for, or can't be executed (NX, SMEP; the
+/// interpreter's instruction fetch then raises the page fault)
 #[no_mangle]
 pub unsafe fn jit_page_switch_check64(next_block_phys_low: u32, next_block_phys_high: u32) -> i32 {
     let next_block_phys = next_block_phys_low as u64 | (next_block_phys_high as u64) << 32;
-    match cpu::translate_address_read_no_side_effects(*global_pointers::instruction_pointer) {
+    match cpu::translate_address_read_code_no_side_effects(*global_pointers::instruction_pointer) {
         Ok(phys) => (phys != next_block_phys) as i32,
         Err(()) => 1,
     }
@@ -2717,18 +2735,9 @@ pub fn gen_bt(ctx: &mut JitContext, kind: u32, bits: u32, dst: Opnd, offset: Opn
     dbg_assert!(bits == 32 || bits == 64);
     dbg_assert!(!(matches!(dst, Opnd::Mem(_)) && matches!(offset, Opnd::Reg(_))));
     let w = bits == 64;
-    // 64-bit memory operands are a bit string: an immediate offset selects a
-    // bit outside the addressed qword (see the interpreter's bt_mem family).
-    // Move the accessed qword accordingly; the in-qword bit is masked below.
-    // (32-bit memory operands are masked to 31 by both engines.)
-    let dst = match (dst, offset) {
-        (Opnd::Mem(mut m), Opnd::Imm(i)) if w => {
-            m.disp = m.disp.wrapping_add((i as i32 >> 6) << 3);
-            Opnd::Mem(m)
-        },
-        _ => dst,
-    };
-    // offset & (bits - 1), as i32
+    // offset & (bits - 1), as i32. An immediate offset is masked to the operand size for
+    // memory operands too (only register offsets address a bit string, and those run in
+    // the interpreter)
     let off = ctx.builder.new_local();
     match offset {
         Opnd::Imm(i) => ctx.builder.const_i32((i as i32) & (bits as i32 - 1)),

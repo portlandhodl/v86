@@ -32,6 +32,8 @@
 //                      is not available in release), so this only checks that
 //                      the interpreter doesn't crash.
 //   V86_WASM_PATH=...  Override the wasm build (e.g. build/v86-mem64-debug.wasm)
+//   FUZZ_DUMP=1        On a mismatch, also print both engines' exception,
+//                      eflags and registers
 
 import url from "node:url";
 import process from "node:process";
@@ -281,6 +283,16 @@ async function run_variant(test_case, use_jit)
 
     cpu.reboot_internal();
     cpu.reset_memory();
+    // device memory isn't guest RAM: clear the vga planes and framebuffer, which random
+    // addresses can hit (0xA0000-0xBFFFF, the linear framebuffer), so that both variants of a
+    // case start from the same state
+    const vga = cpu.devices.vga;
+    if(vga)
+    {
+        vga.vga_memory.fill(0);
+        vga.svga_memory.fill(0);
+        vga.latch_dword = 0;
+    }
     cpu.load_multiboot(test_case.image.buffer);
     if(test_case.mode === 64)
     {
@@ -552,6 +564,15 @@ async function main()
                 if(case_failures.length > 10)
                 {
                     console.error("    ... and %d more", case_failures.length - 10);
+                }
+                if(process.env.FUZZ_DUMP)
+                {
+                    for(const [which, st] of [["interp", interp_state], ["jit", jit_state]])
+                    {
+                        console.error("    %s: exception=%s eflags=%s regs=%s", which,
+                            JSON.stringify(st.exception), format_value(st.eflags),
+                            st.regs.map(format_value).join(" "));
+                    }
                 }
             }
 
