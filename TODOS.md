@@ -535,7 +535,8 @@ Done:
   (bisecting miscompilations).
 - `set_jit_config(4, 1)` disables the 64-bit JIT, `(5, n)` sets the hotness
   threshold (`JIT_THRESHOLD=1 tests/longmode/run.js` in `make longmode-tests`),
-  `(8, 0)` restores eager lazy-flag stores (`JIT64_DEFER_FLAGS=0`).
+  `(8, 0)` restores eager lazy-flag stores (`JIT64_DEFER_FLAGS=0`),
+  `(9, 0)` disables the data tlb cache (`JIT64_TLB_CACHE=0`).
 
 Where the time goes now (Alpine ISO boot, `make with-profiler` +
 `emulator.get_instruction_stats()`): 96.5% of the ~6G instructions run
@@ -580,6 +581,21 @@ Done since (branch jit-perf, bench64 64-bit 508 -> ~620-685 MIPS):
   following block overwrites the flags before reading them — needs join-point
   aware liveness), and deferring imul's cf/of (runtime condition, would need a
   pending-set local).
+- Data tlb cache (branch jit64-tlb-cache; stacked on the flags work, another
+  ~+5% on bench64 64-bit): the last fast-path-validated data page lives in two
+  function-wide wasm locals (virtual page base + raw entry); a hit is one
+  unsigned compare — (addr ^ vbase) u< 0x1001 - bytes covers the same-page and
+  the crossing check — plus the entry's valid bit (reads) or
+  valid/!readonly/!has_code (writes). Validity is checked at runtime, so the
+  cache survives block boundaries and loop back edges within a module's
+  execution; it is zeroed at calls into the interpreter (the only points where
+  mappings can change: page walks only fill, tlb_set_has_code runs at compile
+  time, a module's cpl is fixed; wasm locals start at zero = invalid). Slow
+  paths never populate (mmio/scratch entries aren't cacheable). Code size cost
+  is ~20 wasm instructions per access site, offset by hits being ~15 vs ~38.
+  `set_jit_config(9, 0)` / `JIT64_TLB_CACHE=0` disables it. Not done: a second
+  entry (or a per-block rsp range validation) for blocks that alternate between
+  two pages (stack + one data page).
 
 Where the Alpine boot time goes now (6.1G instructions; note that
 `get_instruction_counter` is u32 and wraps): host profile ~55% jitted code,
@@ -596,7 +612,8 @@ Next:
 - Generated code size: 64-bit memory accesses are ~40 wasm instructions
   inline. Smaller code would make compilation cheaper, which would allow a
   lower hotness threshold (less interpreted code). E.g. one shared slow
-  path call per module, or per-block reuse of the tlb entry for rsp.
+  path call per module. (The tlb entry reuse is done — the one-entry data
+  tlb cache above; a hit is ~15 instructions instead of ~38.)
 - ~~Lazy flags in wasm locals with a liveness pass per block (flags are 3-4
   stores to memory per arithmetic instruction), cmp+jcc fused on locals~~ —
   done per block (see above); cross-block liveness is the remaining part.
