@@ -1,6 +1,14 @@
 {
     "site_url": "https://portlandhodl.github.io/v86_64/",
     "catalogue_url": "https://v86-64.qrsnap.io/catalogue.json",
+    "bundle": [
+        {
+            "profile": "alpine-virt.json",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-virt-3.19.9-x86_64.iso",
+            "file": "alpine-virt-3.19.9-x86_64.iso",
+            "sha256": "5389ca9c2ed206d9c1f7a92d213668de9c1c76493faf8cb1d7680a03cf9a0513"
+        }
+    ],
     "title": "v86_64 — 64-bit Linux in your browser",
     "description": "A virtual machine manager for x86-64 Linux distributions, emulated in WebAssembly with a 64-bit JIT. Pick an ISO and boot it in your browser: nothing to install.",
     "image": "og.png",

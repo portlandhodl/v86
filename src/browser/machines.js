@@ -357,43 +357,36 @@ export function save_overrides(overrides)
 }
 
 /**
- * Where the machine catalogue comes from: a <meta name="v86-catalogue"> tag (set by a
- * deployment, e.g. a static page using a separate image server), otherwise profiles/ next to
- * this page
- * @return {string}
+ * Where the machine catalogue comes from: the urls in a <meta name="v86-catalogue"> tag (set by
+ * a deployment, e.g. a static page using a separate image server; several separated by spaces
+ * are tried in order), otherwise profiles/ next to this page
+ * @return {!Array<string>}
  */
-export function catalogue_url()
+export function catalogue_urls()
 {
     const meta = document.querySelector("meta[name=v86-catalogue]");
-    const content = meta && meta.getAttribute("content");
-    return new URL(content || MANIFEST_URL, location.href).href;
+    const content = (meta && meta.getAttribute("content") || "").trim();
+    const urls = content ? content.split(/\s+/) : [MANIFEST_URL];
+    return urls.map(url => new URL(url, location.href).href);
 }
 
 /**
- * Fetch the served catalogue: { image_base, profiles: [profile, ...], errors: [string, ...] }
+ * Fetch one catalogue: { image_base, profiles: [profile, ...], errors: [string, ...] }
  *
  * The catalogue lists profiles either as file names (relative to the catalogue) or inline as
  * objects, which is what the image server in server/ generates.
+ * @param {string} manifest_url
  * @param {string|null} image_base_override
  */
-export async function load_catalogue(image_base_override)
+async function load_one_catalogue(manifest_url, image_base_override)
 {
-    const manifest_url = catalogue_url();
-    const errors = [];
-    let manifest;
-    try
-    {
-        const response = await fetch(manifest_url, { cache: "no-cache" });
-        if(!response.ok) throw new Error("HTTP " + response.status);
-        manifest = await response.json();
-    }
-    catch(e)
-    {
-        return { image_base: image_base_override || "images/", profiles: [], errors: [`${manifest_url}: ${e.message}`] };
-    }
+    const response = await fetch(manifest_url, { cache: "no-cache" });
+    if(!response.ok) throw new Error("HTTP " + response.status);
+    const manifest = await response.json();
 
     const image_base = image_base_override || resolve_url(manifest["image_base"] || "../images/", manifest_url);
     const entries = Array.isArray(manifest["profiles"]) ? manifest["profiles"] : [];
+    const errors = [];
 
     const profiles = await Promise.all(entries.map(async (entry, i) =>
     {
@@ -416,6 +409,35 @@ export async function load_catalogue(image_base_override)
     }));
 
     return { image_base, profiles: profiles.filter(p => p), errors };
+}
+
+/**
+ * Fetch the catalogue from the first source that is reachable and has machines
+ * @param {string|null} image_base_override
+ */
+export async function load_catalogue(image_base_override)
+{
+    const failures = [];
+    let result = null;
+    for(const url of catalogue_urls())
+    {
+        try
+        {
+            result = await load_one_catalogue(url, image_base_override);
+            if(result.profiles.length) return result;
+            failures.push(`${url}: no machines ready`);
+        }
+        catch(e)
+        {
+            failures.push(`${url}: ${e.message}`);
+        }
+        console.info("catalogue unavailable, trying the next one:", failures[failures.length - 1]);
+    }
+    return {
+        image_base: result ? result.image_base : image_base_override || "images/",
+        profiles: [],
+        errors: result ? result.errors.concat(failures) : failures,
+    };
 }
 
 /**
