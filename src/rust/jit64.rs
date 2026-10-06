@@ -203,6 +203,7 @@ pub unsafe fn jit64_print_profile() {
 
 fn gen_call_wrapper(ctx: &mut JitContext, name: &str, mem: Option<&Modrm64>, args: &[A]) {
     gen_profile_count(ctx, name);
+    gen_commit_deferred_flags(ctx);
     ctx.flags64 = Flags64::Unknown;
     gen_spill_dirty_registers(ctx);
     ctx.builder.const_i32(instruction_ips(ctx));
@@ -335,6 +336,7 @@ pub fn gen_generic_mem(ctx: &mut JitContext, name: &str, m: &Modrm64, args: &[A]
 /// decode itself), then leave the compiled code. Its bytes must have been consumed by the caller.
 pub fn gen_interpret_one(ctx: &mut JitContext, instr_flags: &mut u32) {
     gen_profile_count(ctx, "interpret_one");
+    gen_commit_deferred_flags(ctx);
     ctx.flags64 = Flags64::Unknown;
     gen_spill_dirty_registers(ctx);
     ctx.builder
@@ -493,7 +495,8 @@ pub fn instr64_E8_jit64(ctx: &mut JitContext, _imm: i32) {
 
 /// sti: handle_irqs is called by the block glue one instruction later (interrupt shadow)
 pub fn instr_FB_jit64(ctx: &mut JitContext) {
-    // may raise #gp, which changes registers
+    // may raise #gp, which changes registers and pushes an exception frame (reads the flags)
+    gen_commit_deferred_flags(ctx);
     gen_spill_dirty_registers(ctx);
     ctx.builder.const_i32(instruction_ips(ctx));
     ctx.builder.call_fn1_ret("jit64_sti");
@@ -517,10 +520,175 @@ pub enum Flags64 {
     Add(u32),
     /// and/or/xor/test: cf=of=0
     Logic(u32),
+    /// inc/dec with the operand size: like add/sub of 1, but cf comes from the previous flags
+    /// (the carry is kept in the cf flag local while the state is deferred)
+    IncDec { bits: u32, is_dec: bool },
+}
+
+/// Whether the 64-bit jit keeps lazy-flag values in wasm locals within a basic block instead
+/// of storing them to the cpu state after every instruction (see gen_defer_flags). The locals
+/// are committed to memory at observation points: block ends, calls into the interpreter and
+/// the memory slow paths. set_jit_config(8, 0) restores the eager stores.
+pub static mut JIT64_DEFER_FLAGS: bool = true;
+
+/// Compile-time part of a deferred lazy-flags state (the values live in FlagLocals64)
+#[derive(Copy, Clone)]
+pub struct DeferredFlags64 {
+    pub bits: u32,
+    /// the value last_op_size/flags_changed are committed with (as in the eager code)
+    pub flags_changed: i32,
+    /// whether last_op1 holds a meaningful value (not needed for logical operations)
+    pub has_op1: bool,
+    /// flags-word bits that still have to be cleared when committing (logic operations clear
+    /// cf/of/af in the flags word eagerly otherwise)
+    pub pending_clear: i32,
+    /// inc/dec: the cf local holds the preserved carry flag
+    pub cf_valid: bool,
+}
+
+/// The function-wide wasm locals that hold the deferred lazy-flag values
+pub struct FlagLocals64 {
+    pub op1: WasmLocalI64,
+    pub result: WasmLocalI64,
+    pub cf: WasmLocal,
+}
+impl FlagLocals64 {
+    fn clone(&self) -> FlagLocals64 {
+        FlagLocals64 {
+            op1: self.op1.unsafe_clone(),
+            result: self.result.unsafe_clone(),
+            cf: self.cf.unsafe_clone(),
+        }
+    }
+}
+
+fn flag_locals(ctx: &JitContext) -> FlagLocals64 {
+    ctx.jit64_flag_locals.as_ref().unwrap().clone()
+}
+
+fn defer_flags_enabled(ctx: &JitContext) -> bool {
+    ctx.jit64_flag_locals.is_some() && unsafe { JIT64_DEFER_FLAGS }
+}
+
+/// Defer the lazy-flag state of an instruction: keep last_op1/last_result in the flag locals
+/// and record how to commit them. flags_changed covers the flags-word bits the new state
+/// computes lazily, making that part of a pending clear dead. apply_clear adds flags-word
+/// bits that must be cleared at commit (logic operations).
+fn gen_defer_flags(
+    ctx: &mut JitContext,
+    bits: u32,
+    op1: Option<&Val>,
+    result: &Val,
+    flags_changed: i32,
+    apply_clear: i32,
+) {
+    let fl = flag_locals(ctx);
+    let pending_clear = ctx
+        .jit64_deferred
+        .map_or(0, |d| d.pending_clear & !flags_changed)
+        | apply_clear;
+    if let Some(op1) = op1 {
+        op1.get(ctx);
+        if bits != 64 {
+            ctx.builder.extend_unsigned_i32_to_i64();
+        }
+        ctx.builder.set_local_i64(&fl.op1);
+    }
+    result.get(ctx);
+    if bits != 64 {
+        ctx.builder.extend_unsigned_i32_to_i64();
+    }
+    ctx.builder.set_local_i64(&fl.result);
+    ctx.jit64_deferred = Some(DeferredFlags64 {
+        bits,
+        flags_changed,
+        has_op1: op1.is_some(),
+        pending_clear,
+        cf_valid: false,
+    });
+}
+
+/// Emit the stores that write a deferred lazy-flag state back to the cpu state in memory.
+/// Stack-neutral and idempotent (only reads the flag locals).
+fn gen_emit_deferred_flags(ctx: &mut JitContext, d: &DeferredFlags64) {
+    let fl = flag_locals(ctx);
+    // last_op_size and flags_changed are adjacent: write both with one store
+    ctx.builder.const_i32(global_pointers::last_op_size as i32);
+    ctx.builder
+        .const_i64((d.flags_changed as u32 as i64) << 32 | opsize(d.bits) as u32 as i64);
+    ctx.builder.store_aligned_i64(0);
+    if d.has_op1 {
+        if d.bits == 64 {
+            ctx.builder.const_i32(global_pointers::last_op1_64 as i32);
+            ctx.builder.get_local_i64(&fl.op1);
+            ctx.builder.store_aligned_i64(0);
+        }
+        else {
+            ctx.builder.const_i32(global_pointers::last_op1 as i32);
+            ctx.builder.get_local_i64(&fl.op1);
+            ctx.builder.wrap_i64_to_i32();
+            ctx.builder.store_aligned_i32(0);
+        }
+    }
+    if d.bits == 64 {
+        ctx.builder
+            .const_i32(global_pointers::last_result_64 as i32);
+        ctx.builder.get_local_i64(&fl.result);
+        ctx.builder.store_aligned_i64(0);
+    }
+    else {
+        ctx.builder.const_i32(global_pointers::last_result as i32);
+        ctx.builder.get_local_i64(&fl.result);
+        ctx.builder.wrap_i64_to_i32();
+        ctx.builder.store_aligned_i32(0);
+    }
+    let clear = d.pending_clear | if d.cf_valid { FLAG_CARRY } else { 0 };
+    if clear != 0 || d.cf_valid {
+        ctx.builder.const_i32(global_pointers::flags as i32);
+        ctx.builder.load_fixed_i32(global_pointers::flags as u32);
+        ctx.builder.const_i32(!clear);
+        ctx.builder.and_i32();
+        if d.cf_valid {
+            ctx.builder.get_local(&fl.cf);
+            ctx.builder.or_i32();
+        }
+        ctx.builder.store_aligned_i32(0);
+    }
+}
+
+/// Commit the deferred lazy-flag state on a linear path: afterwards the values are read from
+/// memory again. A compile-time no-op when there is no deferred state (always the case in the
+/// 32-bit jit).
+pub fn gen_commit_deferred_flags(ctx: &mut JitContext) {
+    match ctx.jit64_deferred.take() {
+        Some(d) => gen_emit_deferred_flags(ctx, &d),
+        None => {},
+    }
+}
+
+/// Commit the deferred lazy-flag state inside a cold branch (a memory slow path): the branch
+/// may not be taken at runtime, so the compile-time state stays deferred — the stores are
+/// idempotent and the flag locals remain authoritative on both paths.
+fn gen_commit_deferred_flags_cold(ctx: &mut JitContext) {
+    match ctx.jit64_deferred {
+        Some(d) => gen_emit_deferred_flags(ctx, &d),
+        None => {},
+    }
 }
 
 /// Push the lazy flag operand slots for an operation of the given size
 fn gen_get_last_op1(ctx: &mut JitContext, bits: u32) {
+    if let Some(d) = ctx.jit64_deferred {
+        // the value is zero-extended in the flag local (logic operations don't reach here:
+        // their conditions never read last_op1)
+        dbg_assert!(d.has_op1 && d.bits == bits);
+        let fl = flag_locals(ctx);
+        ctx.builder.get_local_i64(&fl.op1);
+        if bits != 64 {
+            ctx.builder.wrap_i64_to_i32();
+        }
+        return;
+    }
     if bits == 64 {
         ctx.builder.load_fixed_i64(global_pointers::last_op1_64 as u32)
     }
@@ -529,6 +697,15 @@ fn gen_get_last_op1(ctx: &mut JitContext, bits: u32) {
     }
 }
 fn gen_get_last_result(ctx: &mut JitContext, bits: u32) {
+    if let Some(d) = ctx.jit64_deferred {
+        dbg_assert!(d.bits == bits);
+        let fl = flag_locals(ctx);
+        ctx.builder.get_local_i64(&fl.result);
+        if bits != 64 {
+            ctx.builder.wrap_i64_to_i32();
+        }
+        return;
+    }
     if bits == 64 {
         ctx.builder.load_fixed_i64(global_pointers::last_result_64 as u32)
     }
@@ -544,15 +721,124 @@ pub fn gen_condition_fn(ctx: &mut JitContext, condition: u8) {
         if cc & 1 != 0 {
             ctx.builder.eqz_i32();
         }
+        // jcc ends the block (the setcc/cmovcc callers pay an occasional extra commit):
+        // the following blocks read the lazy flags from memory. The commit is stack-neutral,
+        // the computed condition stays on the stack.
+        gen_commit_deferred_flags(ctx);
         return;
     }
+    gen_commit_deferred_flags(ctx);
     ctx.builder.const_i32(cc as i32);
     ctx.builder.call_fn1_ret("jit64_test_cc");
+}
+
+/// Generate a (non-negated) condition after inc/dec from the deferred lazy flags state,
+/// false if not possible. z/s/o/l/le come from the result; cf is the preserved carry.
+fn gen_condition_incdec(ctx: &mut JitContext, cc: u8, bits: u32, is_dec: bool) -> bool {
+    if bits < 32 {
+        return false;
+    }
+    let w = bits == 64;
+    macro_rules! op {
+        ($i32:ident, $i64:ident) => {
+            if w {
+                ctx.builder.$i64()
+            }
+            else {
+                ctx.builder.$i32()
+            }
+        };
+    }
+    // of: inc overflows at result == msb, dec at result == msb - 1
+    macro_rules! of {
+        () => {{
+            gen_get_last_result(ctx, bits);
+            let msb = 1i64 << (bits - 1);
+            let v = if is_dec { msb - 1 } else { msb };
+            if w {
+                ctx.builder.const_i64(v);
+            }
+            else {
+                ctx.builder.const_i32(v as i32);
+            }
+            op!(eq_i32, eq_i64);
+        }};
+    }
+    macro_rules! sf {
+        () => {{
+            gen_get_last_result(ctx, bits);
+            if w {
+                ctx.builder.const_i64(0);
+            }
+            else {
+                ctx.builder.const_i32(0);
+            }
+            op!(lt_i32, lt_i64);
+        }};
+    }
+    macro_rules! zf {
+        () => {{
+            gen_get_last_result(ctx, bits);
+            op!(eqz_i32, eqz_i64);
+        }};
+    }
+    match cc {
+        4 => zf!(),
+        8 => sf!(),
+        0 => of!(),
+        12 => {
+            // l: sf != of
+            sf!();
+            of!();
+            ctx.builder.xor_i32();
+        },
+        14 => {
+            // le: zf || sf != of
+            sf!();
+            of!();
+            ctx.builder.xor_i32();
+            zf!();
+            ctx.builder.or_i32();
+        },
+        2 | 6 => {
+            // b: cf; be: cf || zf — cf is the carry preserved by inc/dec
+            match ctx.jit64_deferred {
+                Some(d) if d.cf_valid => {
+                    let fl = flag_locals(ctx);
+                    ctx.builder.get_local(&fl.cf);
+                },
+                Some(_) => {
+                    // unreachable: the carry is saved unless the following instructions
+                    // overwrite all flags before anyone reads them (gen_defer_save_cf)
+                    gen_commit_deferred_flags(ctx);
+                    gen_getcf_generic(ctx);
+                },
+                None => {
+                    // committed: cf is in the flags word
+                    ctx.builder.load_fixed_i32(global_pointers::flags as u32);
+                    ctx.builder.const_i32(1);
+                    ctx.builder.and_i32();
+                },
+            }
+            if cc == 6 {
+                zf!();
+                ctx.builder.or_i32();
+            }
+        },
+        _ => return false,
+    }
+    true
 }
 
 /// Generate a (non-negated) condition from the known lazy flags state, false if not possible.
 /// cc: o=0, b=2, z=4, be=6, s=8, p=10, l=12, le=14
 fn gen_condition_inline(ctx: &mut JitContext, cc: u8) -> bool {
+    match ctx.flags64 {
+        Flags64::IncDec { bits, is_dec } => {
+            return gen_condition_incdec(ctx, cc, bits, is_dec);
+        },
+        _ => {},
+    }
     let (bits, is_logic, is_add) = match ctx.flags64 {
         Flags64::Sub(b) if b >= 32 => (b, false, false),
         Flags64::Add(b) if b >= 32 => (b, false, true),
@@ -1356,6 +1642,9 @@ pub fn gen_safe_read(ctx: &mut JitContext, bits: u32, address: &WasmLocalI64) {
     let entry = gen_tlb_fast_path_check(ctx, bits, address, false);
     ctx.builder.br_if(cont);
 
+    // the slow path may deliver a page fault, which reads the flags: commit the deferred
+    // lazy flags of the previous instructions (this instruction hasn't run yet)
+    gen_commit_deferred_flags_cold(ctx);
     ctx.builder.get_local_i64(address);
     ctx.builder
         .const_i32((ctx.start_of_current_instruction & 0xFFF) as i32);
@@ -1428,6 +1717,8 @@ pub fn gen_safe_write(ctx: &mut JitContext, bits: u32, address: &WasmLocalI64, v
 }
 
 fn gen_write_slow_path(ctx: &mut JitContext, bits: u32, address: &WasmLocalI64, value: &Val) {
+    // may deliver a page fault, which reads the flags: commit the deferred lazy flags
+    gen_commit_deferred_flags_cold(ctx);
     ctx.builder.get_local_i64(address);
     value.get(ctx);
     ctx.builder.const_i32(eip_and_wasm_table_index(ctx));
@@ -1451,6 +1742,9 @@ pub fn gen_safe_read_write(
     let can_use_fast_path = ctx.builder.tee_new_local();
     ctx.builder.br_if(cont);
 
+    // may deliver a page fault, which reads the flags: commit the deferred lazy flags
+    // (still those of the previous instructions: f runs after this at runtime)
+    gen_commit_deferred_flags_cold(ctx);
     ctx.builder.get_local_i64(address);
     ctx.builder.const_i32(eip_and_wasm_table_index(ctx));
     ctx.builder.call_fn2_i64_i32_ret(match bits {
@@ -1580,19 +1874,25 @@ fn gen_clear_flags(ctx: &mut JitContext, clear: i32) {
 
 /// flags for add/sub/cmp (op1 and result have the operand size)
 pub fn gen_flags_arith(ctx: &mut JitContext, bits: u32, op1: &Val, result: &Val, is_sub: bool) {
+    let flags_changed = FLAGS_ALL | if is_sub { FLAG_SUB } else { 0 };
+    if defer_flags_enabled(ctx) {
+        gen_defer_flags(ctx, bits, Some(op1), result, flags_changed, 0);
+        return;
+    }
     gen_set_last_op1(ctx, bits, op1);
     gen_set_last_result(ctx, bits, result);
-    gen_set_op_size_and_flags_changed(ctx, bits, FLAGS_ALL | if is_sub { FLAG_SUB } else { 0 });
+    gen_set_op_size_and_flags_changed(ctx, bits, flags_changed);
 }
 
 /// flags for and/or/xor/test
 pub fn gen_flags_logic(ctx: &mut JitContext, bits: u32, result: &Val) {
+    let flags_changed = FLAGS_ALL & !FLAG_CARRY & !FLAG_OVERFLOW & !FLAG_ADJUST;
+    if defer_flags_enabled(ctx) {
+        gen_defer_flags(ctx, bits, None, result, flags_changed, FLAG_CARRY | FLAG_OVERFLOW | FLAG_ADJUST);
+        return;
+    }
     gen_set_last_result(ctx, bits, result);
-    gen_set_op_size_and_flags_changed(
-        ctx,
-        bits,
-        FLAGS_ALL & !FLAG_CARRY & !FLAG_OVERFLOW & !FLAG_ADJUST,
-    );
+    gen_set_op_size_and_flags_changed(ctx, bits, flags_changed);
     gen_clear_flags(ctx, FLAG_CARRY | FLAG_OVERFLOW | FLAG_ADJUST);
 }
 
@@ -1778,11 +2078,65 @@ pub fn gen_movx(ctx: &mut JitContext, signed: bool, src_bits: u32, dst_bits: u32
     gen_set_reg_from_stack(ctx, dst_bits, r);
 }
 
+/// Compute the carry flag into the cf flag local before inc/dec overwrites the lazy flags
+/// state (returns false when the following instructions make it dead). The carry is then
+/// carried in the local and written to the flags word when the inc/dec state is committed.
+fn gen_defer_save_cf(ctx: &mut JitContext) -> bool {
+    if next_instructions_overwrite_flags(ctx) {
+        // the saved cf would be dead
+        return false;
+    }
+    let fl = flag_locals(ctx);
+    match ctx.flags64 {
+        Flags64::Logic(b) if b >= 32 => {
+            // logic operations clear cf
+            ctx.builder.const_i32(0);
+            ctx.builder.set_local(&fl.cf);
+        },
+        Flags64::Add(b) | Flags64::Sub(b) if b >= 32 => {
+            // cf is condition "b" (2) of the deferred state
+            let ok = gen_condition_inline(ctx, 2);
+            dbg_assert!(ok);
+            ctx.builder.set_local(&fl.cf);
+        },
+        Flags64::IncDec { bits: b, .. } if b >= 32 => match ctx.jit64_deferred {
+            Some(d) if d.cf_valid => {
+                // the local already holds the carry
+            },
+            Some(_) => {
+                gen_commit_deferred_flags(ctx);
+                gen_getcf_generic(ctx);
+                ctx.builder.set_local(&fl.cf);
+            },
+            None => {
+                ctx.builder.load_fixed_i32(global_pointers::flags as u32);
+                ctx.builder.const_i32(1);
+                ctx.builder.and_i32();
+                ctx.builder.set_local(&fl.cf);
+            },
+        },
+        _ => {
+            gen_commit_deferred_flags(ctx);
+            gen_getcf_generic(ctx);
+            ctx.builder.set_local(&fl.cf);
+        },
+    }
+    true
+}
+
 /// inc/dec r/m: cf is preserved
 pub fn gen_incdec(ctx: &mut JitContext, is_dec: bool, bits: u32, dst: Opnd) {
-    // materialise cf into flags before the lazy state is overwritten
-    gen_save_cf(ctx);
-    ctx.flags64 = Flags64::Unknown;
+    let defer = defer_flags_enabled(ctx);
+    let mut cf_valid = false;
+    if defer {
+        // move the carry into the cf local before the lazy state is overwritten
+        cf_valid = gen_defer_save_cf(ctx);
+    }
+    else {
+        // materialise cf into flags before the lazy state is overwritten
+        gen_save_cf(ctx);
+        ctx.flags64 = Flags64::Unknown;
+    }
     let one = set_new_val_const(ctx, bits, 1);
     let flags_changed =
         FLAGS_ALL & !FLAG_CARRY | if is_dec { FLAG_SUB } else { 0 };
@@ -1792,9 +2146,18 @@ pub fn gen_incdec(ctx: &mut JitContext, is_dec: bool, bits: u32, dst: Opnd) {
         one.get(ctx);
         gen_binop(ctx, op, bits);
         let result = set_new_val(ctx, bits);
-        gen_set_last_op1(ctx, bits, op1);
-        gen_set_last_result(ctx, bits, &result);
-        gen_set_op_size_and_flags_changed(ctx, bits, flags_changed);
+        if defer {
+            gen_defer_flags(ctx, bits, Some(op1), &result, flags_changed, 0);
+            if let Some(d) = &mut ctx.jit64_deferred {
+                d.cf_valid = cf_valid;
+            }
+            ctx.flags64 = Flags64::IncDec { bits, is_dec };
+        }
+        else {
+            gen_set_last_op1(ctx, bits, op1);
+            gen_set_last_result(ctx, bits, &result);
+            gen_set_op_size_and_flags_changed(ctx, bits, flags_changed);
+        }
         result
     };
     match dst {
@@ -1900,6 +2263,11 @@ pub fn gen_shift(ctx: &mut JitContext, kind: u32, bits: u32, dst: Opnd, count: S
     dbg_assert!(bits == 32 || bits == 64);
     dbg_assert!(kind == 0 || kind == 1 || kind == 4 || kind == 5 || kind == 7);
     let w = bits == 64;
+    // sets the flags eagerly (and rmw's the flags word): commit the deferred state first
+    gen_commit_deferred_flags(ctx);
+    // skip the flag update when the following instructions overwrite all flags before
+    // anything reads them (same argument as the dead cf save in gen_save_cf)
+    let flags_dead = next_instructions_overwrite_flags(ctx);
 
     // count (i32, masked)
     let count_local = ctx.builder.new_local();
@@ -1956,6 +2324,12 @@ pub fn gen_shift(ctx: &mut JitContext, kind: u32, bits: u32, dst: Opnd, count: S
             }
         }
         let result = set_new_val(ctx, bits);
+
+        if flags_dead {
+            // the flag update is dead: skip it (with a variable count the register write
+            // still happens, only the flags are skipped)
+            return result;
+        }
 
         if !count_is_constant {
             ctx.builder.get_local(&count_local);
@@ -2083,6 +2457,12 @@ pub fn gen_shift(ctx: &mut JitContext, kind: u32, bits: u32, dst: Opnd, count: S
 /// overflow), otherwise a helper computes the 128-bit product.
 pub fn gen_imul(ctx: &mut JitContext, bits: u32, r: u32, src: Opnd, imm: Option<i64>) {
     dbg_assert!(bits == 32 || bits == 64);
+    // sets the flags eagerly (and the wide multiply runs in the interpreter): commit first
+    gen_commit_deferred_flags(ctx);
+    // skip the flag update when the following instructions overwrite all flags before
+    // anything reads them (same argument as the dead cf save in gen_save_cf). Only for the
+    // inline 32-bit path: the 64-bit path's interpreter call sets the flags regardless.
+    let flags_dead = bits == 32 && next_instructions_overwrite_flags(ctx);
     gen_get_operand(ctx, bits, &src);
     let a = set_new_val(ctx, bits);
     match imm {
@@ -2101,22 +2481,24 @@ pub fn gen_imul(ctx: &mut JitContext, bits: u32, r: u32, src: Opnd, imm: Option<
         ctx.builder.wrap_i64_to_i32();
         let result = set_new_val(ctx, 32);
 
-        gen_set_last_result(ctx, 32, &result);
-        // flags = flags & ~(cf | of) | (product != sign_extend(result) ? cf | of : 0)
-        ctx.builder.const_i32(global_pointers::flags as i32);
-        ctx.builder.load_fixed_i32(global_pointers::flags as u32);
-        ctx.builder.const_i32(!(FLAG_CARRY | FLAG_OVERFLOW));
-        ctx.builder.and_i32();
-        ctx.builder.const_i32(FLAG_CARRY | FLAG_OVERFLOW);
-        ctx.builder.const_i32(0);
-        ctx.builder.get_local_i64(&product);
-        result.get(ctx);
-        ctx.builder.extend_signed_i32_to_i64();
-        ctx.builder.ne_i64();
-        ctx.builder.select();
-        ctx.builder.or_i32();
-        ctx.builder.store_aligned_i32(0);
-        gen_set_op_size_and_flags_changed(ctx, 32, FLAGS_ALL & !FLAG_CARRY & !FLAG_OVERFLOW);
+        if !flags_dead {
+            gen_set_last_result(ctx, 32, &result);
+            // flags = flags & ~(cf | of) | (product != sign_extend(result) ? cf | of : 0)
+            ctx.builder.const_i32(global_pointers::flags as i32);
+            ctx.builder.load_fixed_i32(global_pointers::flags as u32);
+            ctx.builder.const_i32(!(FLAG_CARRY | FLAG_OVERFLOW));
+            ctx.builder.and_i32();
+            ctx.builder.const_i32(FLAG_CARRY | FLAG_OVERFLOW);
+            ctx.builder.const_i32(0);
+            ctx.builder.get_local_i64(&product);
+            result.get(ctx);
+            ctx.builder.extend_signed_i32_to_i64();
+            ctx.builder.ne_i64();
+            ctx.builder.select();
+            ctx.builder.or_i32();
+            ctx.builder.store_aligned_i32(0);
+            gen_set_op_size_and_flags_changed(ctx, 32, FLAGS_ALL & !FLAG_CARRY & !FLAG_OVERFLOW);
+        }
         ctx.builder.free_local_i64(product);
 
         gen_set_reg(ctx, 32, r, &result);
@@ -2229,6 +2611,11 @@ fn gen_save_cf(ctx: &mut JitContext) {
     let known = match ctx.flags64 {
         Flags64::Sub(b) | Flags64::Add(b) | Flags64::Logic(b) => b >= 32,
         Flags64::Unknown => false,
+        // inc/dec only defer (gen_incdec); gen_save_cf is the eager path
+        Flags64::IncDec { .. } => {
+            dbg_assert!(false);
+            false
+        },
     };
     if next_instructions_overwrite_flags(ctx) {
         // the saved cf would be dead
@@ -2527,6 +2914,7 @@ fn gen_getcf(ctx: &mut JitContext) {
 
 /// Push cf (i32 0/1) from the lazy flags state at runtime (see misc_instr::getcf)
 fn gen_getcf_generic(ctx: &mut JitContext) {
+    gen_commit_deferred_flags(ctx);
     ctx.builder
         .load_fixed_i32(global_pointers::flags_changed as u32);
     ctx.builder.const_i32(1);
@@ -2605,6 +2993,8 @@ fn gen_msb_of(ctx: &mut JitContext, bits: u32) {
 pub fn gen_adc_sbb(ctx: &mut JitContext, is_sbb: bool, bits: u32, dst: Opnd, src: Opnd) {
     dbg_assert!(bits == 32 || bits == 64);
     let w = bits == 64;
+    // reads cf and sets the flags eagerly: commit the deferred state first
+    gen_commit_deferred_flags(ctx);
     gen_get_operand(ctx, bits, &src);
     let y = set_new_val(ctx, bits);
     gen_getcf(ctx);
@@ -2733,6 +3123,8 @@ pub fn gen_bt(ctx: &mut JitContext, kind: u32, bits: u32, dst: Opnd, offset: Opn
     dbg_assert!(bits == 32 || bits == 64);
     dbg_assert!(!(matches!(dst, Opnd::Mem(_)) && matches!(offset, Opnd::Reg(_))));
     let w = bits == 64;
+    // rmw's the flags word eagerly: commit the deferred state first
+    gen_commit_deferred_flags(ctx);
     // offset & (bits - 1), as i32. An immediate offset is masked to the operand size for
     // memory operands too (only register offsets address a bit string, and those run in
     // the interpreter)
@@ -2932,7 +3324,8 @@ pub fn gen_xadd(ctx: &mut JitContext, bits: u32, dst: Opnd, r: u32) {
 
 /// pushf (64-bit)
 pub fn gen_pushf64(ctx: &mut JitContext) {
-    // no #gp in 64-bit mode (vm86 is impossible)
+    // no #gp in 64-bit mode (vm86 is impossible); get_eflags reads the lazy flags from memory
+    gen_commit_deferred_flags(ctx);
     ctx.builder.call_fn0_ret("jit64_get_eflags");
     ctx.builder.const_i32(0xFCFFFF);
     ctx.builder.and_i32();

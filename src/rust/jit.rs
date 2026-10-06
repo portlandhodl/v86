@@ -367,6 +367,11 @@ pub struct JitContext<'a> {
     pub wasm_table_index: WasmTableIndex,
     /// 64-bit jit: the operation that last set the lazy flags in the current block, if known
     pub flags64: crate::jit64::Flags64,
+    /// 64-bit jit: the function-wide locals that hold deferred lazy-flag values
+    pub jit64_flag_locals: Option<crate::jit64::FlagLocals64>,
+    /// 64-bit jit: the deferred lazy-flag state, if the values differ from memory (the
+    /// compile-time part; the values live in jit64_flag_locals)
+    pub jit64_deferred: Option<crate::jit64::DeferredFlags64>,
     /// 64-bit jit: the 16 general purpose registers
     pub register_locals64: Vec<WasmLocalI64>,
     /// 64-bit jit: registers whose local may differ from memory (bitmask, within a block)
@@ -1335,6 +1340,19 @@ fn jit_generate_module(
     builder.const_i32(0);
     let instruction_counter = builder.set_new_local();
 
+    // the 64-bit jit keeps lazy-flag values in these locals within a basic block
+    // (jit64::gen_defer_flags)
+    let jit64_flag_locals = if state_flags.is_64() {
+        Some(crate::jit64::FlagLocals64 {
+            op1: builder.new_local_i64(),
+            result: builder.new_local_i64(),
+            cf: builder.new_local(),
+        })
+    }
+    else {
+        None
+    };
+
     // with chaining, the exit code looks up the next entry point and continues here if it's
     // in this module (see jit64::gen_chain_to_next_module)
     let reenter_label = if chaining { Some(builder.loop_void()) } else { None };
@@ -1369,6 +1387,8 @@ fn jit_generate_module(
         instruction_counter,
         wasm_table_index,
         flags64: crate::jit64::Flags64::Unknown,
+        jit64_flag_locals,
+        jit64_deferred: None,
         register_locals64,
         dirty_registers64: 0xFFFF,
         block_end: 0,
@@ -1446,6 +1466,13 @@ fn jit_generate_module(
             Work::WasmStructure(WasmStructure::BasicBlock(addr)) => {
                 let block = basic_blocks.get(&addr).unwrap();
                 jit_generate_basic_block(ctx, block);
+
+                // 64-bit jit: commit the deferred lazy flags at the end of the block; the
+                // conditional-jump glue instead commits in gen_condition_fn, after the
+                // condition has been computed from the locals
+                if !matches!(block.ty, BasicBlockType::ConditionalJump { .. }) {
+                    crate::jit64::gen_commit_deferred_flags(ctx);
+                }
 
                 if block.has_sti {
                     match block.ty {
@@ -2125,6 +2152,7 @@ fn jit_generate_module(
     {
         // exit with exception or due to smc
         ctx.builder.block_end();
+        crate::jit64::gen_commit_deferred_flags(ctx);
         codegen::gen_move_registers_from_locals_to_memory(ctx);
         codegen::gen_fn0_const(ctx.builder, "exit_jit");
         codegen::gen_update_instruction_counter(ctx);
@@ -2133,6 +2161,7 @@ fn jit_generate_module(
     {
         // exit
         ctx.builder.block_end();
+        crate::jit64::gen_commit_deferred_flags(ctx);
         if let Some(reenter_label) = reenter_label {
             codegen::gen_update_instruction_counter(ctx);
             crate::jit64::gen_chain_to_next_module(ctx, reenter_label);
@@ -2147,6 +2176,11 @@ fn jit_generate_module(
 
     for local in ctx.register_locals.drain(..) {
         ctx.builder.free_local(local);
+    }
+    if let Some(fl) = ctx.jit64_flag_locals.take() {
+        ctx.builder.free_local_i64(fl.op1);
+        ctx.builder.free_local_i64(fl.result);
+        ctx.builder.free_local(fl.cf);
     }
     // parameters, not allocated locals
     ctx.register_locals64.clear();
@@ -2206,6 +2240,9 @@ fn jit_generate_basic_block(ctx: &mut JitContext, block: &BasicBlock) {
     ctx.current_instruction = Instruction::Other;
     ctx.previous_instruction = Instruction::Other;
     ctx.flags64 = crate::jit64::Flags64::Unknown;
+    // deferred lazy flags are committed at the end of every block (below and in the
+    // conditional-jump glue), so a block always starts with a clean state
+    dbg_assert!(ctx.jit64_deferred.is_none());
     ctx.dirty_registers64 = 0xFFFF;
     ctx.block_end = stop_addr;
 
@@ -2662,6 +2699,7 @@ pub unsafe fn set_jit_config(index: u32, value: u32) {
         5 => JIT_HOTNESS_THRESHOLD = value,
         6 => crate::jit64::PROFILE_GENERIC = value != 0,
         7 => JIT64_CHAINING = value != 0,
+        8 => crate::jit64::JIT64_DEFER_FLAGS = value != 0,
         _ => dbg_assert!(false),
     }
 }
@@ -2676,6 +2714,7 @@ pub unsafe fn get_jit_config(index: u32) -> u32 {
         4 => JIT64_DISABLED as u32,
         5 => JIT_HOTNESS_THRESHOLD,
         7 => JIT64_CHAINING as u32,
+        8 => crate::jit64::JIT64_DEFER_FLAGS as u32,
         _ => 0,
     }
 }
