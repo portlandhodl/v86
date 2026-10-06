@@ -304,6 +304,13 @@ Ordered tasks:
   3-level page cache. `valid_tlb_entries`/`invlpg`/`clear_tlb` follow.
 - Canonical-address checks on fetch/jump targets (64-bit mode #GPs on
   non-canonical RIP).
+- **Open (2026-10):** data accesses don't #GP/#SS on non-canonical
+  addresses in either engine. The TLBs (`tlb_pick_entry` and the jit64's
+  inline `gen_tlb_high_entry`) key on bits 47:12 only, so e.g.
+  `0x0000_8000_0000_1000` hits the entry of `0xFFFF_8000_0000_1000`. A fix
+  could keep the full address bits in `tlb_high_page` (non-canonical
+  addresses then miss and reach the slow path, which would raise the fault)
+  without slowing the fast paths.
 - M1 truncation sites to remove: `resolve_modrm64`, `get_stack_pointer64`,
   `get_reg_asize`/`decr_ecx_asize`, `instr64_C3`, `instr64_FF_2/4`.
 - Segment bases (FS/GS) become full 64-bit: widen `segment_offsets` to u64 and

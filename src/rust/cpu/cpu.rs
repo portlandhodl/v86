@@ -524,6 +524,9 @@ pub static mut in_jit: bool = false;
 pub enum JitExitReason {
     None,
     CpuException { code: i32, error_code: Option<i32> },
+    /// Leave compiled code without an exception; the interpreter continues at
+    /// instruction_pointer (used for self-modifying code, and for page switches to pages that
+    /// can't be executed, where the interpreter's instruction fetch raises the page fault)
     SelfModifyingCodeBail,
 }
 
@@ -3311,6 +3314,10 @@ pub unsafe fn handle_irqs_or_defer() {
     if in_cpu_execution {
         irq_check_pending = true;
         stop_jit_chaining();
+        // compiled 64-bit code that called into the interpreter (e.g. popf setting IF, or an
+        // out instruction raising an irq) leaves after the current instruction, so that
+        // cycle_internal can deliver the interrupt (a no-op outside jit64)
+        crate::jit64::JIT64_EXIT = true;
     }
     else {
         handle_irqs();
@@ -4490,6 +4497,31 @@ pub fn translate_address_read_code(address: u64) -> OrPageFault<u64> {
     }
 }
 
+/// Whether an instruction fetch from a page with the given tlb entry violates NX or SMEP (the
+/// faults raised by translate_address_read_code after a successful translation)
+unsafe fn fetch_violates_nx_or_smep(entry: i32) -> bool {
+    let check_nx = *efer & EFER_NXE != 0 && *cr.offset(4) & CR4_PAE != 0;
+    let check_smep = *cr.offset(0) & CR0_PG != 0 && *cr.offset(4) & CR4_SMEP != 0 && *cpl != 3;
+    check_nx && entry & (TLB_VALID | TLB_NOT_EXECUTABLE) == TLB_VALID | TLB_NOT_EXECUTABLE
+        || check_smep && entry & (TLB_VALID | TLB_NO_USER) == TLB_VALID
+}
+
+/// Like translate_address_read_code, but without side effects: no page fault is raised and no
+/// accessed bits or tlb entries are written. Err if an instruction fetch would fault.
+pub fn translate_address_read_code_no_side_effects(address: u64) -> OrPageFault<u64> {
+    unsafe {
+        let user = *cpl == 3;
+        let mut entry = tlb_pick_entry(address);
+        if entry as i32 & (TLB_VALID | if user { TLB_NO_USER } else { 0 }) != TLB_VALID {
+            entry = do_page_walk(address, false, user, false, false, false)?;
+        }
+        if fetch_violates_nx_or_smep(entry as i32) {
+            return Err(());
+        }
+        Ok(phys_of_tlb_entry(entry, address))
+    }
+}
+
 unsafe fn jit_run_interpreted(mut phys_addr: u64) {
     profiler::stat_increment(stat::RUN_INTERPRETED);
     dbg_assert!(!memory::in_mapped_range(phys_addr));
@@ -5210,6 +5242,12 @@ pub unsafe fn safe_read128s_slow_jit(addr: i32, eip: i32) -> i32 {
 pub unsafe fn get_phys_eip_slow_jit(addr: i32) -> i32 {
     match translate_address_read_jit(addr as u32 as u64) {
         Err(()) => 1,
+        Ok(_) if fetch_violates_nx_or_smep(tlb_pick_entry(addr as u32 as u64) as i32) => {
+            // a page switch to a page that can't be executed: leave the compiled code, the
+            // interpreter's instruction fetch raises the page fault
+            jit_exit_reason = JitExitReason::SelfModifyingCodeBail;
+            1
+        },
         Ok(addr_low) => {
             dbg_assert!(!memory::in_mapped_range(addr_low)); // same assumption as in read_imm8
             jit_slow_result((memory::tlb_host_base(addr_low) ^ addr as u32 as u64) & !0xFFF)

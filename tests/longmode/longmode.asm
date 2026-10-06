@@ -1137,6 +1137,88 @@ t81_done:
     db 0x0F, 0x1A, 0x06               ; bndldx bnd0, [rsi]
     mov [r15 + 105*8], r9
 
+    ; ======== test 106: bt/bts m64, imm8 mask the bit offset to 63 (only register offsets
+    ; address a bit string); run hot so that both engines see it ========
+    mov ecx, 3
+t106_loop:
+    xor r8, r8
+    mov [rel bt_buf], r8
+    mov [rel bt_buf + 8], r8
+    bts qword [rel bt_buf], 100      ; sets bit 36 of the first qword
+    bt  qword [rel bt_buf], 68       ; bit 4 of the first qword: cf = 0
+    adc r8, [rel bt_buf]             ; 1 << 36
+    mov r9, [rel bt_buf + 8]         ; 0 (a bit string offset would set bit 36 here)
+    shl r9, 1
+    add r8, r9
+    bt  qword [rel bt_buf], 100      ; bit 36: cf = 1
+    adc r8, 0
+    dec ecx
+    jnz t106_loop
+    mov [r15 + 106*8], r8
+
+    ; ======== test 107: a legacy prefix (here lock) after a REX prefix annuls it:
+    ; 48 F0 01 06 is lock add dword [rsi], eax ========
+    mov rax, 0x12345678FFFFFFFE
+    mov [r15 + 107*8], rax
+    lea rsi, [r15 + 107*8]
+    mov rax, 0x100000003
+    db 0x48, 0xF0, 0x01, 0x06
+
+    ; ======== test 108: single-stepping armed by iretq in a hot loop (like a kernel returning
+    ; to a ptrace'd task). Each pass returns with TF set to the instruction after a call (an
+    ; entry point of compiled code), runs a few instructions (partly on another page) and clears
+    ; TF again; the #DB handler counts the traps: 8 per pass (after nop, jmp, add, add, jmp,
+    ; pushfq, and, popfq). Compiled code must not run (e.g. through module chaining) while TF
+    ; is set ========
+    mov rax, db_handler
+    mov rdi, 0x6000 + 1*16
+    mov word [rdi], ax                  ; offset 15:0
+    mov word [rdi + 2], 0x08            ; selector
+    mov byte [rdi + 4], 0x00            ; reserved
+    mov byte [rdi + 5], 0x8E            ; P|dpl0|interrupt gate
+    shr rax, 16
+    mov word [rdi + 6], ax              ; offset 31:16
+    shr rax, 16
+    mov qword [rdi + 8], rax            ; offset 63:32
+    mov qword [rel db_count], 0
+    xor r13d, r13d                      ; first 40 passes without TF: get the loop compiled
+    mov r12d, 40
+t108_loop:
+    call t108_iret_tf                   ; "returns" here through iretq (with TF if r13d != 0)
+    nop
+    jmp t108_far
+t108_back:
+    pushfq
+    and qword [rsp], ~0x100
+    popfq                               ; traps once more (TF was set when it started)
+    dec r12d
+    jnz t108_loop
+    test r13d, r13d
+    jnz t108_stepped
+    inc r13d                            ; then 40 passes with TF
+    mov r12d, 40
+    jmp t108_loop
+t108_stepped:
+    mov rax, [rel db_count]
+    mov [r15 + 108*8], rax
+    jmp t108_done
+t108_iret_tf:
+    pop rax                             ; return address
+    mov rdx, rsp
+    mov ecx, ss
+    push rcx
+    push rdx
+    pushfq
+    test r13d, r13d
+    jz t108_no_tf
+    or qword [rsp], 0x100               ; TF
+t108_no_tf:
+    mov ecx, cs
+    push rcx
+    push rax
+    iretq
+t108_done:
+
     ; mask all PIC interrupts: user mode runs with IF set below (test 84)
     mov al, 0xFF
     out 0x21, al
@@ -1227,6 +1309,11 @@ syscall_handler:
     mov rcx, r14
     o64 sysret    ; REX.W form (see above)
 
+; ---- #DB handler (test 108): count single-step traps ----
+db_handler:
+    inc qword [rel db_count]
+    iretq
+
 ; ---- #PF handler: demand-paging for 0x40000000, skip for the NX page ----
 pf_handler:
     mov r8, cr2
@@ -1267,6 +1354,8 @@ scratch: dq 0
 scratch_ptr: dq scratch
 call_count: dq 0
 cx16_scratch: dq 0, 0
+bt_buf: dq 0, 0                    ; test 106
+db_count: dq 0                     ; test 108
 
 align 16
 fx_area: times 64 dq 0             ; 512-byte fxsave area (16-byte aligned)
@@ -1298,6 +1387,13 @@ t87_b:
     dec ecx
     jnz t87_a
     jmp t87_done
+
+    ; test 108: single-stepped code on another page than its loop
+    times 0x2100 - ($ - $$) db 0xCC
+t108_far:
+    add r9, 1
+    add r9, 2
+    jmp t108_back
 
 [bits 16]
     ; reset vector at file offset 0xFFF0

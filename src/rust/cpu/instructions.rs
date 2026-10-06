@@ -2199,6 +2199,9 @@ pub unsafe fn instr_F0() {
     // TODO
     // This triggers UD when used with
     // some instructions that don't write to memory
+    // a legacy prefix after a REX prefix annuls the REX prefix (like the other prefixes and the
+    // 64-bit jit)
+    *prefixes &= !prefix::PREFIX_MASK_REX;
     run_prefix_instruction();
 }
 

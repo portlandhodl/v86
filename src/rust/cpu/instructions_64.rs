@@ -236,13 +236,13 @@ pub unsafe fn instr64_0FB7_mem(addr: u64, r: i32) { write_reg64(r, return_on_pag
 pub unsafe fn instr64_0FB7_reg(r1: i32, r: i32) { write_reg64(r, read_reg16(r1) as u64); }
 pub unsafe fn instr64_0FB8_mem(_a0: u64, _a1: i32) { trigger_ud(); }
 pub unsafe fn instr64_0FB8_reg(_a0: i32, _a1: i32) { trigger_ud(); }
-pub unsafe fn instr64_0FBA_4_mem(addr: u64, imm: i32) { bt_mem(addr, imm); }
+pub unsafe fn instr64_0FBA_4_mem(addr: u64, imm: i32) { bt_mem(addr, imm & 63); }
 pub unsafe fn instr64_0FBA_4_reg(r1: i32, imm: i32) { bt_reg64(read_reg64(r1), imm & 63); }
-pub unsafe fn instr64_0FBA_5_mem(addr: u64, imm: i32) { bts_mem(addr, imm); }
+pub unsafe fn instr64_0FBA_5_mem(addr: u64, imm: i32) { bts_mem(addr, imm & 63); }
 pub unsafe fn instr64_0FBA_5_reg(r1: i32, imm: i32) { write_reg64(r1, bts_reg64(read_reg64(r1), imm & 63)); }
-pub unsafe fn instr64_0FBA_6_mem(addr: u64, imm: i32) { btr_mem(addr, imm); }
+pub unsafe fn instr64_0FBA_6_mem(addr: u64, imm: i32) { btr_mem(addr, imm & 63); }
 pub unsafe fn instr64_0FBA_6_reg(r1: i32, imm: i32) { write_reg64(r1, btr_reg64(read_reg64(r1), imm & 63)); }
-pub unsafe fn instr64_0FBA_7_mem(addr: u64, imm: i32) { btc_mem(addr, imm); }
+pub unsafe fn instr64_0FBA_7_mem(addr: u64, imm: i32) { btc_mem(addr, imm & 63); }
 pub unsafe fn instr64_0FBA_7_reg(r1: i32, imm: i32) { write_reg64(r1, btc_reg64(read_reg64(r1), imm & 63)); }
 pub unsafe fn instr64_0FBB_mem(addr: u64, r: i32) { btc_mem(addr, read_reg32(r)); }
 pub unsafe fn instr64_0FBB_reg(r1: i32, r: i32) { write_reg64(r1, btc_reg64(read_reg64(r1), read_reg32(r) & 63)); }
