@@ -837,13 +837,12 @@ pub fn gen_chain_to_next_module(ctx: &mut JitContext, reenter_label: Label) {
         }
         ctx.builder.else_();
         {
+            // eip is canonical, so its arithmetic page number is the tag (cpu::tlb_high_tag)
             ctx.builder.get_local_i64(&eip);
-            ctx.builder.const_i64(16);
-            ctx.builder.shl_i64();
-            ctx.builder.const_i64(28);
-            ctx.builder.shr_u_i64();
+            ctx.builder.const_i64(12);
+            ctx.builder.shr_s_i64();
             let page = ctx.builder.tee_new_local_i64();
-            // slot index: tlb_high_index(page)
+            // slot index: tlb_high_hash(tag)
             ctx.builder.const_i64(0x9E37_79B9_7F4A_7C15u64 as i64);
             ctx.builder.mul_i64();
             ctx.builder.const_i64(25);
@@ -1254,15 +1253,14 @@ fn gen_tlb_entry(ctx: &mut JitContext, address: &WasmLocalI64) {
 /// Push the low 32 bits of the hashed tlb's entry for the page of a 64-bit address, or 0 (not
 /// valid) if the slot holds a different page
 fn gen_tlb_high_entry(ctx: &mut JitContext, address: &WasmLocalI64) {
-    // page = canonicalize(address) >> 12
+    // tag = address >> 12 (arithmetic): equals cpu::tlb_high_tag of the page for canonical
+    // addresses, and no tag for non-canonical ones, which miss and #GP in the slow path
     ctx.builder.get_local_i64(address);
-    ctx.builder.const_i64(16);
-    ctx.builder.shl_i64();
-    ctx.builder.const_i64(28);
-    ctx.builder.shr_u_i64();
+    ctx.builder.const_i64(12);
+    ctx.builder.shr_s_i64();
     let page = ctx.builder.tee_new_local_i64();
 
-    // byte offset of the slot: tlb_high_index(page) * 8
+    // byte offset of the slot: tlb_high_hash(tag) * 8
     ctx.builder.const_i64(0x9E37_79B9_7F4A_7C15u64 as i64);
     ctx.builder.mul_i64();
     ctx.builder.const_i64(25 - 3);

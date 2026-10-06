@@ -47,7 +47,6 @@ enum FunctionType {
     FN2_I64_I32,
     FN2_I64_I32_RET,
     FN2_I64_I32_RET_I64,
-    FN2_F32_I32,
 
     FN3_RET,
 
@@ -449,13 +448,6 @@ impl WasmBuilder {
                     self.output.push(op::TYPE_I32);
                     self.output.push(1);
                     self.output.push(op::TYPE_I64);
-                },
-                FunctionType::FN2_F32_I32 => {
-                    self.output.push(op::TYPE_FUNC);
-                    self.output.push(2);
-                    self.output.push(op::TYPE_F32);
-                    self.output.push(op::TYPE_I32);
-                    self.output.push(0);
                 },
                 FunctionType::FN3_RET => {
                     self.output.push(op::TYPE_FUNC);
@@ -978,7 +970,6 @@ impl WasmBuilder {
     pub fn load_guest_i64(&mut self, byte_offset: u32) {
         self.mem_op(op::OP_I64LOAD, op::MEM_NO_ALIGN, byte_offset)
     }
-    pub fn load_guest_u64(&mut self, byte_offset: u32) { self.load_guest_i64(byte_offset) }
     pub fn store_guest_u8(&mut self, byte_offset: u32) {
         self.mem_op(op::OP_I32STORE8, op::MEM_NO_ALIGN, byte_offset)
     }
@@ -1176,7 +1167,6 @@ impl WasmBuilder {
     pub fn call_fn2_i64_i32_ret_i64(&mut self, name: &str) {
         self.call_fn(name, FunctionType::FN2_I64_I32_RET_I64)
     }
-    pub fn call_fn2_f32_i32(&mut self, name: &str) { self.call_fn(name, FunctionType::FN2_F32_I32) }
     pub fn call_fn2_ret(&mut self, name: &str) { self.call_fn(name, FunctionType::FN2_RET) }
     pub fn call_fn3(&mut self, name: &str) { self.call_fn(name, FunctionType::FN3) }
     pub fn call_fn3_ret(&mut self, name: &str) { self.call_fn(name, FunctionType::FN3_RET) }

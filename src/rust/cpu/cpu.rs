@@ -392,8 +392,9 @@ pub static mut tlb_data: [TlbEntry; 0x100000] = [0; 0x100000];
 pub static mut tlb_code: [Option<ptr::NonNull<Code>>; 0x100000] = [None; 0x100000];
 
 // TLB for linear pages at or above 4 GiB (48-bit virtual addresses in long
-// mode). Direct-mapped, keyed by the full page number; an entry is valid if
-// tlb_high_page[idx] == page and tlb_high_entry[idx] != 0. The entry format is
+// mode). Direct-mapped, keyed by the tag of the page (tlb_high_tag: the page
+// number of the canonical, sign-extended address); an entry is valid if
+// tlb_high_page[idx] == tlb_high_tag(page) and tlb_high_entry[idx] != 0. The entry format is
 // the same as in tlb_data, but as u64 (the page number << 12 may exceed 32
 // bits): memory::tlb_host_base(phys) ^ (page << 12) | info_bits, so the
 // physical address is reconstructed by phys_of_tlb_entry.
@@ -423,7 +424,7 @@ pub unsafe fn tlb_code_slot(page: u64) -> Option<&'static mut Option<ptr::NonNul
     }
     else {
         let idx = tlb_high_index(page);
-        if tlb_high_page[idx] == page {
+        if tlb_high_page[idx] == tlb_high_tag(page) {
             Some(&mut *ptr::addr_of_mut!(tlb_code_high[idx]))
         }
         else {
@@ -449,11 +450,27 @@ pub fn canonicalize_address(address: u64) -> u64 {
 }
 
 #[inline]
-pub fn tlb_high_index(page: u64) -> usize {
-    (page.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 25) as usize & (TLB_HIGH_SIZE - 1)
+pub fn is_canonical_address(address: u64) -> bool { (address << 16) as i64 >> 16 == address as i64 }
+
+/// The tag of a (48-bit) page number in tlb_high_page: the page number of the canonical
+/// address, i.e. sign-extended from bit 35. A memory access looks up its address' arithmetic
+/// page number (address as i64 >> 12) directly, which is a tag only for canonical addresses:
+/// non-canonical ones miss and reach do_page_walk, which raises #GP.
+#[inline]
+pub fn tlb_high_tag(page: u64) -> u64 { ((page << 28) as i64 >> 28) as u64 }
+
+/// The slot of a tag in the high TLB (replicated by the jit, see jit64::gen_tlb_high_entry)
+#[inline]
+pub fn tlb_high_hash(tag: u64) -> usize {
+    (tag.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 25) as usize & (TLB_HIGH_SIZE - 1)
 }
 
-/// The TLB entry (with info bits) for the page containing address, or 0 if none.
+#[inline]
+pub fn tlb_high_index(page: u64) -> usize { tlb_high_hash(tlb_high_tag(page)) }
+
+/// The TLB entry (with info bits) for the page containing address, or 0 if none. Both forms
+/// of an address (canonical or with bits 63:48 stripped) find the same entry; memory accesses
+/// use tlb_pick_entry_for_access instead.
 #[inline]
 pub unsafe fn tlb_pick_entry(address: u64) -> u64 {
     let address = canonicalize_address(address);
@@ -463,7 +480,26 @@ pub unsafe fn tlb_pick_entry(address: u64) -> u64 {
     }
     else {
         let idx = tlb_high_index(page);
-        if tlb_high_page[idx] == page {
+        if tlb_high_page[idx] == tlb_high_tag(page) {
+            tlb_high_entry[idx]
+        }
+        else {
+            0
+        }
+    }
+}
+
+/// Like tlb_pick_entry, but 0 for non-canonical addresses, so that memory accesses to them
+/// take the slow path (do_page_walk), which raises #GP
+#[inline(always)]
+pub unsafe fn tlb_pick_entry_for_access(address: u64) -> u64 {
+    if address >> 32 == 0 {
+        tlb_entry_to_u64(tlb_data[(address >> 12) as usize])
+    }
+    else {
+        let tag = (address as i64 >> 12) as u64;
+        let idx = tlb_high_hash(tag);
+        if tlb_high_page[idx] == tag {
             tlb_high_entry[idx]
         }
         else {
@@ -488,10 +524,10 @@ pub unsafe fn tlb_put_entry(address: u64, tlb_entry: u64) {
     }
     else {
         let idx = tlb_high_index(page);
-        if tlb_high_page[idx] != page {
+        if tlb_high_page[idx] != tlb_high_tag(page) {
             tlb_high_evict(idx);
         }
-        tlb_high_page[idx] = page;
+        tlb_high_page[idx] = tlb_high_tag(page);
         tlb_high_entry[idx] = tlb_entry;
     }
 }
@@ -507,7 +543,7 @@ pub unsafe fn tlb_invalidate_page(address: u64) {
     }
     else {
         let idx = tlb_high_index(page);
-        if tlb_high_page[idx] == page {
+        if tlb_high_page[idx] == tlb_high_tag(page) {
             tlb_high_evict(idx);
         }
     }
@@ -1324,9 +1360,7 @@ pub unsafe fn call_interrupt_vector(
         }
 
         let mut old_flags = get_eflags();
-        if exception_is_fault(interrupt_nr)
-            || std::mem::replace(&mut force_rf_in_exception_image, false)
-        {
+        if exception_is_fault(interrupt_nr) || take_force_rf_in_exception_image() {
             old_flags |= FLAG_RF;
         }
 
@@ -1646,9 +1680,7 @@ pub unsafe fn call_interrupt_vector64(
     }
 
     let mut old_flags = get_eflags();
-    if exception_is_fault(interrupt_nr)
-        || std::mem::replace(&mut force_rf_in_exception_image, false)
-    {
+    if exception_is_fault(interrupt_nr) || take_force_rf_in_exception_image() {
         old_flags |= FLAG_RF;
     }
     let old_rip = *instruction_pointer;
@@ -2729,7 +2761,7 @@ pub unsafe fn translate_address_write(address: u64) -> OrPageFault<u64> {
     translate_address(address, true, *cpl == 3, false, true)
 }
 pub unsafe fn translate_address_write_jit(address: u64, wasm_table_index: u16) -> OrPageFault<u64> {
-    let mut entry = tlb_pick_entry(address);
+    let mut entry = tlb_pick_entry_for_access(address);
     let user = *cpl == 3;
     if entry as i32 & (TLB_VALID | if user { TLB_NO_USER } else { 0 } | TLB_READONLY) != TLB_VALID {
         entry = do_page_walk(address, true, user, true, true, false)?;
@@ -2775,7 +2807,7 @@ pub unsafe fn translate_address(
     jit: bool,
     side_effects: bool,
 ) -> OrPageFault<u64> {
-    let mut entry = tlb_pick_entry(address);
+    let mut entry = tlb_pick_entry_for_access(address);
     if entry as i32
         & (TLB_VALID
             | if user { TLB_NO_USER } else { 0 }
@@ -2788,7 +2820,7 @@ pub unsafe fn translate_address(
 }
 
 pub unsafe fn translate_address_write_and_can_skip_dirty(address: u64) -> OrPageFault<(u64, bool)> {
-    let mut entry = tlb_pick_entry(address);
+    let mut entry = tlb_pick_entry_for_access(address);
     let user = *cpl == 3;
     if entry as i32 & (TLB_VALID | if user { TLB_NO_USER } else { 0 } | TLB_READONLY) != TLB_VALID {
         entry = do_page_walk(address, true, user, false, true, false)?;
@@ -2833,6 +2865,14 @@ pub unsafe fn do_page_walk(
     // early_make_pgtable recovers the physical address from it, so squashing
     // to the low 48 bits breaks the early physmap demand-fault handler)
     let fault_addr = addr;
+    if !is_canonical_address(addr) {
+        // only reachable in 64-bit mode; memory references through SS should raise #SS(0)
+        // instead, which isn't distinguished here
+        if side_effects {
+            trigger_gp_noncanonical(jit);
+        }
+        return Err(());
+    }
     let addr = canonicalize_address(addr);
     let page = addr >> 12;
     let high;
@@ -3148,7 +3188,7 @@ pub unsafe fn full_clear_tlb() {
         }
         else {
             let idx = tlb_high_index(page);
-            if tlb_high_page[idx] == page {
+            if tlb_high_page[idx] == tlb_high_tag(page) {
                 tlb_high_evict(idx);
             }
         }
@@ -3177,7 +3217,7 @@ pub unsafe fn clear_tlb() {
         }
         else {
             let idx = tlb_high_index(page);
-            if tlb_high_page[idx] == page {
+            if tlb_high_page[idx] == tlb_high_tag(page) {
                 tlb_high_entry[idx] as i32
             }
             else {
@@ -3195,7 +3235,7 @@ pub unsafe fn clear_tlb() {
         }
         else {
             let idx = tlb_high_index(page);
-            if tlb_high_page[idx] == page {
+            if tlb_high_page[idx] == tlb_high_tag(page) {
                 tlb_high_evict(idx);
             }
         }
@@ -3251,6 +3291,21 @@ pub unsafe fn trigger_gp_jit(code: i32, eip_offset_in_page: i32) {
     jit_exit_reason = JitExitReason::CpuException {
         code: CPU_EXCEPTION_GP,
         error_code: Some(code),
+    }
+}
+
+/// #GP(0) for a memory access to a non-canonical address (from do_page_walk)
+#[cold]
+unsafe fn trigger_gp_noncanonical(jit: bool) {
+    if jit {
+        dbg_log!("#gp (non-canonical address) in jit mode");
+        jit_exit_reason = JitExitReason::CpuException {
+            code: CPU_EXCEPTION_GP,
+            error_code: Some(0),
+        };
+    }
+    else {
+        trigger_gp(0);
     }
 }
 
@@ -3338,6 +3393,12 @@ pub static mut db_pending_data: i32 = 0;
 /// Requests RF=1 in the next saved exception image (fault-class #DB from an
 /// instruction breakpoint); consumed by call_interrupt_vector{,64}.
 pub static mut force_rf_in_exception_image: bool = false;
+
+unsafe fn take_force_rf_in_exception_image() -> bool {
+    let force = force_rf_in_exception_image;
+    force_rf_in_exception_image = false;
+    force
+}
 
 pub const DR6_BS: i32 = 1 << 14;
 /// DR6 bits that read as 1 (reserved)
@@ -4476,7 +4537,7 @@ pub unsafe fn get_phys_eip() -> OrPageFault<u64> {
 pub fn translate_address_read_code(address: u64) -> OrPageFault<u64> {
     unsafe {
         let user = *cpl == 3;
-        let mut full_entry = tlb_pick_entry(address);
+        let mut full_entry = tlb_pick_entry_for_access(address);
         if full_entry as i32 & (TLB_VALID | if user { TLB_NO_USER } else { 0 }) != TLB_VALID {
             full_entry = do_page_walk(address, false, user, false, true, true)?;
         }
@@ -4511,7 +4572,7 @@ unsafe fn fetch_violates_nx_or_smep(entry: i32) -> bool {
 pub fn translate_address_read_code_no_side_effects(address: u64) -> OrPageFault<u64> {
     unsafe {
         let user = *cpl == 3;
-        let mut entry = tlb_pick_entry(address);
+        let mut entry = tlb_pick_entry_for_access(address);
         if entry as i32 & (TLB_VALID | if user { TLB_NO_USER } else { 0 }) != TLB_VALID {
             entry = do_page_walk(address, false, user, false, false, false)?;
         }
@@ -5045,8 +5106,10 @@ pub fn report_safe_read_write_jit_slow(address: u32, entry: i32) {
     }
 }
 
+#[cfg(not(feature = "mem64"))]
 #[repr(align(0x1000))]
 struct ScratchBuffer([u8; 0x1000 * 2]);
+#[cfg(not(feature = "mem64"))]
 static mut jit_paging_scratch_buffer: ScratchBuffer = ScratchBuffer([0; 2 * 0x1000]);
 
 /// The slow paths of jitted memory accesses return a "pointer" (host_base ^ addr) & !0xFFF,
@@ -5061,7 +5124,7 @@ pub static mut jit_slow_path_entry: u64 = 0;
 /// guest RAM that is never accessed as RAM (its reads/writes divert to the VGA device).
 #[cfg(not(feature = "mem64"))]
 #[inline(always)]
-unsafe fn jit_scratch_base() -> u64 { &jit_paging_scratch_buffer.0 as *const u8 as u64 }
+unsafe fn jit_scratch_base() -> u64 { &raw const jit_paging_scratch_buffer.0 as u64 }
 #[cfg(feature = "mem64")]
 #[inline(always)]
 fn jit_scratch_base() -> u64 { 0xA0000 }

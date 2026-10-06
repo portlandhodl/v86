@@ -1219,6 +1219,48 @@ t108_no_tf:
     iretq
 t108_done:
 
+    ; ======== test 109-111: data accesses to non-canonical addresses raise #GP(0), also when
+    ; the address aliases (in bits 47:0) a canonical one whose page is in the tlb, in a hot loop
+    ; so that both engines see it. PML4[511] aliases the low 1 GiB at 0xFFFFFF8000000000; the
+    ; non-canonical 0x0000FF80xxxxxxxx and 0x0001000000xxxxxx differ from it and from a low
+    ; page only in bits 63:48. The #GP handler resumes at r10 ========
+    mov rax, gp_handler
+    mov rdi, 0x6000 + 13*16
+    mov word [rdi], ax                  ; offset 15:0
+    mov word [rdi + 2], 0x08            ; selector
+    mov byte [rdi + 4], 0x00            ; reserved
+    mov byte [rdi + 5], 0x8E            ; P|dpl0|interrupt gate
+    shr rax, 16
+    mov word [rdi + 6], ax              ; offset 31:16
+    shr rax, 16
+    mov qword [rdi + 8], rax            ; offset 63:32
+    mov dword [abs 0x1000 + 511*8], 0x2007
+    mov qword [rel gp_count], 0
+    mov qword [rel gp_error], 0
+    mov rsi, 0xFFFFFF8000000000 + t109_data    ; canonical high-half alias
+    mov rdi, 0x0000FF8000000000 + t109_data    ; non-canonical, same bits 47:0
+    mov r9, 0x0001000000000000 + t109_data     ; non-canonical, bits 47:0 below 4 GiB
+    xor r8d, r8d
+    mov ecx, 40
+t109_loop:
+    add r8, [rsi]                       ; warm the tlb entry of the canonical alias
+    lea r10, [rel t109_1]
+    add r8, [rdi]                       ; #GP
+t109_1:
+    lea r10, [rel t109_2]
+    mov [rdi], r8                       ; #GP
+t109_2:
+    lea r10, [rel t109_3]
+    add r8, [r9]                        ; #GP
+t109_3:
+    dec ecx
+    jnz t109_loop
+    mov rax, [rel gp_count]
+    mov [r15 + 109*8], rax
+    mov [r15 + 110*8], r8
+    mov rax, [rel gp_error]
+    mov [r15 + 111*8], rax
+
     ; mask all PIC interrupts: user mode runs with IF set below (test 84)
     mov al, 0xFF
     out 0x21, al
@@ -1314,6 +1356,14 @@ db_handler:
     inc qword [rel db_count]
     iretq
 
+; ---- #GP handler (tests 109-111): count, collect the error codes, resume at r10 ----
+gp_handler:
+    inc qword [rel gp_count]
+    pop rax                             ; error code
+    or [rel gp_error], rax
+    mov [rsp], r10                      ; rip <- r10
+    iretq
+
 ; ---- #PF handler: demand-paging for 0x40000000, skip for the NX page ----
 pf_handler:
     mov r8, cr2
@@ -1356,6 +1406,9 @@ call_count: dq 0
 cx16_scratch: dq 0, 0
 bt_buf: dq 0, 0                    ; test 106
 db_count: dq 0                     ; test 108
+gp_count: dq 0                     ; test 109
+gp_error: dq 0                     ; test 111
+t109_data: dq 0x0000000101010101   ; test 110
 
 align 16
 fx_area: times 64 dq 0             ; 512-byte fxsave area (16-byte aligned)
