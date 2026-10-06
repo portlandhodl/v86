@@ -27,16 +27,16 @@ use crate::cpu::arith::{
 use crate::cpu::cpu::*;
 use crate::cpu::fpu::fpu_set_tag_word;
 use crate::cpu::global_pointers::*;
+pub use crate::cpu::instructions_0f38_0f3a::*;
 use crate::cpu::misc_instr::{
     adjust_stack_reg, bswap, cmovcc16, cmovcc32, fxrstor, fxsave, get_stack_pointer, jmpcc16,
     jmpcc32, push16, push32_sreg, setcc_mem, setcc_reg, test_b, test_be, test_l, test_le, test_o,
     test_p, test_s, test_z,
 };
 use crate::cpu::misc_instr::{lar, lsl, verr, verw};
-use crate::prefix;
 use crate::cpu::misc_instr::{lss16, lss32};
 use crate::cpu::sse_instr::*;
-pub use crate::cpu::instructions_0f38_0f3a::*;
+use crate::prefix;
 
 #[no_mangle]
 pub unsafe fn instr16_0F00_0_mem(addr: u64) {
@@ -54,7 +54,9 @@ pub unsafe fn instr32_0F00_0_mem(addr: u64) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_0_mem(addr);
-    } instr16_0F00_0_mem(addr) }
+    }
+    instr16_0F00_0_mem(addr)
+}
 #[no_mangle]
 pub unsafe fn instr16_0F00_0_reg(r: i32) {
     if !*protected_mode || vm86_mode() {
@@ -91,7 +93,9 @@ pub unsafe fn instr32_0F00_1_mem(addr: u64) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_1_mem(addr);
-    } instr16_0F00_1_mem(addr) }
+    }
+    instr16_0F00_1_mem(addr)
+}
 #[no_mangle]
 pub unsafe fn instr16_0F00_1_reg(r: i32) {
     if !*protected_mode || vm86_mode() {
@@ -132,7 +136,9 @@ pub unsafe fn instr32_0F00_2_mem(addr: u64) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_2_mem(addr);
-    } instr16_0F00_2_mem(addr) }
+    }
+    instr16_0F00_2_mem(addr)
+}
 #[no_mangle]
 pub unsafe fn instr16_0F00_2_reg(r: i32) {
     if !*protected_mode || vm86_mode() {
@@ -152,7 +158,9 @@ pub unsafe fn instr32_0F00_2_reg(r: i32) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_2_reg(r);
-    } instr16_0F00_2_reg(r) }
+    }
+    instr16_0F00_2_reg(r)
+}
 
 #[no_mangle]
 pub unsafe fn instr16_0F00_3_mem(addr: u64) {
@@ -174,7 +182,9 @@ pub unsafe fn instr32_0F00_3_mem(addr: u64) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_3_mem(addr);
-    } instr16_0F00_3_mem(addr); }
+    }
+    instr16_0F00_3_mem(addr);
+}
 #[no_mangle]
 pub unsafe fn instr16_0F00_3_reg(r: i32) {
     if !*protected_mode || vm86_mode() {
@@ -194,7 +204,9 @@ pub unsafe fn instr32_0F00_3_reg(r: i32) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_3_reg(r);
-    } instr16_0F00_3_reg(r) }
+    }
+    instr16_0F00_3_reg(r)
+}
 
 #[no_mangle]
 pub unsafe fn instr16_0F00_4_mem(addr: u64) {
@@ -212,7 +224,9 @@ pub unsafe fn instr32_0F00_4_mem(addr: u64) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_4_mem(addr);
-    } instr16_0F00_4_mem(addr) }
+    }
+    instr16_0F00_4_mem(addr)
+}
 #[no_mangle]
 pub unsafe fn instr16_0F00_4_reg(r: i32) {
     if !*protected_mode || vm86_mode() {
@@ -229,7 +243,9 @@ pub unsafe fn instr32_0F00_4_reg(r: i32) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_4_reg(r);
-    } instr16_0F00_4_reg(r) }
+    }
+    instr16_0F00_4_reg(r)
+}
 #[no_mangle]
 pub unsafe fn instr16_0F00_5_mem(addr: u64) {
     if !*protected_mode || vm86_mode() {
@@ -246,7 +262,9 @@ pub unsafe fn instr32_0F00_5_mem(addr: u64) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_5_mem(addr);
-    } instr16_0F00_5_mem(addr) }
+    }
+    instr16_0F00_5_mem(addr)
+}
 #[no_mangle]
 pub unsafe fn instr16_0F00_5_reg(r: i32) {
     if !*protected_mode || vm86_mode() {
@@ -263,7 +281,9 @@ pub unsafe fn instr32_0F00_5_reg(r: i32) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F00_5_reg(r);
-    } instr16_0F00_5_reg(r) }
+    }
+    instr16_0F00_5_reg(r)
+}
 
 #[no_mangle]
 pub unsafe fn instr16_0F01_0_reg(_r: i32) { trigger_ud(); }
@@ -274,7 +294,9 @@ pub unsafe fn instr32_0F01_0_reg(_r: i32) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_0_reg(_r);
-    } trigger_ud(); }
+    }
+    trigger_ud();
+}
 
 unsafe fn sgdt(addr: u64, mask: i32) {
     return_on_pagefault!(writable_or_pagefault(addr, 6));
@@ -291,7 +313,9 @@ pub unsafe fn instr32_0F01_0_mem(addr: u64) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_0_mem(addr);
-    } sgdt(addr, -1) }
+    }
+    sgdt(addr, -1)
+}
 
 #[no_mangle]
 pub unsafe fn instr16_0F01_1_reg(_r: i32) { trigger_ud(); }
@@ -302,7 +326,9 @@ pub unsafe fn instr32_0F01_1_reg(_r: i32) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_1_reg(_r);
-    } trigger_ud(); }
+    }
+    trigger_ud();
+}
 
 unsafe fn sidt(addr: u64, mask: i32) {
     return_on_pagefault!(writable_or_pagefault(addr, 6));
@@ -319,7 +345,9 @@ pub unsafe fn instr32_0F01_1_mem(addr: u64) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_1_mem(addr);
-    } sidt(addr, -1) }
+    }
+    sidt(addr, -1)
+}
 
 #[no_mangle]
 pub unsafe fn instr16_0F01_2_reg(_r: i32) { trigger_ud(); }
@@ -330,7 +358,9 @@ pub unsafe fn instr32_0F01_2_reg(_r: i32) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_2_reg(_r);
-    } trigger_ud(); }
+    }
+    trigger_ud();
+}
 
 unsafe fn lgdt(addr: u64, mask: i32) {
     if 0 != *cpl {
@@ -352,7 +382,9 @@ pub unsafe fn instr32_0F01_2_mem(addr: u64) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_2_mem(addr);
-    } lgdt(addr, -1); }
+    }
+    lgdt(addr, -1);
+}
 
 #[no_mangle]
 pub unsafe fn instr16_0F01_3_reg(_r: i32) { trigger_ud(); }
@@ -363,7 +395,9 @@ pub unsafe fn instr32_0F01_3_reg(_r: i32) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_3_reg(_r);
-    } trigger_ud(); }
+    }
+    trigger_ud();
+}
 
 unsafe fn lidt(addr: u64, mask: i32) {
     if 0 != *cpl {
@@ -385,7 +419,9 @@ pub unsafe fn instr32_0F01_3_mem(addr: u64) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_3_mem(addr);
-    } lidt(addr, -1); }
+    }
+    lidt(addr, -1);
+}
 
 #[no_mangle]
 pub unsafe fn instr16_0F01_4_reg(r: i32) {
@@ -399,7 +435,9 @@ pub unsafe fn instr32_0F01_4_reg(r: i32) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_4_reg(r);
-    } write_reg32(r, *cr); }
+    }
+    write_reg32(r, *cr);
+}
 #[no_mangle]
 pub unsafe fn instr16_0F01_4_mem(addr: u64) {
     return_on_pagefault!(safe_write16(addr, *cr & 0xFFFF));
@@ -436,7 +474,9 @@ pub unsafe fn instr32_0F01_6_reg(r: i32) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_6_reg(r);
-    } instr16_0F01_6_reg(r); }
+    }
+    instr16_0F01_6_reg(r);
+}
 #[no_mangle]
 pub unsafe fn instr16_0F01_6_mem(addr: u64) {
     if 0 != *cpl {
@@ -452,7 +492,9 @@ pub unsafe fn instr32_0F01_6_mem(addr: u64) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_6_mem(addr);
-    } instr16_0F01_6_mem(addr) }
+    }
+    instr16_0F01_6_mem(addr)
+}
 
 #[no_mangle]
 pub unsafe fn instr16_0F01_7_reg(_r: i32) { trigger_ud(); }
@@ -463,7 +505,9 @@ pub unsafe fn instr32_0F01_7_reg(_r: i32) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_7_reg(_r);
-    } trigger_ud(); }
+    }
+    trigger_ud();
+}
 
 #[no_mangle]
 pub unsafe fn instr16_0F01_7_mem(addr: u64) {
@@ -481,7 +525,9 @@ pub unsafe fn instr32_0F01_7_mem(addr: u64) {
     }
     if *is_64 {
         return crate::cpu::instructions_64::instr64_0F01_7_mem(addr);
-    } instr16_0F01_7_mem(addr) }
+    }
+    instr16_0F01_7_mem(addr)
+}
 
 #[no_mangle]
 pub unsafe fn instr16_0F02_mem(addr: u64, r: i32) {
@@ -608,7 +654,10 @@ pub unsafe fn instr_0F05() {
     update_eflags((return_rflags & !*sfmask as i32 & !FLAG_RF & !FLAG_VM) | FLAGS_DEFAULT & 2);
 
     // in compatibility mode the return address is a 32-bit eip (zero-extended)
-    write_reg64(ECX, if compat { return_rip & 0xFFFF_FFFF } else { return_rip });
+    write_reg64(
+        ECX,
+        if compat { return_rip & 0xFFFF_FFFF } else { return_rip },
+    );
     write_reg64(11, return_rflags as u32 as u64);
 
     // compatibility mode takes the target from IA32_CSTAR
@@ -1111,8 +1160,7 @@ pub unsafe fn instr_0F22(r: i32, creg: i32) {
             // Reserved and feature-gated bits must #GP: UMIP(11), LA57(12),
             // VMXE(13), SMXE(14), 15, FSGSBASE(16), PCIDE(17), OSXSAVE(18),
             // 19, SMAP(21), 22-31 — none of these are advertised in CPUID.
-            if 0 != data as u32 & 0xFFEFF800u32
-            {
+            if 0 != data as u32 & 0xFFEFF800u32 {
                 dbg_log!("trigger_gp: Invalid cr4 bit");
                 trigger_gp(0);
                 return;
@@ -1883,15 +1931,27 @@ pub unsafe fn instr_0F37() {
 pub unsafe fn instr_ud() { trigger_ud(); }
 
 // escape to the 0F 38 map, indexed like the 0F table (opcode | operand size tier << 8)
-pub unsafe fn instr16_0F38() { crate::gen::interpreter0f38::run(return_on_pagefault!(read_imm8()) as u32) }
-pub unsafe fn instr32_0F38() { crate::gen::interpreter0f38::run(return_on_pagefault!(read_imm8()) as u32 | 0x100) }
-pub unsafe fn instr64_0F38() { crate::gen::interpreter0f38::run(return_on_pagefault!(read_imm8()) as u32 | 0x200) }
+pub unsafe fn instr16_0F38() {
+    crate::gen::interpreter0f38::run(return_on_pagefault!(read_imm8()) as u32)
+}
+pub unsafe fn instr32_0F38() {
+    crate::gen::interpreter0f38::run(return_on_pagefault!(read_imm8()) as u32 | 0x100)
+}
+pub unsafe fn instr64_0F38() {
+    crate::gen::interpreter0f38::run(return_on_pagefault!(read_imm8()) as u32 | 0x200)
+}
 #[no_mangle]
 pub unsafe fn instr_0F39() { unimplemented_sse(); }
 // escape to the 0F 3A map, indexed like the 0F table (opcode | operand size tier << 8)
-pub unsafe fn instr16_0F3A() { crate::gen::interpreter0f3a::run(return_on_pagefault!(read_imm8()) as u32) }
-pub unsafe fn instr32_0F3A() { crate::gen::interpreter0f3a::run(return_on_pagefault!(read_imm8()) as u32 | 0x100) }
-pub unsafe fn instr64_0F3A() { crate::gen::interpreter0f3a::run(return_on_pagefault!(read_imm8()) as u32 | 0x200) }
+pub unsafe fn instr16_0F3A() {
+    crate::gen::interpreter0f3a::run(return_on_pagefault!(read_imm8()) as u32)
+}
+pub unsafe fn instr32_0F3A() {
+    crate::gen::interpreter0f3a::run(return_on_pagefault!(read_imm8()) as u32 | 0x100)
+}
+pub unsafe fn instr64_0F3A() {
+    crate::gen::interpreter0f3a::run(return_on_pagefault!(read_imm8()) as u32 | 0x200)
+}
 #[no_mangle]
 pub unsafe fn instr_0F3B() { unimplemented_sse(); }
 #[no_mangle]
@@ -2292,10 +2352,26 @@ pub unsafe fn instr_0F58(source: reg128, r: i32) {
     let destination = read_xmm128s(r);
     let result = reg128 {
         f32: [
-            sse_arith_f32(destination.f32[0], source.f32[0], source.f32[0] + destination.f32[0]),
-            sse_arith_f32(destination.f32[1], source.f32[1], source.f32[1] + destination.f32[1]),
-            sse_arith_f32(destination.f32[2], source.f32[2], source.f32[2] + destination.f32[2]),
-            sse_arith_f32(destination.f32[3], source.f32[3], source.f32[3] + destination.f32[3]),
+            sse_arith_f32(
+                destination.f32[0],
+                source.f32[0],
+                source.f32[0] + destination.f32[0],
+            ),
+            sse_arith_f32(
+                destination.f32[1],
+                source.f32[1],
+                source.f32[1] + destination.f32[1],
+            ),
+            sse_arith_f32(
+                destination.f32[2],
+                source.f32[2],
+                source.f32[2] + destination.f32[2],
+            ),
+            sse_arith_f32(
+                destination.f32[3],
+                source.f32[3],
+                source.f32[3] + destination.f32[3],
+            ),
         ],
     };
     write_xmm_reg128(r, result);
@@ -2310,8 +2386,16 @@ pub unsafe fn instr_660F58(source: reg128, r: i32) {
     let destination = read_xmm128s(r);
     let result = reg128 {
         f64: [
-            sse_arith_f64(destination.f64[0], source.f64[0], source.f64[0] + destination.f64[0]),
-            sse_arith_f64(destination.f64[1], source.f64[1], source.f64[1] + destination.f64[1]),
+            sse_arith_f64(
+                destination.f64[0],
+                source.f64[0],
+                source.f64[0] + destination.f64[0],
+            ),
+            sse_arith_f64(
+                destination.f64[1],
+                source.f64[1],
+                source.f64[1] + destination.f64[1],
+            ),
         ],
     };
     write_xmm_reg128(r, result);
@@ -2353,10 +2437,26 @@ pub unsafe fn instr_0F59(source: reg128, r: i32) {
     let destination = read_xmm128s(r);
     let result = reg128 {
         f32: [
-            sse_arith_f32(destination.f32[0], source.f32[0], source.f32[0] * destination.f32[0]),
-            sse_arith_f32(destination.f32[1], source.f32[1], source.f32[1] * destination.f32[1]),
-            sse_arith_f32(destination.f32[2], source.f32[2], source.f32[2] * destination.f32[2]),
-            sse_arith_f32(destination.f32[3], source.f32[3], source.f32[3] * destination.f32[3]),
+            sse_arith_f32(
+                destination.f32[0],
+                source.f32[0],
+                source.f32[0] * destination.f32[0],
+            ),
+            sse_arith_f32(
+                destination.f32[1],
+                source.f32[1],
+                source.f32[1] * destination.f32[1],
+            ),
+            sse_arith_f32(
+                destination.f32[2],
+                source.f32[2],
+                source.f32[2] * destination.f32[2],
+            ),
+            sse_arith_f32(
+                destination.f32[3],
+                source.f32[3],
+                source.f32[3] * destination.f32[3],
+            ),
         ],
     };
     write_xmm_reg128(r, result);
@@ -2371,8 +2471,16 @@ pub unsafe fn instr_660F59(source: reg128, r: i32) {
     let destination = read_xmm128s(r);
     let result = reg128 {
         f64: [
-            sse_arith_f64(destination.f64[0], source.f64[0], source.f64[0] * destination.f64[0]),
-            sse_arith_f64(destination.f64[1], source.f64[1], source.f64[1] * destination.f64[1]),
+            sse_arith_f64(
+                destination.f64[0],
+                source.f64[0],
+                source.f64[0] * destination.f64[0],
+            ),
+            sse_arith_f64(
+                destination.f64[1],
+                source.f64[1],
+                source.f64[1] * destination.f64[1],
+            ),
         ],
     };
     write_xmm_reg128(r, result);
@@ -2518,10 +2626,26 @@ pub unsafe fn instr_0F5C(source: reg128, r: i32) {
     let destination = read_xmm128s(r);
     let result = reg128 {
         f32: [
-            sse_arith_f32(destination.f32[0], source.f32[0], destination.f32[0] - source.f32[0]),
-            sse_arith_f32(destination.f32[1], source.f32[1], destination.f32[1] - source.f32[1]),
-            sse_arith_f32(destination.f32[2], source.f32[2], destination.f32[2] - source.f32[2]),
-            sse_arith_f32(destination.f32[3], source.f32[3], destination.f32[3] - source.f32[3]),
+            sse_arith_f32(
+                destination.f32[0],
+                source.f32[0],
+                destination.f32[0] - source.f32[0],
+            ),
+            sse_arith_f32(
+                destination.f32[1],
+                source.f32[1],
+                destination.f32[1] - source.f32[1],
+            ),
+            sse_arith_f32(
+                destination.f32[2],
+                source.f32[2],
+                destination.f32[2] - source.f32[2],
+            ),
+            sse_arith_f32(
+                destination.f32[3],
+                source.f32[3],
+                destination.f32[3] - source.f32[3],
+            ),
         ],
     };
     write_xmm_reg128(r, result);
@@ -2536,8 +2660,16 @@ pub unsafe fn instr_660F5C(source: reg128, r: i32) {
     let destination = read_xmm128s(r);
     let result = reg128 {
         f64: [
-            sse_arith_f64(destination.f64[0], source.f64[0], destination.f64[0] - source.f64[0]),
-            sse_arith_f64(destination.f64[1], source.f64[1], destination.f64[1] - source.f64[1]),
+            sse_arith_f64(
+                destination.f64[0],
+                source.f64[0],
+                destination.f64[0] - source.f64[0],
+            ),
+            sse_arith_f64(
+                destination.f64[1],
+                source.f64[1],
+                destination.f64[1] - source.f64[1],
+            ),
         ],
     };
     write_xmm_reg128(r, result);
@@ -2639,10 +2771,26 @@ pub unsafe fn instr_0F5E(source: reg128, r: i32) {
     let destination = read_xmm128s(r);
     let result = reg128 {
         f32: [
-            sse_arith_f32(destination.f32[0], source.f32[0], destination.f32[0] / source.f32[0]),
-            sse_arith_f32(destination.f32[1], source.f32[1], destination.f32[1] / source.f32[1]),
-            sse_arith_f32(destination.f32[2], source.f32[2], destination.f32[2] / source.f32[2]),
-            sse_arith_f32(destination.f32[3], source.f32[3], destination.f32[3] / source.f32[3]),
+            sse_arith_f32(
+                destination.f32[0],
+                source.f32[0],
+                destination.f32[0] / source.f32[0],
+            ),
+            sse_arith_f32(
+                destination.f32[1],
+                source.f32[1],
+                destination.f32[1] / source.f32[1],
+            ),
+            sse_arith_f32(
+                destination.f32[2],
+                source.f32[2],
+                destination.f32[2] / source.f32[2],
+            ),
+            sse_arith_f32(
+                destination.f32[3],
+                source.f32[3],
+                destination.f32[3] / source.f32[3],
+            ),
         ],
     };
     write_xmm_reg128(r, result);
@@ -2657,8 +2805,16 @@ pub unsafe fn instr_660F5E(source: reg128, r: i32) {
     let destination = read_xmm128s(r);
     let result = reg128 {
         f64: [
-            sse_arith_f64(destination.f64[0], source.f64[0], destination.f64[0] / source.f64[0]),
-            sse_arith_f64(destination.f64[1], source.f64[1], destination.f64[1] / source.f64[1]),
+            sse_arith_f64(
+                destination.f64[0],
+                source.f64[0],
+                destination.f64[0] / source.f64[0],
+            ),
+            sse_arith_f64(
+                destination.f64[1],
+                source.f64[1],
+                destination.f64[1] / source.f64[1],
+            ),
         ],
     };
     write_xmm_reg128(r, result);

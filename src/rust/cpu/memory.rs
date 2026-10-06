@@ -14,7 +14,8 @@ mod ext {
 
 use crate::cpu::apic;
 use crate::cpu::cpu::{
-    handle_irqs_or_defer, reg128, APIC_MEM_ADDRESS, APIC_MEM_SIZE, IOAPIC_MEM_ADDRESS, IOAPIC_MEM_SIZE,
+    handle_irqs_or_defer, reg128, APIC_MEM_ADDRESS, APIC_MEM_SIZE, IOAPIC_MEM_ADDRESS,
+    IOAPIC_MEM_SIZE,
 };
 use crate::cpu::global_pointers::{high_memory_size, memory_size};
 use crate::cpu::guest;
@@ -111,7 +112,10 @@ pub fn allocate_memory(size: u32) -> u32 {
     #[cfg(all(target_arch = "wasm32", not(feature = "mem64")))]
     let ptr = {
         let previous_pages = core::arch::wasm32::memory_grow(0, size as usize / WASM_PAGE_SIZE);
-        assert!(previous_pages != usize::MAX, "Failed to allocate guest memory");
+        assert!(
+            previous_pages != usize::MAX,
+            "Failed to allocate guest memory"
+        );
         (previous_pages * WASM_PAGE_SIZE) as *mut u8
     };
     // guest RAM is memory 1 in this build; grown by JS (rust can't address a second memory)

@@ -679,7 +679,12 @@ pub unsafe fn fpu_fbld(addr: u64) {
         value = value * 100 + (byte >> 4) * 10 + (byte & 0xF);
     }
     let negative = safe_read8(addr + 9).unwrap() & 0x80 != 0;
-    fpu_push(F80::of_i64(if negative { -(value as i64) } else { value as i64 }));
+    fpu_push(F80::of_i64(if negative {
+        -(value as i64)
+    }
+    else {
+        value as i64
+    }));
 }
 
 #[no_mangle]
