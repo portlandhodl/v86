@@ -181,6 +181,14 @@ if(process.env.JIT64_DEFER_FLAGS === "0")
     });
 }
 
+// JIT64_TLB_CACHE=0: no cached data tlb entry in the 64-bit jit
+if(process.env.JIT64_TLB_CACHE === "0")
+{
+    emulator.bus.register("emulator-started", () => {
+        emulator.v86.cpu.wm.exports["set_jit_config"](9, 0);
+    });
+}
+
 const timeout = setTimeout(() => {
     throw new Error("Timeout waiting for longmode test to finish");
 }, 60 * 1000);

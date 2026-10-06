@@ -372,6 +372,8 @@ pub struct JitContext<'a> {
     /// 64-bit jit: the deferred lazy-flag state, if the values differ from memory (the
     /// compile-time part; the values live in jit64_flag_locals)
     pub jit64_deferred: Option<crate::jit64::DeferredFlags64>,
+    /// 64-bit jit: the function-wide locals of the data tlb cache (jit64::TlbCacheLocals)
+    pub jit64_tlb_cache: Option<crate::jit64::TlbCacheLocals>,
     /// 64-bit jit: the 16 general purpose registers
     pub register_locals64: Vec<WasmLocalI64>,
     /// 64-bit jit: registers whose local may differ from memory (bitmask, within a block)
@@ -1352,6 +1354,18 @@ fn jit_generate_module(
     else {
         None
     };
+    // ... and the data tlb cache in these (jit64::gen_tlb_cache_hit_condition)
+    let jit64_tlb_cache = if state_flags.is_64() {
+        let vbase = builder.new_local_i64();
+        #[cfg(feature = "mem64")]
+        let entry = builder.new_local_i64();
+        #[cfg(not(feature = "mem64"))]
+        let entry = builder.new_local();
+        Some(crate::jit64::TlbCacheLocals { vbase, entry })
+    }
+    else {
+        None
+    };
 
     // with chaining, the exit code looks up the next entry point and continues here if it's
     // in this module (see jit64::gen_chain_to_next_module)
@@ -1389,6 +1403,7 @@ fn jit_generate_module(
         flags64: crate::jit64::Flags64::Unknown,
         jit64_flag_locals,
         jit64_deferred: None,
+        jit64_tlb_cache,
         register_locals64,
         dirty_registers64: 0xFFFF,
         block_end: 0,
@@ -2182,6 +2197,13 @@ fn jit_generate_module(
         ctx.builder.free_local_i64(fl.result);
         ctx.builder.free_local(fl.cf);
     }
+    if let Some(c) = ctx.jit64_tlb_cache.take() {
+        ctx.builder.free_local_i64(c.vbase);
+        #[cfg(feature = "mem64")]
+        ctx.builder.free_local_i64(c.entry);
+        #[cfg(not(feature = "mem64"))]
+        ctx.builder.free_local(c.entry);
+    }
     // parameters, not allocated locals
     ctx.register_locals64.clear();
     ctx.builder
@@ -2700,6 +2722,7 @@ pub unsafe fn set_jit_config(index: u32, value: u32) {
         6 => crate::jit64::PROFILE_GENERIC = value != 0,
         7 => JIT64_CHAINING = value != 0,
         8 => crate::jit64::JIT64_DEFER_FLAGS = value != 0,
+        9 => crate::jit64::JIT64_TLB_CACHE = value != 0,
         _ => dbg_assert!(false),
     }
 }
@@ -2715,6 +2738,7 @@ pub unsafe fn get_jit_config(index: u32) -> u32 {
         5 => JIT_HOTNESS_THRESHOLD,
         7 => JIT64_CHAINING as u32,
         8 => crate::jit64::JIT64_DEFER_FLAGS as u32,
+        9 => crate::jit64::JIT64_TLB_CACHE as u32,
         _ => 0,
     }
 }

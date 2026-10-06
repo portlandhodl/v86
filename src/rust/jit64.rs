@@ -204,6 +204,9 @@ pub unsafe fn jit64_print_profile() {
 fn gen_call_wrapper(ctx: &mut JitContext, name: &str, mem: Option<&Modrm64>, args: &[A]) {
     gen_profile_count(ctx, name);
     gen_commit_deferred_flags(ctx);
+    // the interpreter handler may change page mappings (invlpg, mov cr3, ...): the cached
+    // tlb entry doesn't survive the call
+    gen_tlb_cache_reset(ctx);
     ctx.flags64 = Flags64::Unknown;
     gen_spill_dirty_registers(ctx);
     ctx.builder.const_i32(instruction_ips(ctx));
@@ -337,6 +340,7 @@ pub fn gen_generic_mem(ctx: &mut JitContext, name: &str, m: &Modrm64, args: &[A]
 pub fn gen_interpret_one(ctx: &mut JitContext, instr_flags: &mut u32) {
     gen_profile_count(ctx, "interpret_one");
     gen_commit_deferred_flags(ctx);
+    gen_tlb_cache_reset(ctx);
     ctx.flags64 = Flags64::Unknown;
     gen_spill_dirty_registers(ctx);
     ctx.builder
@@ -568,6 +572,164 @@ fn flag_locals(ctx: &JitContext) -> FlagLocals64 {
 
 fn defer_flags_enabled(ctx: &JitContext) -> bool {
     ctx.jit64_flag_locals.is_some() && unsafe { JIT64_DEFER_FLAGS }
+}
+
+/// Whether the 64-bit jit caches the last used data tlb entry in wasm locals, checked inline
+/// before the full (hashed) lookup. set_jit_config(9, 0) disables it.
+pub static mut JIT64_TLB_CACHE: bool = true;
+
+/// The function-wide wasm locals of the data tlb cache: the virtual page base and the tlb
+/// entry of the last fast-path-validated page. The entry is zero (invalid) at module entry
+/// and after calls into the interpreter (the only points where mappings can change during a
+/// module's execution: page walks only fill tlb entries, tlb_set_has_code runs at compile
+/// time, and the cpl of a module is fixed).
+pub struct TlbCacheLocals {
+    pub vbase: WasmLocalI64,
+    #[cfg(feature = "mem64")]
+    pub entry: WasmLocalI64,
+    #[cfg(not(feature = "mem64"))]
+    pub entry: WasmLocal,
+}
+impl TlbCacheLocals {
+    fn clone(&self) -> TlbCacheLocals {
+        TlbCacheLocals {
+            vbase: self.vbase.unsafe_clone(),
+            entry: self.entry.unsafe_clone(),
+        }
+    }
+}
+
+fn tlb_cache(ctx: &JitContext) -> Option<TlbCacheLocals> {
+    if unsafe { JIT64_TLB_CACHE } {
+        ctx.jit64_tlb_cache.as_ref().map(|c| c.clone())
+    }
+    else {
+        None
+    }
+}
+
+/// Invalidate the data tlb cache (at calls into the interpreter, which may change mappings)
+fn gen_tlb_cache_reset(ctx: &mut JitContext) {
+    if let Some(c) = tlb_cache(ctx) {
+        #[cfg(feature = "mem64")]
+        {
+            ctx.builder.const_i64(0);
+            ctx.builder.set_local_i64(&c.entry);
+        }
+        #[cfg(not(feature = "mem64"))]
+        {
+            ctx.builder.const_i32(0);
+            ctx.builder.set_local(&c.entry);
+        }
+    }
+}
+
+/// Push the tlb-cache hit condition for a data access: the address is in the cached page
+/// and the cached entry allows the access. (address ^ vbase) < 0x1001 - bytes covers both
+/// the same-page check (the xor stays below 0x1000 exactly within the cached page) and the
+/// crossing check (it equals the offset). The hit condition is checked entirely at runtime,
+/// so the cache stays valid across block boundaries and loop back edges within a module's
+/// execution.
+fn gen_tlb_cache_hit_condition(
+    ctx: &mut JitContext,
+    bits: u32,
+    address: &WasmLocalI64,
+    for_writing: bool,
+) {
+    dbg_assert!(bits <= 64);
+    let c = tlb_cache(ctx).unwrap();
+    ctx.builder.get_local_i64(address);
+    ctx.builder.get_local_i64(&c.vbase);
+    ctx.builder.xor_i64();
+    ctx.builder.const_i64(0x1001 - (bits / 8) as i64);
+    ctx.builder.ltu_i64();
+    // the cached entry is fast-path validated; re-check the access-type specific bits
+    // (and validity: the entry is zeroed on invalidation)
+    #[cfg(feature = "mem64")]
+    {
+        ctx.builder.get_local_i64(&c.entry);
+        if for_writing {
+            ctx.builder
+                .const_i64((TLB_VALID | TLB_READONLY | TLB_HAS_CODE) as i64);
+            ctx.builder.and_i64();
+            ctx.builder.const_i64(TLB_VALID as i64);
+            ctx.builder.eq_i64();
+        }
+        else {
+            ctx.builder.const_i64(TLB_VALID as i64);
+            ctx.builder.and_i64();
+            ctx.builder.wrap_i64_to_i32();
+        }
+    }
+    #[cfg(not(feature = "mem64"))]
+    {
+        ctx.builder.get_local(&c.entry);
+        if for_writing {
+            ctx.builder
+                .const_i32(TLB_VALID | TLB_READONLY | TLB_HAS_CODE);
+            ctx.builder.and_i32();
+            ctx.builder.const_i32(TLB_VALID);
+            ctx.builder.eq_i32();
+        }
+        else {
+            ctx.builder.const_i32(TLB_VALID);
+            ctx.builder.and_i32();
+        }
+    }
+    ctx.builder.and_i32();
+}
+
+#[cfg(feature = "mem64")]
+fn cached_entry_val(c: &TlbCacheLocals) -> Val {
+    Val::I64(c.entry.unsafe_clone())
+}
+#[cfg(not(feature = "mem64"))]
+fn cached_entry_val(c: &TlbCacheLocals) -> Val {
+    Val::I32(c.entry.unsafe_clone())
+}
+
+/// A new local for a host pointer (i64 under mem64)
+fn new_pointer_local(ctx: &mut JitContext) -> Val {
+    if cfg!(feature = "mem64") {
+        Val::I64(ctx.builder.new_local_i64())
+    }
+    else {
+        Val::I32(ctx.builder.new_local())
+    }
+}
+
+fn set_pointer_local(ctx: &mut JitContext, pointer: &Val) {
+    match pointer {
+        Val::I32(l) => ctx.builder.set_local(l),
+        Val::I64(l) => ctx.builder.set_local_i64(l),
+    }
+}
+
+/// Populate the data tlb cache after a fast-path validated lookup (entry in `entry`)
+fn gen_tlb_cache_populate(ctx: &mut JitContext, address: &WasmLocalI64, entry: &Val) {
+    let c = tlb_cache(ctx).unwrap();
+    ctx.builder.get_local_i64(address);
+    ctx.builder.const_i64(!0xFFF);
+    ctx.builder.and_i64();
+    ctx.builder.set_local_i64(&c.vbase);
+    #[cfg(feature = "mem64")]
+    {
+        let l = match entry {
+            Val::I64(l) => l,
+            Val::I32(_) => unreachable!(),
+        };
+        ctx.builder.get_local_i64(l);
+        ctx.builder.set_local_i64(&c.entry);
+    }
+    #[cfg(not(feature = "mem64"))]
+    {
+        let l = match entry {
+            Val::I32(l) => l,
+            Val::I64(_) => unreachable!(),
+        };
+        ctx.builder.get_local(l);
+        ctx.builder.set_local(&c.entry);
+    }
 }
 
 /// Defer the lazy-flag state of an instruction: keep last_op1/last_result in the flag locals
@@ -1638,9 +1800,21 @@ fn gen_store(ctx: &mut JitContext, bits: u32) {
 /// Read from memory, push the value (i32 zero-extended for up to 32 bits, i64 for 64 bits).
 /// Exceptions leave the compiled code through exit_with_fault_label.
 pub fn gen_safe_read(ctx: &mut JitContext, bits: u32, address: &WasmLocalI64) {
+    let cache = tlb_cache(ctx);
+    let done = cache.as_ref().map(|_| ctx.builder.block_void());
+    let pointer = cache.as_ref().map(|_| new_pointer_local(ctx));
+    if let Some(c) = &cache {
+        gen_tlb_cache_hit_condition(ctx, bits, address, false);
+        ctx.builder.if_void();
+        gen_pointer_from_entry(ctx, address, &cached_entry_val(c));
+        set_pointer_local(ctx, pointer.as_ref().unwrap());
+        ctx.builder.br(done.unwrap());
+        ctx.builder.block_end();
+    }
     let cont = ctx.builder.block_void();
+    let fastpop = cache.as_ref().map(|_| ctx.builder.block_void());
     let entry = gen_tlb_fast_path_check(ctx, bits, address, false);
-    ctx.builder.br_if(cont);
+    ctx.builder.br_if(fastpop.unwrap_or(cont));
 
     // the slow path may deliver a page fault, which reads the flags: commit the deferred
     // lazy flags of the previous instructions (this instruction hasn't run yet)
@@ -1674,18 +1848,46 @@ pub fn gen_safe_read(ctx: &mut JitContext, bits: u32, address: &WasmLocalI64) {
         ctx.builder.and_i32();
         ctx.builder.br_if(ctx.exit_with_fault_label);
     }
-    ctx.builder.block_end();
+    if fastpop.is_some() {
+        // the slow path's entry may point into mapped memory or scratch: only the fast
+        // path's entries are cached
+        ctx.builder.br(cont);
+        ctx.builder.block_end(); // fastpop
+        gen_tlb_cache_populate(ctx, address, &entry);
+    }
+    ctx.builder.block_end(); // cont
 
     gen_pointer_from_entry(ctx, address, &entry);
     entry.free(ctx);
+    if let Some(pointer) = &pointer {
+        set_pointer_local(ctx, pointer);
+        ctx.builder.block_end(); // done
+        pointer.get(ctx);
+        match pointer {
+            Val::I32(l) => ctx.builder.free_local(l.unsafe_clone()),
+            Val::I64(l) => ctx.builder.free_local_i64(l.unsafe_clone()),
+        }
+    }
     gen_load(ctx, bits);
 }
 
 /// Write a value to memory
 pub fn gen_safe_write(ctx: &mut JitContext, bits: u32, address: &WasmLocalI64, value: &Val) {
+    let cache = tlb_cache(ctx);
+    let done = cache.as_ref().map(|_| ctx.builder.block_void());
+    let pointer = cache.as_ref().map(|_| new_pointer_local(ctx));
+    if let Some(c) = &cache {
+        gen_tlb_cache_hit_condition(ctx, bits, address, true);
+        ctx.builder.if_void();
+        gen_pointer_from_entry(ctx, address, &cached_entry_val(c));
+        set_pointer_local(ctx, pointer.as_ref().unwrap());
+        ctx.builder.br(done.unwrap());
+        ctx.builder.block_end();
+    }
     let cont = ctx.builder.block_void();
+    let fastpop = cache.as_ref().map(|_| ctx.builder.block_void());
     let entry = gen_tlb_fast_path_check(ctx, bits, address, true);
-    ctx.builder.br_if(cont);
+    ctx.builder.br_if(fastpop.unwrap_or(cont));
 
     gen_write_slow_path(ctx, bits, address, value);
     // default: the return value is the entry; mem64: it's a status and the entry is stashed
@@ -1708,10 +1910,26 @@ pub fn gen_safe_write(ctx: &mut JitContext, bits: u32, address: &WasmLocalI64, v
         ctx.builder.and_i32();
         ctx.builder.br_if(ctx.exit_with_fault_label);
     }
-    ctx.builder.block_end();
+    if fastpop.is_some() {
+        // the slow path's entry may point into mapped memory or scratch: only the fast
+        // path's entries are cached
+        ctx.builder.br(cont);
+        ctx.builder.block_end(); // fastpop
+        gen_tlb_cache_populate(ctx, address, &entry);
+    }
+    ctx.builder.block_end(); // cont
 
     gen_pointer_from_entry(ctx, address, &entry);
     entry.free(ctx);
+    if let Some(pointer) = &pointer {
+        set_pointer_local(ctx, pointer);
+        ctx.builder.block_end(); // done
+        pointer.get(ctx);
+        match pointer {
+            Val::I32(l) => ctx.builder.free_local(l.unsafe_clone()),
+            Val::I64(l) => ctx.builder.free_local_i64(l.unsafe_clone()),
+        }
+    }
     value.get(ctx);
     gen_store(ctx, bits);
 }
@@ -1737,10 +1955,25 @@ pub fn gen_safe_read_write(
     address: &WasmLocalI64,
     f: &dyn Fn(&mut JitContext),
 ) {
+    let cache = tlb_cache(ctx);
+    let can_use_fast_path = ctx.builder.new_local();
+    let done = cache.as_ref().map(|_| ctx.builder.block_void());
+    let hit_pointer = cache.as_ref().map(|_| new_pointer_local(ctx));
+    if let Some(c) = &cache {
+        gen_tlb_cache_hit_condition(ctx, bits, address, true);
+        ctx.builder.if_void();
+        ctx.builder.const_i32(1);
+        ctx.builder.set_local(&can_use_fast_path);
+        gen_pointer_from_entry(ctx, address, &cached_entry_val(c));
+        set_pointer_local(ctx, hit_pointer.as_ref().unwrap());
+        ctx.builder.br(done.unwrap());
+        ctx.builder.block_end();
+    }
     let cont = ctx.builder.block_void();
+    let fastpop = cache.as_ref().map(|_| ctx.builder.block_void());
     let entry = gen_tlb_fast_path_check(ctx, bits, address, true);
-    let can_use_fast_path = ctx.builder.tee_new_local();
-    ctx.builder.br_if(cont);
+    ctx.builder.tee_local(&can_use_fast_path);
+    ctx.builder.br_if(fastpop.unwrap_or(cont));
 
     // may deliver a page fault, which reads the flags: commit the deferred lazy flags
     // (still those of the previous instructions: f runs after this at runtime)
@@ -1773,11 +2006,29 @@ pub fn gen_safe_read_write(
         ctx.builder.and_i32();
         ctx.builder.br_if(ctx.exit_with_fault_label);
     }
-    ctx.builder.block_end();
+    if fastpop.is_some() {
+        // the slow path's entry may point into mapped memory or scratch: only the fast
+        // path's entries are cached
+        ctx.builder.br(cont);
+        ctx.builder.block_end(); // fastpop
+        gen_tlb_cache_populate(ctx, address, &entry);
+    }
+    ctx.builder.block_end(); // cont
 
     gen_pointer_from_entry(ctx, address, &entry);
     entry.free(ctx);
-    let pointer = if cfg!(feature = "mem64") {
+    let pointer = if let Some(hit_pointer) = &hit_pointer {
+        set_pointer_local(ctx, hit_pointer);
+        ctx.builder.block_end(); // done
+        hit_pointer.get(ctx);
+        if cfg!(feature = "mem64") {
+            Val::I64(ctx.builder.tee_new_local_i64())
+        }
+        else {
+            Val::I32(ctx.builder.tee_new_local())
+        }
+    }
+    else if cfg!(feature = "mem64") {
         Val::I64(ctx.builder.tee_new_local_i64())
     }
     else {
@@ -1808,6 +2059,12 @@ pub fn gen_safe_read_write(
     gen_store(ctx, bits);
     pointer.free(ctx);
     value.free(ctx);
+    if let Some(hit_pointer) = &hit_pointer {
+        match hit_pointer {
+            Val::I32(l) => ctx.builder.free_local(l.unsafe_clone()),
+            Val::I64(l) => ctx.builder.free_local_i64(l.unsafe_clone()),
+        }
+    }
 }
 
 /// Compute the address of a memory operand into a new local
