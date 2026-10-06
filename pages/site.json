@@ -1,0 +1,8 @@
+{
+    "site_url": "https://portlandhodl.github.io/v86_64/",
+    "catalogue_url": "https://v86-64.qrsnap.io/catalogue.json",
+    "title": "v86_64 — 64-bit Linux in your browser",
+    "description": "A virtual machine manager for x86-64 Linux distributions, emulated in WebAssembly with a 64-bit JIT. Pick an ISO and boot it in your browser: nothing to install.",
+    "image": "og.png",
+    "image_alt": "An Alpine Linux root shell running in the v86_64 browser emulator"
+}

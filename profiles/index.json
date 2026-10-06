@@ -1,0 +1,9 @@
+{
+    "schema": "v86-machine-catalogue/1",
+    "image_base": "../images/",
+    "profiles": [
+        "alpine-virt.json",
+        "debian-live-xfce.json",
+        "ubuntu-desktop.json"
+    ]
+}

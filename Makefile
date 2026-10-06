@@ -95,7 +95,7 @@ LIB_FILES=9p.js filesystem.js marshall.js
 BROWSER_FILES=screen.js gpu_screen.js keyboard.js mouse.js speaker.js serial.js \
 	      network.js starter.js worker_bus.js dummy_screen.js ansi_screen.js \
 	      inbrowser_network.js fake_network.js wisp_network.js fetch_network.js \
-          print_stats.js filestorage.js modem.js
+          print_stats.js filestorage.js modem.js machines.js manager.js
 
 RUST_FILES=$(shell find src/rust/ -name '*.rs') $(INSTRUCTION_TABLES)
 

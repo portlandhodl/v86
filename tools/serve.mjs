@@ -42,8 +42,19 @@ const TYPES = {
 };
 
 const server = http.createServer((req, res) => {
-    const url = new URL(req.url, "http://localhost");
-    let file = path.join(root, decodeURIComponent(url.pathname));
+    let file;
+    try
+    {
+        // a path like "//x" would be parsed as a host, so give the url an explicit origin
+        const url = new URL("http://localhost" + req.url);
+        file = path.join(root, decodeURIComponent(url.pathname));
+    }
+    catch(e)
+    {
+        // invalid url or percent-encoding: don't let one request take the server down
+        res.writeHead(400).end("Bad request\n");
+        return;
+    }
     if(!file.startsWith(root))
     {
         res.writeHead(403).end();

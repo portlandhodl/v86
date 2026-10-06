@@ -1,0 +1,20 @@
+{
+    "schema": "v86-machine/1",
+    "id": "alpine-virt",
+    "name": "Alpine Linux 3.19 (virt)",
+    "os": { "family": "Linux", "distro": "alpine", "version": "3.19.9", "arch": "x86_64", "ui": "text" },
+    "description": "Minimal Alpine kernel and userland for virtual machines. Boots from the ISO (SeaBIOS + ISOLINUX) to a root shell in about 30 seconds: log in as root, no password.",
+    "homepage": "https://alpinelinux.org/",
+    "download": "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-virt-3.19.9-x86_64.iso",
+    "machine": {
+        "memory_mb": 512,
+        "vram_mb": 8,
+        "acpi": false,
+        "boot_order": "cd,hd,fd",
+        "net_device_type": "ne2k",
+        "relay_url": ""
+    },
+    "media": {
+        "cdrom": { "url": "alpine-virt-3.19.9-x86_64.iso", "size": 63963136, "async": true }
+    }
+}

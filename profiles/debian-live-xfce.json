@@ -1,0 +1,24 @@
+{
+    "schema": "v86-machine/1",
+    "id": "debian-live-xfce",
+    "name": "Debian Live (testing) Xfce",
+    "os": { "family": "Linux", "distro": "debian", "version": "testing (forky)", "arch": "x86_64", "ui": "graphical" },
+    "description": "The Debian testing live desktop with Xfce. The kernel and initrd are booted directly; the root filesystem is streamed from the ISO with range requests.",
+    "homepage": "https://www.debian.org/CD/live/",
+    "download": "https://cdimage.debian.org/cdimage/weekly-live-builds/amd64/iso-hybrid/debian-live-testing-amd64-xfce.iso",
+    "notes": "Needs images/debian-live-testing-amd64-xfce/live/{vmlinuz,initrd.img}: run tools/stage-images.sh on the ISO. The initrd (216 MiB) is downloaded before boot.",
+    "machine": {
+        "memory_mb": 4096,
+        "vram_mb": 32,
+        "acpi": true,
+        "floppy_drives": false,
+        "net_device_type": "ne2k",
+        "relay_url": ""
+    },
+    "media": {
+        "cdrom": { "url": "debian-live-testing-amd64-xfce.iso", "size": 4382429184, "async": true },
+        "bzimage": "debian-live-testing-amd64-xfce/live/vmlinuz",
+        "initrd": "debian-live-testing-amd64-xfce/live/initrd.img"
+    },
+    "cmdline": "boot=live components console=tty0 console=ttyS0 quiet splash systemd.default_device_timeout_sec=900"
+}
