@@ -6,11 +6,16 @@ following list is roughtly sorted from most interesting/useful to least.
 - [fuzz](fuzz/): Instruction set fuzzer. Generates random test cases (operand
   encodings and initial CPU state) for every implemented instruction from
   gen/x86_table.js and compares the resulting CPU state between the
-  interpreter and the jit. Covers 32-bit protected mode and 64-bit long mode
-  (REX prefixes, r8-r15/xmm8-15, RIP-relative and address-size-override
-  addressing, non-canonical addresses, imm64, ...). Seeded and reproducible;
-  parallelized with cluster workers; survives (and reports) emulator crashes.
-  See the header of fuzz/run.js for the FUZZ_SEED/FUZZ_CASES knobs.
+  interpreter and the jit. Covers 32-bit protected mode (with and without
+  paging) and 64-bit long mode: REX prefixes, r8-r15/xmm8-15, RIP-relative
+  and address-size-override (0x67) addressing, the 16-bit modrm decoder,
+  non-canonical addresses, imm64, misaligned SSE operands, randomized MXCSR
+  and fpu control word, special float values (NaN/denormal/inf), chained
+  instruction sequences (lazy-flag producer/consumer pairs), lock-prefixed
+  read-modify-write ops and conditional jumps over marker writes. Seeded and
+  reproducible; parallelized with cluster workers; survives (and reports)
+  emulator crashes. See the header of fuzz/run.js for the
+  FUZZ_SEED/FUZZ_CASES knobs.
 - [qemu](qemu/): Based on tests from qemu. Builds a Linux binary, which tests
   many CPU features, which are then compared to a run on qemu.
 - [kvm-unit-test](kvm-unit-test/): Based on tests from the KVM project, tests

@@ -99,7 +99,7 @@ function create_emulator()
     const emulator = new V86({
         autostart: false,
         memory_size: 2 * 1024 * 1024,
-        log_level: 0,
+        log_level: +process.env.LOG_LEVEL || 0,
         wasm_path: process.env.V86_WASM_PATH,
     });
 
@@ -147,7 +147,7 @@ function handle_uncaught(error)
 process.on("uncaughtException", handle_uncaught);
 process.on("unhandledRejection", handle_uncaught);
 
-function capture_state(cpu, exception)
+function capture_state(cpu, exception, low_mem_compare)
 {
     return {
         // r0-r15, lo/hi 32-bit halves interleaved
@@ -163,17 +163,29 @@ function capture_state(cpu, exception)
             cpu.mem8.buffer,
             cpu.mem8.byteOffset + gen.SCRATCH_ADDR,
             gen.SCRATCH_SIZE >> 2)),
+        // 16-bit addressing forms can reach (and wrap within) the first 64 KiB
+        low_mem: low_mem_compare ? Array.from(new Int32Array(
+            cpu.mem8.buffer,
+            cpu.mem8.byteOffset,
+            gen.LOWMEM_SIZE >> 2)) : null,
         exception,
     };
 }
 
-// identity-map the first 2 MiB with a 2 MiB page (long mode cases)
+// identity maps of low memory for the paging cases
 function setup_long_mode_paging(cpu)
 {
+    // PAE: PML4 -> PDPT -> PD (2 MiB page)
     const m32 = cpu.mem32s;
     m32[gen.PML4_ADDR >> 2] = gen.PDPT_ADDR | 3; // P|RW
     m32[gen.PDPT_ADDR >> 2] = gen.PD_ADDR | 3;
     m32[gen.PD_ADDR >> 2] = 0x83; // P|RW|PS
+}
+
+function setup_32bit_paging(cpu)
+{
+    // classic 2-level paging: PD with one 4 MiB page
+    cpu.mem32s[gen.PD32_ADDR >> 2] = 0x83; // P|RW|PS
 }
 
 // Runs the emulator until the next hlt (or CPU exception, which is turned
@@ -274,6 +286,10 @@ async function run_variant(test_case, use_jit)
     {
         setup_long_mode_paging(cpu);
     }
+    else if(test_case.paging)
+    {
+        setup_32bit_paging(cpu);
+    }
     cpu.mem8.set(test_case.scratch, gen.SCRATCH_ADDR);
 
     cpu.set_jit_config(0, use_jit ? 0 : 1); // JIT enabled/disabled
@@ -288,7 +304,7 @@ async function run_variant(test_case, use_jit)
         await run_until_halt(recorded);
         if(recorded.exception)
         {
-            return capture_state(cpu, recorded.exception);
+            return capture_state(cpu, recorded.exception, test_case.low_mem_compare);
         }
 
         // resume after the hlt, in 64-bit mode
@@ -300,7 +316,7 @@ async function run_variant(test_case, use_jit)
             await force_generate_and_run(entry64);
         }
         await run_until_halt(recorded);
-        return capture_state(cpu, recorded.exception);
+        return capture_state(cpu, recorded.exception, test_case.low_mem_compare);
     }
 
     if(use_jit)
@@ -308,7 +324,7 @@ async function run_variant(test_case, use_jit)
         await force_generate_and_run(cpu.instruction_pointer[0]);
     }
     await run_until_halt(recorded);
-    return capture_state(cpu, recorded.exception);
+    return capture_state(cpu, recorded.exception, test_case.low_mem_compare);
 }
 
 // ---------------------------------------------------------------------------
@@ -362,6 +378,14 @@ function compare_states(name, a, b)
     for(let i = 0; i < a.mem.length; i++)
     {
         check("mem[" + h(gen.SCRATCH_ADDR + 4 * i, 8) + "]", a.mem[i], b.mem[i]);
+    }
+
+    if(a.low_mem && b.low_mem)
+    {
+        for(let i = 0; i < a.low_mem.length; i++)
+        {
+            check("lowmem[" + h(4 * i, 8) + "]", a.low_mem[i], b.low_mem[i]);
+        }
     }
 
     return failures;
@@ -498,6 +522,17 @@ async function main()
                     String(interp_error && interp_error.message || interp_error).split("\n")[0] : "(ok)");
                 console.error("    jit:    %s", jit_error ?
                     String(jit_error && jit_error.message || jit_error).split("\n")[0] : "(ok)");
+                if(process.env.SHOW_CRASH_STACK)
+                {
+                    for(const e of [interp_error, jit_error])
+                    {
+                        if(e && e.stack)
+                        {
+                            console.error(String(e.stack).split("\n").slice(1, 14)
+                                .map(l => "        " + l.trim()).join("\n"));
+                        }
+                    }
+                }
                 continue;
             }
 
