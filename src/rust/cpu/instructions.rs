@@ -1106,7 +1106,7 @@ pub unsafe fn instr16_9D() {
     let old_eflags = *flags;
     update_eflags(*flags & !0xFFFF | return_on_pagefault!(pop16()));
     if old_eflags & FLAG_INTERRUPT == 0 && *flags & FLAG_INTERRUPT != 0 {
-        handle_irqs();
+        handle_irqs_or_defer();
     }
 }
 pub unsafe fn instr32_9D() {
@@ -1119,7 +1119,7 @@ pub unsafe fn instr32_9D() {
     let old_eflags = *flags;
     update_eflags(return_on_pagefault!(pop32s()));
     if old_eflags & FLAG_INTERRUPT == 0 && *flags & FLAG_INTERRUPT != 0 {
-        handle_irqs();
+        handle_irqs_or_defer();
     }
 }
 

@@ -559,7 +559,7 @@ pub unsafe fn instr64_9D() {
     let old_eflags = *flags;
     update_eflags(return_on_pagefault!(pop64()) as u32 as i32);
     if old_eflags & FLAG_INTERRUPT == 0 && *flags & FLAG_INTERRUPT != 0 {
-        handle_irqs();
+        handle_irqs_or_defer();
     }
 }
 pub unsafe fn instr64_A1(moffs: u64) {
