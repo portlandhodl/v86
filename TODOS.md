@@ -534,7 +534,8 @@ Done:
   generating falls back to the interpreter for groups of native instructions
   (bisecting miscompilations).
 - `set_jit_config(4, 1)` disables the 64-bit JIT, `(5, n)` sets the hotness
-  threshold (`JIT_THRESHOLD=1 tests/longmode/run.js` in `make longmode-tests`).
+  threshold (`JIT_THRESHOLD=1 tests/longmode/run.js` in `make longmode-tests`),
+  `(8, 0)` restores eager lazy-flag stores (`JIT64_DEFER_FLAGS=0`).
 
 Where the time goes now (Alpine ISO boot, `make with-profiler` +
 `emulator.get_instruction_stats()`): 96.5% of the ~6G instructions run
@@ -559,6 +560,26 @@ Done since (branch jit-perf, bench64 64-bit 508 -> ~620-685 MIPS):
   support (detected in cpu.js, `set_jit_config(7, 0)` disables it).
 - Release build with codegen-units = 1; `make WASM_OPT=true` (-O3) makes
   the interpreter ~11% faster.
+- Deferred lazy flags (branch jit64-defer-flags, bench64 64-bit ~+10% interleaved
+  A/B on a noisy host; Alpine boot unchanged, as with chaining): add/sub/logic/
+  cmp/test, neg, inc/dec, xadd and cmpxchg keep last_op1/last_result in three
+  function-wide wasm locals instead of storing them to the cpu state after every
+  instruction (`jit64_deferred`, gen_defer_flags). A block's commits coalesce to
+  at most one store set (dead flag writes in between are never emitted), logic
+  ops' cf/of/af clears accumulate as a compile-time mask, inc/dec carry cf in a
+  local (and jcc after inc/dec is now inline instead of a jit64_test_cc call).
+  Commits happen at the observation points: end of every block (the
+  conditional-jump glue commits in gen_condition_fn after computing the
+  condition from the locals), interpreter/wrapper calls, and — cold and
+  non-destructively (gen_commit_deferred_flags_cold) — the memory slow paths,
+  which may deliver a page fault. shl/shr/sar/rol/ror and the inline 32-bit
+  imul skip their eager flag update entirely when next_instructions_overwrite_flags
+  proves it dead (same argument as the dead cf save). `set_jit_config(8, 0)`
+  restores the eager stores. Not done: carrying the deferred state across block
+  boundaries within a module (the commit at a block end is dead when the
+  following block overwrites the flags before reading them — needs join-point
+  aware liveness), and deferring imul's cf/of (runtime condition, would need a
+  pending-set local).
 
 Where the Alpine boot time goes now (6.1G instructions; note that
 `get_instruction_counter` is u32 and wraps): host profile ~55% jitted code,
@@ -576,8 +597,9 @@ Next:
   inline. Smaller code would make compilation cheaper, which would allow a
   lower hotness threshold (less interpreted code). E.g. one shared slow
   path call per module, or per-block reuse of the tlb entry for rsp.
-- Lazy flags in wasm locals with a liveness pass per block (flags are 3-4
-  stores to memory per arithmetic instruction), cmp+jcc fused on locals.
+- ~~Lazy flags in wasm locals with a liveness pass per block (flags are 3-4
+  stores to memory per arithmetic instruction), cmp+jcc fused on locals~~ —
+  done per block (see above); cross-block liveness is the remaining part.
 - Remaining interpreter calls: 8/16-bit shifts, mul/div, cli, rep movs/stos
   (could be memory.copy/fill within a page), popf, SSE moves, mov cr, rdtsc.
 - Inline flags for 8/16-bit operations (conditions currently fall back to a

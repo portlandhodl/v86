@@ -173,6 +173,14 @@ if(process.env.JIT_THRESHOLD)
     });
 }
 
+// JIT64_DEFER_FLAGS=0: eager lazy-flag stores instead of keeping them in wasm locals
+if(process.env.JIT64_DEFER_FLAGS === "0")
+{
+    emulator.bus.register("emulator-started", () => {
+        emulator.v86.cpu.wm.exports["set_jit_config"](8, 0);
+    });
+}
+
 const timeout = setTimeout(() => {
     throw new Error("Timeout waiting for longmode test to finish");
 }, 60 * 1000);
