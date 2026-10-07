@@ -825,6 +825,25 @@ function start_emulation(profile, query_args)
 
     if(DEBUG) window.emulator = emulator;
 
+    if($("back_to_manager"))
+    {
+        // the way back to the machine manager is there from the start, also while the images
+        // are still downloading; the other controls appear once the machine runs (init_ui)
+        $("runtime_options").classList.add("rt-loading");
+        $("runtime_options").style.display = "block";
+        const back = function(e)
+        {
+            e.preventDefault();
+            const name = $("vm_title").textContent;
+            if(window.confirm(`Power off ${name} and return to the machine manager? Anything not saved is lost.`))
+            {
+                return_to_manager(emulator);
+            }
+        };
+        $("back_to_manager").onclick = back;
+        $("rt_brand").onclick = back;
+    }
+
     emulator.add_listener("emulator-ready", function()
     {
         if(DEBUG)
@@ -911,6 +930,8 @@ function init_ui(profile, settings, emulator)
 {
     $("loading").style.display = "none";
     $("runtime_options").style.display = "block";
+    $("runtime_options").classList.remove("rt-loading");
+    if($("vm_state")) $("vm_state").textContent = "[Running]";
     $("runtime_infos").style.display = "block";
     $("screen_container").style.display = "block";
 
@@ -935,11 +956,13 @@ function init_ui(profile, settings, emulator)
         if(emulator.is_running())
         {
             $("run").textContent = "Run";
+            if($("vm_state")) $("vm_state").textContent = "[Paused]";
             emulator.stop();
         }
         else
         {
             $("run").textContent = "Pause";
+            if($("vm_state")) $("vm_state").textContent = "[Running]";
             emulator.run();
         }
 
@@ -948,10 +971,7 @@ function init_ui(profile, settings, emulator)
 
     $("exit").onclick = function()
     {
-        emulator.destroy();
-        const params = new URLSearchParams(location.search);
-        params.delete("profile");
-        location.href = location.pathname + format_query_args(params);
+        return_to_manager(emulator);
     };
 
     $("lock_mouse").onclick = function()
@@ -1835,6 +1855,24 @@ function debug_start(emulator)
     window.cpu = cpu;
     window.h = h;
     window.dump_file = dump_file;
+}
+
+function return_to_manager(emulator)
+{
+    try
+    {
+        emulator.destroy();
+    }
+    catch(e)
+    {
+        // still loading: there may be nothing to tear down yet, the page is left anyway
+    }
+    // the machine's settings were added to the url when it started; drop them, or the manual
+    // setup form would pick them up and apply them to the next machine
+    const params = new URLSearchParams();
+    const cdn = new URLSearchParams(location.search).get("cdn");
+    if(cdn) params.set("cdn", cdn);
+    location.href = location.pathname + format_query_args(params);
 }
 
 function onpopstate(e)
