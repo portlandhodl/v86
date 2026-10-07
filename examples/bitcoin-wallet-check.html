@@ -53,9 +53,8 @@ Setup (from the repository root):
 
     /* header */
     header.hero { padding: 40px 0 8px; display: grid; grid-template-columns: auto 1fr; gap: 18px 20px; align-items: center; }
-    .logo { width: 56px; height: 56px; border-radius: 16px; background: linear-gradient(145deg, #ffb347, #f7931a 55%, #d9720a);
-            display: grid; place-items: center; box-shadow: 0 6px 20px rgba(247, 147, 26, .35); }
-    .logo svg { width: 32px; height: 32px; }
+    .logo { width: 56px; height: 56px; border-radius: 50%; box-shadow: 0 6px 20px rgba(247, 147, 26, .35); }
+    .logo svg { width: 100%; height: 100%; display: block; }
     header h1 { font-size: clamp(24px, 4vw, 32px); line-height: 1.15; margin: 0; letter-spacing: -.01em; }
     header p.lead { grid-column: 1 / -1; color: var(--muted); margin: 0; max-width: 70ch; font-size: 16px; }
     .badges { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
@@ -235,10 +234,10 @@ Setup (from the repository root):
     @keyframes glow { 0%, 100% { opacity: .55; transform: scale(.9) } 50% { opacity: 1; transform: scale(1.08) } }
     .coin { position: relative; width: 132px; height: 132px; transform-style: preserve-3d; animation: spin 3.2s cubic-bezier(.45, .05, .55, .95) infinite; }
     .coin .face { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; backface-visibility: hidden;
-                  background: radial-gradient(circle at 35% 30%, #ffc56b, #f7931a 45%, #c96d06 100%);
-                  box-shadow: inset 0 0 0 5px rgba(255, 255, 255, .18), inset 0 -8px 18px rgba(0, 0, 0, .25); }
+                  background: #f7931a;
+                  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, .12), inset 0 -6px 14px rgba(0, 0, 0, .14); }
     .coin .face.back { transform: rotateY(180deg); }
-    .coin .face svg { width: 70px; height: 70px; filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .25)); }
+    .coin .face svg { width: 100%; height: 100%; }
     /* the rim: stacked discs give the coin a thickness when it turns edge-on */
     .coin .rim { position: absolute; inset: 0; border-radius: 50%; background: #b5620a; }
     @keyframes spin { 0% { transform: rotateY(0) } 50% { transform: rotateY(180deg) } 100% { transform: rotateY(360deg) } }
@@ -279,8 +278,8 @@ Setup (from the repository root):
         <div class="coin-ring" id="loader_ring"></div>
         <div class="coin">
             <div class="rim" style="transform: translateZ(-4.5px)"></div><div class="rim" style="transform: translateZ(-3.5px)"></div><div class="rim" style="transform: translateZ(-2.5px)"></div><div class="rim" style="transform: translateZ(-1.5px)"></div><div class="rim" style="transform: translateZ(-0.5px)"></div><div class="rim" style="transform: translateZ(0.5px)"></div><div class="rim" style="transform: translateZ(1.5px)"></div><div class="rim" style="transform: translateZ(2.5px)"></div><div class="rim" style="transform: translateZ(3.5px)"></div><div class="rim" style="transform: translateZ(4.5px)"></div>
-            <div class="face" style="transform: translateZ(5px)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5h6a3.5 3.5 0 0 1 0 7H8zm0 7h7a3.5 3.5 0 0 1 0 7H8zM8 5v14M10 3v2M14 3v2M10 19v2M14 19v2"/></svg><div class="shine"></div></div>
-            <div class="face back" style="transform: rotateY(180deg) translateZ(5px)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5h6a3.5 3.5 0 0 1 0 7H8zm0 7h7a3.5 3.5 0 0 1 0 7H8zM8 5v14M10 3v2M14 3v2M10 19v2M14 19v2"/></svg></div>
+            <div class="face" style="transform: translateZ(5px)"><svg viewBox="0 0 64 64"><path fill="#fff" d="M46.11 27.441c.636-4.258-2.606-6.547-7.039-8.074l1.438-5.768-3.512-.875-1.4 5.616c-.922-.23-1.87-.447-2.812-.662l1.41-5.653-3.509-.875-1.439 5.766c-.764-.174-1.514-.346-2.242-.527l.004-.018-4.842-1.209-.934 3.75s2.605.597 2.55.634c1.422.355 1.68 1.296 1.636 2.042l-1.638 6.571c.098.025.225.061.365.117l-.37-.092-2.297 9.205c-.174.432-.615 1.08-1.609.834.035.051-2.552-.637-2.552-.637l-1.743 4.019 4.57 1.139c.85.213 1.682.436 2.502.646l-1.453 5.835 3.507.875 1.44-5.772c.957.26 1.887.5 2.797.726L27.504 50.8l3.511.875 1.453-5.823c5.987 1.133 10.49.676 12.384-4.739 1.527-4.36-.076-6.875-3.226-8.515 2.294-.529 4.022-2.038 4.483-5.155zM38.087 38.69c-1.086 4.36-8.426 2.004-10.807 1.412l1.928-7.729c2.38.594 10.011 1.77 8.88 6.317zm1.085-11.312c-.99 3.966-7.1 1.951-9.083 1.457l1.748-7.01c1.983.494 8.367 1.416 7.335 5.553z"/></svg><div class="shine"></div></div>
+            <div class="face back" style="transform: rotateY(180deg) translateZ(5px)"><svg viewBox="0 0 64 64"><path fill="#fff" d="M46.11 27.441c.636-4.258-2.606-6.547-7.039-8.074l1.438-5.768-3.512-.875-1.4 5.616c-.922-.23-1.87-.447-2.812-.662l1.41-5.653-3.509-.875-1.439 5.766c-.764-.174-1.514-.346-2.242-.527l.004-.018-4.842-1.209-.934 3.75s2.605.597 2.55.634c1.422.355 1.68 1.296 1.636 2.042l-1.638 6.571c.098.025.225.061.365.117l-.37-.092-2.297 9.205c-.174.432-.615 1.08-1.609.834.035.051-2.552-.637-2.552-.637l-1.743 4.019 4.57 1.139c.85.213 1.682.436 2.502.646l-1.453 5.835 3.507.875 1.44-5.772c.957.26 1.887.5 2.797.726L27.504 50.8l3.511.875 1.453-5.823c5.987 1.133 10.49.676 12.384-4.739 1.527-4.36-.076-6.875-3.226-8.515 2.294-.529 4.022-2.038 4.483-5.155zM38.087 38.69c-1.086 4.36-8.426 2.004-10.807 1.412l1.928-7.729c2.38.594 10.011 1.77 8.88 6.317zm1.085-11.312c-.99 3.966-7.1 1.951-9.083 1.457l1.748-7.01c1.983.494 8.367 1.416 7.335 5.553z"/></svg></div>
         </div>
     </div>
     <div class="loader-title">Bitcoin Core wallet check</div>
@@ -294,8 +293,7 @@ Setup (from the repository root):
 <main>
     <header class="hero">
         <div class="logo" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M8 5h6a3.5 3.5 0 0 1 0 7H8zm0 7h7a3.5 3.5 0 0 1 0 7H8zM8 5v14M10 3v2M14 3v2M10 19v2M14 19v2"/></svg>
+            <svg viewBox="0 0 64 64" role="img" aria-label="Bitcoin"><path fill="#f7931a" d="M63.04 39.741c-4.274 17.143-21.638 27.575-38.783 23.301C7.12 58.768-3.313 41.404.962 24.262 5.234 7.117 22.597-3.317 39.737.957c17.144 4.274 27.576 21.64 23.302 38.784z"/><path fill="#fff" d="M46.11 27.441c.636-4.258-2.606-6.547-7.039-8.074l1.438-5.768-3.512-.875-1.4 5.616c-.922-.23-1.87-.447-2.812-.662l1.41-5.653-3.509-.875-1.439 5.766c-.764-.174-1.514-.346-2.242-.527l.004-.018-4.842-1.209-.934 3.75s2.605.597 2.55.634c1.422.355 1.68 1.296 1.636 2.042l-1.638 6.571c.098.025.225.061.365.117l-.37-.092-2.297 9.205c-.174.432-.615 1.08-1.609.834.035.051-2.552-.637-2.552-.637l-1.743 4.019 4.57 1.139c.85.213 1.682.436 2.502.646l-1.453 5.835 3.507.875 1.44-5.772c.957.26 1.887.5 2.797.726L27.504 50.8l3.511.875 1.453-5.823c5.987 1.133 10.49.676 12.384-4.739 1.527-4.36-.076-6.875-3.226-8.515 2.294-.529 4.022-2.038 4.483-5.155zM38.087 38.69c-1.086 4.36-8.426 2.004-10.807 1.412l1.928-7.729c2.38.594 10.011 1.77 8.88 6.317zm1.085-11.312c-.99 3.966-7.1 1.951-9.083 1.457l1.748-7.01c1.983.494 8.367 1.416 7.335 5.553z"/></svg>
         </div>
         <h1>Bitcoin Core wallet check</h1>
         <p class="lead">Proves a wallet file opens in Bitcoin Core <span id="btc_version">…</span>. The file is imported by a real,
