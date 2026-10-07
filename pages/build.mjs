@@ -107,20 +107,26 @@ const escape = s => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").rep
 function card_tags({ url, title, description, image, image_alt, site_name = "v86_64" })
 {
     const image_url = image && new URL(image, site_url).href;
+    const image_type = image && (/\.png$/i.test(image) ? "image/png" : "image/jpeg");
     return [
         `<link rel="canonical" href="${escape(url)}">`,
         `<meta property="og:type" content="website">`,
+        `<meta property="og:locale" content="en_US">`,
         `<meta property="og:site_name" content="${escape(site_name)}">`,
         `<meta property="og:url" content="${escape(url)}">`,
         `<meta property="og:title" content="${escape(title)}">`,
         `<meta property="og:description" content="${escape(description)}">`,
         ...(image ? [
             `<meta property="og:image" content="${escape(image_url)}">`,
+            `<meta property="og:image:secure_url" content="${escape(image_url)}">`,
+            `<meta property="og:image:type" content="${image_type}">`,
             `<meta property="og:image:width" content="1200">`,
             `<meta property="og:image:height" content="630">`,
             `<meta property="og:image:alt" content="${escape(image_alt)}">`,
             `<meta name="twitter:image" content="${escape(image_url)}">`,
             `<meta name="twitter:image:alt" content="${escape(image_alt)}">`,
+            `<meta itemprop="image" content="${escape(image_url)}">`,
+            `<link rel="image_src" href="${escape(image_url)}">`,
         ] : []),
         `<meta name="twitter:card" content="${image ? "summary_large_image" : "summary"}">`,
         `<meta name="twitter:title" content="${escape(title)}">`,
@@ -156,6 +162,7 @@ const head = [
 let html = fs.readFileSync(path.join(root, "index.html"), "utf8");
 if(!html.includes('<link rel="manifest"')) throw new Error("index.html: no manifest link to insert the meta tags before");
 html = html
+    .replace(/<title>[^<]*<\/title>/, `<title>${escape(site.title)}</title>`)
     .replace(/<meta name="description" content="[^"]*">/, `<meta name="description" content="${escape(site.description)}">`)
     .replace('<link rel="manifest"', head + "\n\n<link rel=\"manifest\"");
 fs.writeFileSync(path.join(out, "index.html"), html);
