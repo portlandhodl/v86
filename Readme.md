@@ -1,27 +1,78 @@
 # v86_64
 
+[![CI](https://github.com/portlandhodl/v86_64/actions/workflows/ci.yml/badge.svg)](https://github.com/portlandhodl/v86_64/actions/workflows/ci.yml)
+[![Pages](https://github.com/portlandhodl/v86_64/actions/workflows/pages.yml/badge.svg)](https://portlandhodl.github.io/v86_64/)
+[![License: BSD-2-Clause](https://img.shields.io/badge/license-BSD--2--Clause-blue)](LICENSE)
+
 **x86-64 in the browser.** v86_64 is a PC emulator and x86-to-WebAssembly JIT
 that boots modern **64-bit (long mode)** operating systems in a web page or in
 Node.js: 64-bit Linux kernels, 64-bit userspace and a 64-bit JIT, all running
 in wasm.
 
+**Try it: <https://portlandhodl.github.io/v86_64/>**
+
+| Debian Live (testing), Xfce | Ubuntu 26.04.1 LTS Desktop |
+|---|---|
+| ![Debian Live (testing) with the Xfce desktop running in v86_64](docs/screenshots/debian-xfce.png) | ![Ubuntu 26.04.1 LTS desktop running in v86_64](docs/screenshots/ubuntu-26.04.png) |
+| 4.4 GB live ISO, 1024x768x32, ~150 MIPS average | 6.5 GB desktop ISO streamed with range requests, GNOME |
+
+## Table of Contents
+- [Purpose](#purpose)
+	- [Main Features](#main-features)
+	- [Status](#status)
+- [What's emulated](#whats-emulated)
+- [Getting started](#getting-started)
+- [Embedding](#embedding)
+- [Testing](#testing)
+- [Documentation](#documentation)
+- [Contributing](#contributing-generative-ai-submissions-required)
+- [Relationship to v86](#relationship-to-v86)
+- [License](#license)
+
+## Purpose
+v86_64 aims to run unmodified 64-bit operating systems, from a bare kernel to
+a full desktop distribution, inside a browser tab with nothing installed.
+
 It started as a fork of [v86](https://github.com/copy/v86) and has diverged
 into its own project. Everything 32-bit that v86 runs still runs, bit for bit.
 
-**Try it: <https://portlandhodl.github.io/v86_64/>**, a VirtualBox-style machine
-manager: pick a machine and start it, or import your own as a JSON profile. The ISOs
-are streamed from an [image server](server/README.md); Alpine is also bundled with
-the site.
+The [live site](https://portlandhodl.github.io/v86_64/) is a VirtualBox-style
+machine manager: pick a machine and start it, or import your own as a JSON
+profile. The ISOs are streamed from an [image server](server/README.md); Alpine
+is also bundled with the site.
 
-## Status
+### Main Features
+**Can run the following guests**
+- 64-bit desktop distributions: Debian (Xfce) and Ubuntu (GNOME) live ISOs
+- 64-bit Linux kernels, booted from an ISO or directly from a bzImage
+- Higher-half ELF64 multiboot kernels
+- Every 32-bit guest v86 runs: Linux, Windows 1.01 to 2000, DOS, BSDs and hobby OSes
+
+**Can execute 64-bit code with**
+- An interpreter for the full long-mode instruction set, SSE through SSE4.2
+- A JIT that compiles hot 64-bit code to WebAssembly modules, with guest
+  registers in i64 wasm locals (~530 MIPS, against ~80 interpreted)
+
+**Can boot from the following media**
+- CD-ROM ISOs of several GB, streamed on demand with HTTP range requests
+- A bzImage and initrd loaded directly, skipping the bootloader
+- Floppy and hard disk images, a 9p filesystem, saved emulator state
+
+**Can connect the guest to**
+- The internet, through a built-in [Wisp](https://github.com/MercuryWorkshop/wisp-protocol)
+  proxy (DHCP, outbound TCP, DNS-over-HTTPS)
+- Other browser tabs, relays and full-ethernet backends ([docs/networking.md](docs/networking.md))
+
+### Status
 
 | Guest | State |
 |---|---|
 | Alpine Linux 3.19 x86_64 | Boots from its ISO (SeaBIOS + ISOLINUX) to an interactive root shell in ~28 s, with 64-bit code in the JIT |
+| Debian testing (amd64 live ISO, Xfce) | Boots to the Xfce desktop; profile in [profiles/](profiles/README.md) |
+| Ubuntu 26.04.1 LTS (amd64 desktop ISO) | Boots to the GNOME desktop; profile in [profiles/](profiles/README.md) |
+| Xubuntu 24.04 (amd64 live ISO) | Being brought up: [examples/xubuntu.html](examples/xubuntu.html) |
 | Linux x86_64 kernels | Full early init, arch selftests and userspace, booted from an ISO or directly from a bzImage |
 | ELF64 multiboot kernels | Higher-half ELF64 entry points are loaded and run |
-| Xubuntu 24.04 (amd64 live ISO) | Being brought up: [examples/xubuntu.html](examples/xubuntu.html) |
-| Debian testing, Ubuntu 26.04 (amd64 live ISOs) | Being brought up: profiles in [profiles/](profiles/README.md); the kernel boots directly, desktops not yet verified |
 | 32-bit guests | Unchanged from v86 (Linux, Windows 1.01-2000, DOS, BSDs, hobby OSes) |
 
 | Milestone | |
@@ -30,7 +81,7 @@ the site.
 | M2: 64-bit kernel to userspace (interrupts, syscall, NX, full 48-bit addresses) | Done |
 | M3: boot media and devices for real distributions | Done |
 | M4: JIT for 64-bit code (~530 MIPS vs ~80 interpreted) | Done, performance work ongoing |
-| M5: graphical distributions (Ubuntu and friends) | In progress |
+| M5: graphical distributions (Ubuntu and friends) | In progress: Debian and Ubuntu reach their desktops |
 
 The roadmap, design notes and every long-mode bug found so far are in
 [TODOS.md](TODOS.md).
