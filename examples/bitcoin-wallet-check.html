@@ -214,10 +214,83 @@ Setup (from the repository root):
         .drop { border-right: 0; border-bottom: 1px solid var(--line); }
         header.hero { padding-top: 24px; }
     }
+
+    /* loading screen: shown while the machine boots, fades away when it's ready */
+    #loader { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center;
+              gap: 26px; padding: 24px 16px; color: #f1ece4; text-align: center; transition: opacity .9s ease, visibility .9s;
+              background:
+                  radial-gradient(ellipse 60% 50% at 50% 38%, rgba(247, 147, 26, .16), transparent 70%),
+                  linear-gradient(rgba(247, 147, 26, .035) 1px, transparent 1px) 0 0 / 44px 44px,
+                  linear-gradient(90deg, rgba(247, 147, 26, .035) 1px, transparent 1px) 0 0 / 44px 44px,
+                  #06080b; }
+    #loader.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+    .coin-stage { position: relative; width: 210px; height: 210px; display: grid; place-items: center; perspective: 700px; }
+    .coin-ring { position: absolute; inset: 0; border-radius: 50%; transition: --p .4s;
+                 background: conic-gradient(#f7931a calc(var(--p, 0) * 1%), rgba(255, 255, 255, .07) 0);
+                 -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
+                         mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
+                 filter: drop-shadow(0 0 10px rgba(247, 147, 26, .55)); }
+    .coin-glow { position: absolute; width: 150px; height: 150px; border-radius: 50%; background: rgba(247, 147, 26, .35);
+                 filter: blur(28px); animation: glow 2.4s ease-in-out infinite; }
+    @keyframes glow { 0%, 100% { opacity: .55; transform: scale(.9) } 50% { opacity: 1; transform: scale(1.08) } }
+    .coin { position: relative; width: 132px; height: 132px; transform-style: preserve-3d; animation: spin 3.2s cubic-bezier(.45, .05, .55, .95) infinite; }
+    .coin .face { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; backface-visibility: hidden;
+                  background: radial-gradient(circle at 35% 30%, #ffc56b, #f7931a 45%, #c96d06 100%);
+                  box-shadow: inset 0 0 0 5px rgba(255, 255, 255, .18), inset 0 -8px 18px rgba(0, 0, 0, .25); }
+    .coin .face.back { transform: rotateY(180deg); }
+    .coin .face svg { width: 70px; height: 70px; filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .25)); }
+    /* the rim: stacked discs give the coin a thickness when it turns edge-on */
+    .coin .rim { position: absolute; inset: 0; border-radius: 50%; background: #b5620a; }
+    @keyframes spin { 0% { transform: rotateY(0) } 50% { transform: rotateY(180deg) } 100% { transform: rotateY(360deg) } }
+    .shine { position: absolute; inset: 0; border-radius: 50%; overflow: hidden; backface-visibility: hidden; }
+    .shine::after { content: ""; position: absolute; top: -50%; left: -60%; width: 40%; height: 200%; transform: rotate(25deg);
+                    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .45), transparent); animation: shine 3.2s ease-in-out infinite; }
+    @keyframes shine { 0%, 60% { left: -60% } 85%, 100% { left: 130% } }
+    .loader-title { font-size: 13px; letter-spacing: .32em; text-transform: uppercase; color: #9a8f80; margin-top: -6px; }
+    .loader-status { width: min(520px, 100%); }
+    .loader-status .row { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; color: #c9c1b5; }
+    .loader-status .row span:first-child { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .loader-status .row .pct { color: #f7931a; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .loader-bar { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .08); margin-top: 8px; overflow: hidden; }
+    .loader-bar div { height: 100%; width: 0; background: linear-gradient(90deg, #ffb347, #f7931a); box-shadow: 0 0 10px #f7931a; transition: width .4s ease; }
+    .quote { min-height: 7.5em; width: min(640px, 100%); transition: opacity .7s ease, transform .7s ease; }
+    .quote.out { opacity: 0; transform: translateY(6px); }
+    .quote q { display: block; font: italic 19px/1.5 Georgia, "Iowan Old Style", "Times New Roman", serif; color: #f1ece4; quotes: "\201C" "\201D"; }
+    .quote cite { display: block; margin-top: 10px; font-style: normal; font-size: 12.5px; letter-spacing: .04em; color: #8d8478; }
+    .loader-skip { position: absolute; bottom: 22px; font: inherit; font-size: 13px; color: #8d8478; background: none; border: 0;
+                   cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+    .loader-skip:hover { color: #f1ece4; }
+    #loader.failed .coin, #loader.failed .shine::after, #loader.failed .coin-glow { animation: none; }
+    #loader.failed .loader-bar div { background: #ff6b6b; box-shadow: none; }
+    #loader.failed .loader-status .row span:first-child { white-space: normal; color: #ff8a8a; }
+    @property --p { syntax: "<number>"; inherits: false; initial-value: 0; }
+    @media (max-width: 520px) {
+        .coin-stage { width: 170px; height: 170px; } .coin { width: 108px; height: 108px; } .quote q { font-size: 17px; }
+        .loader-status .row span:first-child { white-space: normal; }
+    }
+
     @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
+<div id="loader" role="status" aria-live="polite">
+    <div class="coin-stage" aria-hidden="true">
+        <div class="coin-glow"></div>
+        <div class="coin-ring" id="loader_ring"></div>
+        <div class="coin">
+            <div class="rim" style="transform: translateZ(-4.5px)"></div><div class="rim" style="transform: translateZ(-3.5px)"></div><div class="rim" style="transform: translateZ(-2.5px)"></div><div class="rim" style="transform: translateZ(-1.5px)"></div><div class="rim" style="transform: translateZ(-0.5px)"></div><div class="rim" style="transform: translateZ(0.5px)"></div><div class="rim" style="transform: translateZ(1.5px)"></div><div class="rim" style="transform: translateZ(2.5px)"></div><div class="rim" style="transform: translateZ(3.5px)"></div><div class="rim" style="transform: translateZ(4.5px)"></div>
+            <div class="face" style="transform: translateZ(5px)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5h6a3.5 3.5 0 0 1 0 7H8zm0 7h7a3.5 3.5 0 0 1 0 7H8zM8 5v14M10 3v2M14 3v2M10 19v2M14 19v2"/></svg><div class="shine"></div></div>
+            <div class="face back" style="transform: rotateY(180deg) translateZ(5px)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5h6a3.5 3.5 0 0 1 0 7H8zm0 7h7a3.5 3.5 0 0 1 0 7H8zM8 5v14M10 3v2M14 3v2M10 19v2M14 19v2"/></svg></div>
+        </div>
+    </div>
+    <div class="loader-title">Bitcoin Core wallet check</div>
+    <div class="loader-status">
+        <div class="row"><span id="loader_status">Starting…</span><span class="pct" id="loader_pct">0%</span></div>
+        <div class="loader-bar"><div id="loader_fill"></div></div>
+    </div>
+    <div class="quote" id="quote"><q></q><cite></cite></div>
+    <button class="loader-skip" id="loader_skip" type="button">Skip: look around while the machine boots</button>
+</div>
 <main>
     <header class="hero">
         <div class="logo" aria-hidden="true">
@@ -478,6 +551,7 @@ let progress = 0;
 function set_status(text, state)
 {
     status_el.textContent = text;
+    loader_update(text, state);
     dot.className = "dot " + (state || "");
     $("bar").className = "bar " + (state === "ready" || state === "bad" ? state : "");
 }
@@ -489,7 +563,80 @@ function set_progress(fraction, reset)
     progress = Math.max(progress, Math.min(1, fraction));
     $("bar_fill").style.width = (progress * 100).toFixed(1) + "%";
     $("pct").textContent = Math.round(progress * 100) + "%";
+    if(!loader.done)
+    {
+        $("loader_fill").style.width = (progress * 100).toFixed(1) + "%";
+        $("loader_ring").style.setProperty("--p", (progress * 100).toFixed(1));
+        $("loader_pct").textContent = Math.round(progress * 100) + "%";
+    }
 }
+
+// --- loading screen ----------------------------------------------------------------------------------
+
+// From Satoshi Nakamoto, "Bitcoin: A Peer-to-Peer Electronic Cash System" (2008), verbatim.
+const WHITEPAPER_QUOTES = [
+    ["A purely peer-to-peer version of electronic cash would allow online payments to be sent directly from one party to another without going through a financial institution.", "Abstract"],
+    ["The network itself requires minimal structure.", "Abstract"],
+    ["Nodes can leave and rejoin the network at will, accepting the longest proof-of-work chain as proof of what happened while they were gone.", "Abstract"],
+    ["The longest chain not only serves as proof of the sequence of events witnessed, but proof that it came from the largest pool of CPU power.", "Abstract"],
+    ["What is needed is an electronic payment system based on cryptographic proof instead of trust, allowing any two willing parties to transact directly with each other without the need for a trusted third party.", "1. Introduction"],
+    ["We define an electronic coin as a chain of digital signatures.", "2. Transactions"],
+    ["The only way to confirm the absence of a transaction is to be aware of all transactions.", "2. Transactions"],
+    ["Proof-of-work is essentially one-CPU-one-vote.", "4. Proof-of-Work"],
+    ["By convention, the first transaction in a block is a special transaction that starts a new coin owned by the creator of the block.", "6. Incentive"],
+    ["The incentive may help encourage nodes to stay honest.", "6. Incentive"],
+    ["Once the latest transaction in a coin is buried under enough blocks, the spent transactions before it can be discarded to save disk space.", "7. Reclaiming Disk Space"],
+    ["The public can see that someone is sending an amount to someone else, but without information linking the transaction to anyone.", "10. Privacy"],
+    ["As an additional firewall, a new key pair should be used for each transaction to keep them from being linked to a common owner.", "10. Privacy"],
+    ["We have proposed a system for electronic transactions without relying on trust.", "12. Conclusion"],
+    ["They vote with their CPU power, expressing their acceptance of valid blocks by working on extending them and rejecting invalid blocks by refusing to work on them.", "12. Conclusion"],
+];
+
+const loader = { done: false, quote: Math.floor(Math.random() * WHITEPAPER_QUOTES.length), timer: null };
+
+function show_quote()
+{
+    const [text, section] = WHITEPAPER_QUOTES[loader.quote];
+    const el = $("quote");
+    el.classList.add("out");
+    setTimeout(() =>
+    {
+        el.querySelector("q").textContent = text;
+        el.querySelector("cite").textContent = "Satoshi Nakamoto, Bitcoin whitepaper \u00b7 " + section;
+        el.classList.remove("out");
+    }, el.querySelector("q").textContent ? 700 : 0);
+    loader.quote = (loader.quote + 1) % WHITEPAPER_QUOTES.length;
+}
+
+function dismiss_loader()
+{
+    if(loader.done) return;
+    loader.done = true;
+    clearInterval(loader.timer);
+    $("loader").classList.add("gone");
+    setTimeout(() => { $("loader").hidden = true; }, 1000);
+}
+
+function loader_update(text, state)
+{
+    if(loader.done) return;
+    $("loader_status").textContent = text;
+    if(state === "ready")
+    {
+        $("loader_status").textContent = "Ready";
+        // let the ring close before fading out
+        setTimeout(dismiss_loader, 600);
+    }
+    else if(state === "bad")
+    {
+        $("loader").classList.add("failed");
+        $("loader_skip").textContent = "Continue to the page";
+    }
+}
+
+show_quote();
+loader.timer = setInterval(show_quote, 7000);
+$("loader_skip").addEventListener("click", dismiss_loader);
 
 let serial_log = "";
 let serial_render_pending = false;
@@ -531,8 +678,7 @@ async function load_binaries()
         "Bitcoin Core " + manifest.bitcoin_core + " from " + manifest.tarball + " (sha256 " +
         manifest.tarball_sha256.slice(0, 16) + "…), run through " + manifest.glibc + ".";
 
-    let loaded = 0;
-    const total = manifest.files.reduce((n, f) => n + f.size, 0);
+    download.total = manifest.files.reduce((n, f) => n + f.size, 0);
     for(const f of manifest.files)
     {
         const res = await fetch(BITCOIN_DIR + f.name);
@@ -541,15 +687,146 @@ async function load_binaries()
         const hash = await sha256_hex(data);
         if(hash && hash !== f.sha256) throw new Error(f.name + " does not match the manifest's sha256");
         await emulator.create_file("/" + f.name, data);
-        loaded += data.length;
-        if(guest_state === "boot")
-        {
-            set_status("Booting Alpine Linux… (Bitcoin Core " + fmt_bytes(loaded) + " of " + fmt_bytes(total) + " loaded)", "busy");
-            set_progress(0.02 + 0.28 * loaded / total);
-        }
+        download.loaded += data.length;
+        boot_status();
     }
     await emulator.create_file("/verify.sh", new TextEncoder().encode(GUEST_SCRIPT));
+    download.done = true;
     return manifest;
+}
+
+// --- boot progress ---------------------------------------------------------------------------------
+//
+// The bar follows the guest instructions executed, not the time: booting this guest to the mounted
+// share takes 6.33 G instructions every time (within 0.5 %), while the wall-clock time depends on the
+// host and on how fast the ISO streams in. Lines on the serial console are checkpoints: measured
+// over several boots, each completes at a fixed fraction of the instructions (within 0.3 %). The bar
+// jumps to a checkpoint that comes early and never runs past the next one that hasn't been seen.
+// The first ~45 % (firmware, kernel, initramfs) print nothing with "quiet".
+//
+// The instruction rate isn't constant (JIT warm-up, waits on the ISO), so the bar shows the
+// fraction of the boot *time* that this many instructions corresponds to: BOOT_TIME_CURVE maps
+// 0, 5, ..., 100 % of the instructions to the fraction of the time elapsed, averaged over three
+// boots (the curves agree within 2.3 points, also on a boot 15 % slower than the others). The
+// time left is the elapsed time scaled by that fraction, so it adapts to the host's speed.
+
+const BOOT_INSTRUCTIONS = 6.33e9;
+const BOOT_CHECKPOINTS = [
+    [/OpenRC .* is starting up/, 0.456],
+    [/Caching service dependencies/, 0.498],
+    [/Mounting modloop/, 0.520],
+    [/^ \[ ok \]$/, 0.579],                     // modloop verified
+    [/Starting busybox mdev/, 0.595],
+    [/Scanning hardware for mdev/, 0.618],
+    [/Loading hardware drivers/, 0.825],
+    [/Loading modules/, 0.878],
+    [/Mounting local filesystems/, 0.912],
+    [/Starting busybox syslog/, 0.946],
+    [/Starting firstboot/, 0.959],
+    [/^Welcome to Alpine Linux/, 0.971],
+    [/^Welcome to Alpine!/, 0.973],
+    [/@@MOUNTED@@/, 1],
+];
+const BOOT_TIME_CURVE = [0, 0.023, 0.069, 0.118, 0.187, 0.204, 0.287, 0.361, 0.435, 0.474, 0.554,
+    0.605, 0.648, 0.712, 0.756, 0.797, 0.839, 0.874, 0.906, 0.957, 1];
+const download = { loaded: 0, total: 0, done: false };
+// before the machine starts: v86 downloads its wasm, the BIOS, the kernel and the initramfs
+// (in turn, so their sizes are asked for up front to know the total from the start)
+const predownload = { files: {}, sizes: {}, started: false };
+const PREDOWNLOAD_FILES = ["../build/v86.wasm", "../bios/seabios.bin", "../bios/vgabios.bin",
+    ALPINE_BOOT + "vmlinuz-virt", ALPINE_BOOT + "initramfs-virt"];
+for(const url of PREDOWNLOAD_FILES)
+{
+    fetch(url, { method: "HEAD" }).then(r =>
+    {
+        const size = +r.headers.get("content-length");
+        if(r.ok && size) predownload.sizes[new URL(url, location.href).href] = size;
+    }, () => {});
+}
+
+const boot = {
+    instructions: 0,        // executed so far (the emulator's counter is a wrapping u32)
+    last_counter: 0,
+    floor: 0,               // the last checkpoint seen
+    ceiling: BOOT_CHECKPOINTS[0][1],
+    label: "starting the kernel",
+};
+
+function boot_checkpoint(line)
+{
+    for(const [re, fraction] of BOOT_CHECKPOINTS)
+    {
+        if(fraction > boot.floor && re.test(line))
+        {
+            boot.floor = fraction;
+            const next = BOOT_CHECKPOINTS.find(c => c[1] > fraction);
+            boot.ceiling = next ? next[1] : 1;
+            break;
+        }
+    }
+}
+
+// What OpenRC is doing, from the line it hasn't finished yet (" * Loading hardware drivers ...")
+function boot_label(partial_line)
+{
+    const m = /^\s*\* (.+?)(?: \.\.\.|$)/.exec(partial_line.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ""));
+    if(m && m[1].trim().length > 3) boot.label = m[1].trim().replace(/^\w/, c => c.toLowerCase());
+}
+
+// 0..1 of the boot's instructions
+function boot_fraction()
+{
+    const by_instructions = boot.instructions / BOOT_INSTRUCTIONS;
+    // a checkpoint that hasn't been seen caps the bar just below it
+    return Math.max(boot.floor, Math.min(by_instructions, boot.ceiling - 0.004));
+}
+
+// 0..1 of the boot's time, for the bar and the time left
+function boot_time_fraction()
+{
+    const x = boot_fraction() * (BOOT_TIME_CURVE.length - 1);
+    const i = Math.min(Math.floor(x), BOOT_TIME_CURVE.length - 2);
+    return BOOT_TIME_CURVE[i] + (BOOT_TIME_CURVE[i + 1] - BOOT_TIME_CURVE[i]) * (x - i);
+}
+
+function boot_tick()
+{
+    if(!predownload.started)
+    {
+        // the reported sizes, and the announced ones for the files that haven't started yet
+        const all = { ...predownload.sizes };
+        for(const [url, f] of Object.entries(predownload.files)) all[url] = Math.max(all[url] || 0, f.total);
+        const total = Object.values(all).reduce((n, size) => n + size, 0);
+        const loaded = Object.entries(predownload.files).reduce((n, [url, f]) => n + Math.min(f.loaded, all[url]), 0);
+        if(total) set_progress(loaded / total);
+        set_status("Step 1 of 2 · Downloading Alpine Linux" + (total ? ": " + fmt_bytes(loaded) + " of " + fmt_bytes(total) : "") + "…", "busy");
+        return;
+    }
+    const counter = emulator.get_instruction_counter();
+    boot.instructions += (counter - boot.last_counter) >>> 0;
+    boot.last_counter = counter;
+    set_progress(boot_time_fraction());
+    boot_status();
+}
+
+function boot_status()
+{
+    if(guest_state !== "boot" && guest_state !== "login" && guest_state !== "mount") return;
+    if(!predownload.started) return;
+    let text = guest_state === "boot" ? "Step 2 of 2 · Booting Alpine Linux: " + boot.label :
+               guest_state === "login" ? "Logging in" : "Mounting the shared folder";
+    const done = boot_time_fraction();
+    if(done > 0.08 && guest_state === "boot")
+    {
+        const elapsed = (Date.now() - boot_start) / 1000;
+        const seconds = elapsed * (1 - done) / done;
+        text += " · about " + (seconds > 20 ? Math.ceil(seconds / 5) * 5 : Math.max(1, Math.ceil(seconds))) + " s left";
+    }
+    if(!download.done && download.total)
+    {
+        text += " · Bitcoin Core " + fmt_bytes(download.loaded) + " of " + fmt_bytes(download.total);
+    }
+    set_status(text + "…", "busy");
 }
 
 function start_machine()
@@ -573,7 +850,7 @@ function start_machine()
         disable_mouse: true,
     });
     window.emulator = emulator;
-    set_progress(0.02, true);
+    set_progress(0, true);
 
     const decoder = new TextDecoder();
     let line_buf = "";
@@ -588,12 +865,12 @@ function start_machine()
             const line = line_buf.replace(/\r/g, "");
             line_buf = "";
             if(current) parse_line(line);
-            else if(guest_state === "boot" && /OpenRC .* is starting up/.test(line)) set_progress(0.45);
-            else if(guest_state === "boot" && /Starting busybox syslog/.test(line)) set_progress(0.6);
+            else if(guest_state !== "ready") boot_checkpoint(line);
         }
         else
         {
             line_buf += chr;
+            if(guest_state === "boot" && chr === ".") boot_label(line_buf);
         }
         // prompts don't end with a newline; they end with a space or a marker
         if(guest_state !== "ready" && guest_state !== "busy" && (chr === " " || chr === "@"))
@@ -602,7 +879,20 @@ function start_machine()
         }
     });
 
-    binaries = load_binaries().catch(e =>
+    emulator.add_listener("download-progress", e =>
+    {
+        if(e.lengthComputable || e.total) predownload.files[new URL(e.file_name, location.href).href] = { loaded: e.loaded, total: e.total };
+    });
+    // Bitcoin Core is only needed once the guest is up: fetch it after the files the boot needs
+    const started = new Promise(resolve => emulator.add_listener("emulator-started", resolve));
+    started.then(() =>
+    {
+        predownload.started = true;
+        boot_start = Date.now();
+        set_progress(0, true);
+        boot_status();
+    });
+    binaries = started.then(load_binaries).catch(e =>
     {
         set_status("Cannot load Bitcoin Core: " + e.message, "bad");
         guest_state = "dead";
@@ -611,19 +901,10 @@ function start_machine()
 
     const tick = setInterval(() =>
     {
-        if(guest_state === "boot" || guest_state === "login" || guest_state === "mount")
-        {
-            const s = Math.round((Date.now() - boot_start) / 1000);
-            if(status_el.textContent.startsWith("Booting Alpine Linux") && !status_el.textContent.includes("Bitcoin Core"))
-            {
-                set_status("Booting Alpine Linux… " + s + " s", "busy");
-            }
-        }
-        else
-        {
-            clearInterval(tick);
-        }
-    }, 1000);
+        if(guest_state === "boot" || guest_state === "login" || guest_state === "mount") boot_tick();
+        else clearInterval(tick);
+    }, 250);
+    boot_status();
 }
 
 // Walks the guest from the login prompt to a mounted share.
@@ -633,25 +914,25 @@ function check_prompts()
     if(guest_state === "boot" && /login: $/.test(tail))
     {
         guest_state = "login";
-        set_status("Logging in…", "busy");
-        set_progress(0.7);
+        boot_checkpoint("Welcome to Alpine Linux");
+        boot_status();
         emulator.serial0_send("root\n");
     }
     else if(guest_state === "login" && /:~# $/.test(tail))
     {
         guest_state = "mount";
-        set_status("Mounting the shared folder…", "busy");
-        set_progress(0.85);
-        // the marker is split so that the echoed command line doesn't match it
-        emulator.serial0_send("modprobe 9pnet_virtio; modprobe 9p; " +
+        boot_status();
+        // The chmod needs Bitcoin Core in the share: on a slow connection the download can take
+        // longer than the boot. The marker is split so that the echoed command line doesn't match it.
+        binaries.then(() => emulator.serial0_send("modprobe 9pnet_virtio; modprobe 9p; " +
             "mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose host9p /mnt && " +
-            "chmod 755 /mnt/ld-linux-x86-64.so.2 /mnt/bitcoin* && echo @@MOU''NTED@@\n");
+            "chmod 755 /mnt/ld-linux-x86-64.so.2 /mnt/bitcoin* && echo @@MOU''NTED@@\n"), () => {});
     }
     else if(guest_state === "mount" && tail.includes("@@MOUNTED@@"))
     {
         serial_text = "";
         guest_state = "ready";
-        set_status("Ready: pick a demo or drop a wallet file (booted in " + Math.round((Date.now() - boot_start) / 1000) + " s)", "ready");
+        set_status("Ready: pick a demo or drop a wallet file (ready in " + Math.round(performance.now() / 1000) + " s)", "ready");
         set_progress(1);
         run_next();
     }
