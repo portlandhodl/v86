@@ -214,10 +214,83 @@ Setup (from the repository root):
         .drop { border-right: 0; border-bottom: 1px solid var(--line); }
         header.hero { padding-top: 24px; }
     }
+
+    /* loading screen: shown while the machine boots, fades away when it's ready */
+    #loader { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center;
+              gap: 26px; padding: 24px 16px; color: #f1ece4; text-align: center; transition: opacity .9s ease, visibility .9s;
+              background:
+                  radial-gradient(ellipse 60% 50% at 50% 38%, rgba(247, 147, 26, .16), transparent 70%),
+                  linear-gradient(rgba(247, 147, 26, .035) 1px, transparent 1px) 0 0 / 44px 44px,
+                  linear-gradient(90deg, rgba(247, 147, 26, .035) 1px, transparent 1px) 0 0 / 44px 44px,
+                  #06080b; }
+    #loader.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+    .coin-stage { position: relative; width: 210px; height: 210px; display: grid; place-items: center; perspective: 700px; }
+    .coin-ring { position: absolute; inset: 0; border-radius: 50%; transition: --p .4s;
+                 background: conic-gradient(#f7931a calc(var(--p, 0) * 1%), rgba(255, 255, 255, .07) 0);
+                 -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
+                         mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
+                 filter: drop-shadow(0 0 10px rgba(247, 147, 26, .55)); }
+    .coin-glow { position: absolute; width: 150px; height: 150px; border-radius: 50%; background: rgba(247, 147, 26, .35);
+                 filter: blur(28px); animation: glow 2.4s ease-in-out infinite; }
+    @keyframes glow { 0%, 100% { opacity: .55; transform: scale(.9) } 50% { opacity: 1; transform: scale(1.08) } }
+    .coin { position: relative; width: 132px; height: 132px; transform-style: preserve-3d; animation: spin 3.2s cubic-bezier(.45, .05, .55, .95) infinite; }
+    .coin .face { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; backface-visibility: hidden;
+                  background: radial-gradient(circle at 35% 30%, #ffc56b, #f7931a 45%, #c96d06 100%);
+                  box-shadow: inset 0 0 0 5px rgba(255, 255, 255, .18), inset 0 -8px 18px rgba(0, 0, 0, .25); }
+    .coin .face.back { transform: rotateY(180deg); }
+    .coin .face svg { width: 70px; height: 70px; filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .25)); }
+    /* the rim: stacked discs give the coin a thickness when it turns edge-on */
+    .coin .rim { position: absolute; inset: 0; border-radius: 50%; background: #b5620a; }
+    @keyframes spin { 0% { transform: rotateY(0) } 50% { transform: rotateY(180deg) } 100% { transform: rotateY(360deg) } }
+    .shine { position: absolute; inset: 0; border-radius: 50%; overflow: hidden; backface-visibility: hidden; }
+    .shine::after { content: ""; position: absolute; top: -50%; left: -60%; width: 40%; height: 200%; transform: rotate(25deg);
+                    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .45), transparent); animation: shine 3.2s ease-in-out infinite; }
+    @keyframes shine { 0%, 60% { left: -60% } 85%, 100% { left: 130% } }
+    .loader-title { font-size: 13px; letter-spacing: .32em; text-transform: uppercase; color: #9a8f80; margin-top: -6px; }
+    .loader-status { width: min(520px, 100%); }
+    .loader-status .row { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; color: #c9c1b5; }
+    .loader-status .row span:first-child { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .loader-status .row .pct { color: #f7931a; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .loader-bar { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .08); margin-top: 8px; overflow: hidden; }
+    .loader-bar div { height: 100%; width: 0; background: linear-gradient(90deg, #ffb347, #f7931a); box-shadow: 0 0 10px #f7931a; transition: width .4s ease; }
+    .quote { min-height: 7.5em; width: min(640px, 100%); transition: opacity .7s ease, transform .7s ease; }
+    .quote.out { opacity: 0; transform: translateY(6px); }
+    .quote q { display: block; font: italic 19px/1.5 Georgia, "Iowan Old Style", "Times New Roman", serif; color: #f1ece4; quotes: "\201C" "\201D"; }
+    .quote cite { display: block; margin-top: 10px; font-style: normal; font-size: 12.5px; letter-spacing: .04em; color: #8d8478; }
+    .loader-skip { position: absolute; bottom: 22px; font: inherit; font-size: 13px; color: #8d8478; background: none; border: 0;
+                   cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+    .loader-skip:hover { color: #f1ece4; }
+    #loader.failed .coin, #loader.failed .shine::after, #loader.failed .coin-glow { animation: none; }
+    #loader.failed .loader-bar div { background: #ff6b6b; box-shadow: none; }
+    #loader.failed .loader-status .row span:first-child { white-space: normal; color: #ff8a8a; }
+    @property --p { syntax: "<number>"; inherits: false; initial-value: 0; }
+    @media (max-width: 520px) {
+        .coin-stage { width: 170px; height: 170px; } .coin { width: 108px; height: 108px; } .quote q { font-size: 17px; }
+        .loader-status .row span:first-child { white-space: normal; }
+    }
+
     @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
+<div id="loader" role="status" aria-live="polite">
+    <div class="coin-stage" aria-hidden="true">
+        <div class="coin-glow"></div>
+        <div class="coin-ring" id="loader_ring"></div>
+        <div class="coin">
+            <div class="rim" style="transform: translateZ(-4.5px)"></div><div class="rim" style="transform: translateZ(-3.5px)"></div><div class="rim" style="transform: translateZ(-2.5px)"></div><div class="rim" style="transform: translateZ(-1.5px)"></div><div class="rim" style="transform: translateZ(-0.5px)"></div><div class="rim" style="transform: translateZ(0.5px)"></div><div class="rim" style="transform: translateZ(1.5px)"></div><div class="rim" style="transform: translateZ(2.5px)"></div><div class="rim" style="transform: translateZ(3.5px)"></div><div class="rim" style="transform: translateZ(4.5px)"></div>
+            <div class="face" style="transform: translateZ(5px)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5h6a3.5 3.5 0 0 1 0 7H8zm0 7h7a3.5 3.5 0 0 1 0 7H8zM8 5v14M10 3v2M14 3v2M10 19v2M14 19v2"/></svg><div class="shine"></div></div>
+            <div class="face back" style="transform: rotateY(180deg) translateZ(5px)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5h6a3.5 3.5 0 0 1 0 7H8zm0 7h7a3.5 3.5 0 0 1 0 7H8zM8 5v14M10 3v2M14 3v2M10 19v2M14 19v2"/></svg></div>
+        </div>
+    </div>
+    <div class="loader-title">Bitcoin Core wallet check</div>
+    <div class="loader-status">
+        <div class="row"><span id="loader_status">Starting…</span><span class="pct" id="loader_pct">0%</span></div>
+        <div class="loader-bar"><div id="loader_fill"></div></div>
+    </div>
+    <div class="quote" id="quote"><q></q><cite></cite></div>
+    <button class="loader-skip" id="loader_skip" type="button">Skip: look around while the machine boots</button>
+</div>
 <main>
     <header class="hero">
         <div class="logo" aria-hidden="true">
@@ -478,6 +551,7 @@ let progress = 0;
 function set_status(text, state)
 {
     status_el.textContent = text;
+    loader_update(text, state);
     dot.className = "dot " + (state || "");
     $("bar").className = "bar " + (state === "ready" || state === "bad" ? state : "");
 }
@@ -489,7 +563,80 @@ function set_progress(fraction, reset)
     progress = Math.max(progress, Math.min(1, fraction));
     $("bar_fill").style.width = (progress * 100).toFixed(1) + "%";
     $("pct").textContent = Math.round(progress * 100) + "%";
+    if(!loader.done)
+    {
+        $("loader_fill").style.width = (progress * 100).toFixed(1) + "%";
+        $("loader_ring").style.setProperty("--p", (progress * 100).toFixed(1));
+        $("loader_pct").textContent = Math.round(progress * 100) + "%";
+    }
 }
+
+// --- loading screen ----------------------------------------------------------------------------------
+
+// From Satoshi Nakamoto, "Bitcoin: A Peer-to-Peer Electronic Cash System" (2008), verbatim.
+const WHITEPAPER_QUOTES = [
+    ["A purely peer-to-peer version of electronic cash would allow online payments to be sent directly from one party to another without going through a financial institution.", "Abstract"],
+    ["The network itself requires minimal structure.", "Abstract"],
+    ["Nodes can leave and rejoin the network at will, accepting the longest proof-of-work chain as proof of what happened while they were gone.", "Abstract"],
+    ["The longest chain not only serves as proof of the sequence of events witnessed, but proof that it came from the largest pool of CPU power.", "Abstract"],
+    ["What is needed is an electronic payment system based on cryptographic proof instead of trust, allowing any two willing parties to transact directly with each other without the need for a trusted third party.", "1. Introduction"],
+    ["We define an electronic coin as a chain of digital signatures.", "2. Transactions"],
+    ["The only way to confirm the absence of a transaction is to be aware of all transactions.", "2. Transactions"],
+    ["Proof-of-work is essentially one-CPU-one-vote.", "4. Proof-of-Work"],
+    ["By convention, the first transaction in a block is a special transaction that starts a new coin owned by the creator of the block.", "6. Incentive"],
+    ["The incentive may help encourage nodes to stay honest.", "6. Incentive"],
+    ["Once the latest transaction in a coin is buried under enough blocks, the spent transactions before it can be discarded to save disk space.", "7. Reclaiming Disk Space"],
+    ["The public can see that someone is sending an amount to someone else, but without information linking the transaction to anyone.", "10. Privacy"],
+    ["As an additional firewall, a new key pair should be used for each transaction to keep them from being linked to a common owner.", "10. Privacy"],
+    ["We have proposed a system for electronic transactions without relying on trust.", "12. Conclusion"],
+    ["They vote with their CPU power, expressing their acceptance of valid blocks by working on extending them and rejecting invalid blocks by refusing to work on them.", "12. Conclusion"],
+];
+
+const loader = { done: false, quote: Math.floor(Math.random() * WHITEPAPER_QUOTES.length), timer: null };
+
+function show_quote()
+{
+    const [text, section] = WHITEPAPER_QUOTES[loader.quote];
+    const el = $("quote");
+    el.classList.add("out");
+    setTimeout(() =>
+    {
+        el.querySelector("q").textContent = text;
+        el.querySelector("cite").textContent = "Satoshi Nakamoto, Bitcoin whitepaper \u00b7 " + section;
+        el.classList.remove("out");
+    }, el.querySelector("q").textContent ? 700 : 0);
+    loader.quote = (loader.quote + 1) % WHITEPAPER_QUOTES.length;
+}
+
+function dismiss_loader()
+{
+    if(loader.done) return;
+    loader.done = true;
+    clearInterval(loader.timer);
+    $("loader").classList.add("gone");
+    setTimeout(() => { $("loader").hidden = true; }, 1000);
+}
+
+function loader_update(text, state)
+{
+    if(loader.done) return;
+    $("loader_status").textContent = text;
+    if(state === "ready")
+    {
+        $("loader_status").textContent = "Ready";
+        // let the ring close before fading out
+        setTimeout(dismiss_loader, 600);
+    }
+    else if(state === "bad")
+    {
+        $("loader").classList.add("failed");
+        $("loader_skip").textContent = "Continue to the page";
+    }
+}
+
+show_quote();
+loader.timer = setInterval(show_quote, 7000);
+$("loader_skip").addEventListener("click", dismiss_loader);
 
 let serial_log = "";
 let serial_render_pending = false;
