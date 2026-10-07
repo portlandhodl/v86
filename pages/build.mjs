@@ -8,8 +8,9 @@
 // unreachable.
 //
 // The examples listed under "examples" are published too, with what they load (currently
-// examples/bitcoin-wallet-check.html: Alpine's kernel and initramfs from the bundled ISO, which
-// needs bsdtar, and Bitcoin Core from tools/stage-bitcoin.sh, which needs an x86_64 glibc host).
+// examples/bitcoin-wallet-check.html and examples/anchorwatch-recovery.html: Alpine's kernel and
+// initramfs from the bundled ISO, which needs bsdtar, Bitcoin Core from tools/stage-bitcoin.sh,
+// which needs an x86_64 glibc host, and the example's own "files").
 //
 //   make all build/v86-fallback.wasm && node pages/build.mjs [--out _site] [--catalogue <url>]
 
@@ -133,10 +134,11 @@ function card_tags({ url, title, description, image, image_alt, site_name = "v86
 // examples published with the site (pages/site.json "examples"), each with its own link preview
 for(const example of site.examples || [])
 {
-    if(example.page !== "bitcoin-wallet-check") throw new Error(`unknown example ${example.page}`);
+    // the examples that run Bitcoin Core in Alpine
+    if(!["bitcoin-wallet-check", "anchorwatch-recovery"].includes(example.page)) throw new Error(`unknown example ${example.page}`);
     // Alpine's kernel and initramfs, from the bundled ISO, and Bitcoin Core with its glibc runtime
     const alpine = site.bundle.find(item => item.file.startsWith("alpine-virt-"));
-    if(!alpine) throw new Error("bitcoin-wallet-check needs the Alpine virt ISO in bundle");
+    if(!alpine) throw new Error(`${example.page} needs the Alpine virt ISO in bundle`);
     const alpine_name = alpine.file.replace(/\.iso$/, "");
     const boot = path.join(root, "images", alpine_name, "boot");
     if(!fs.existsSync(path.join(boot, "vmlinuz-virt")))
@@ -163,15 +165,20 @@ for(const example of site.examples || [])
     page_html = page_html.replace(/<\/title>\n/, () => "</title>\n" + card_tags({
         url: new URL(page, site_url).href,
         ...example,
-    }) + `\n<meta name="description" content="${escape(example.description)}">\n<meta name="theme-color" content="#f7931a">\n`);
+    }) + `\n<meta name="description" content="${escape(example.description)}">\n<meta name="theme-color" content="${example.theme_color || "#f7931a"}">\n`);
     fs.mkdirSync(path.dirname(path.join(out, page)), { recursive: true });
     fs.writeFileSync(path.join(out, page), page_html);
     if(example.image) copy(path.join(here, example.image), example.image);
-    for(const file of fs.readdirSync(path.join(root, "examples/bitcoin-wallets")).filter(f => f.endsWith(".dat")))
+    // the example's own files (demo wallets, the sample kit): "dir/*.ext" or a path
+    for(const pattern of example.files || [])
     {
-        copy(path.join(root, "examples/bitcoin-wallets", file), `examples/bitcoin-wallets/${file}`);
+        const dir = path.dirname(pattern), base = path.basename(pattern);
+        const match = base.startsWith("*") ? f => f.endsWith(base.slice(1)) : f => f === base;
+        const found = fs.readdirSync(path.join(root, dir)).filter(match);
+        if(!found.length) throw new Error(`${example.page}: nothing matches ${pattern}`);
+        for(const file of found) copy(path.join(root, dir, file), `${dir}/${file}`);
     }
-    console.log(`example: examples/bitcoin-wallet-check.html (Bitcoin Core ${manifest.bitcoin_core})`);
+    console.log(`example: ${page} (Bitcoin Core ${manifest.bitcoin_core})`);
 }
 
 // the image server first, the bundled machines while it's unreachable
