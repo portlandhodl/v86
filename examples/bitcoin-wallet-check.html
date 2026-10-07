@@ -531,8 +531,7 @@ async function load_binaries()
         "Bitcoin Core " + manifest.bitcoin_core + " from " + manifest.tarball + " (sha256 " +
         manifest.tarball_sha256.slice(0, 16) + "…), run through " + manifest.glibc + ".";
 
-    let loaded = 0;
-    const total = manifest.files.reduce((n, f) => n + f.size, 0);
+    download.total = manifest.files.reduce((n, f) => n + f.size, 0);
     for(const f of manifest.files)
     {
         const res = await fetch(BITCOIN_DIR + f.name);
@@ -541,15 +540,146 @@ async function load_binaries()
         const hash = await sha256_hex(data);
         if(hash && hash !== f.sha256) throw new Error(f.name + " does not match the manifest's sha256");
         await emulator.create_file("/" + f.name, data);
-        loaded += data.length;
-        if(guest_state === "boot")
-        {
-            set_status("Booting Alpine Linux… (Bitcoin Core " + fmt_bytes(loaded) + " of " + fmt_bytes(total) + " loaded)", "busy");
-            set_progress(0.02 + 0.28 * loaded / total);
-        }
+        download.loaded += data.length;
+        boot_status();
     }
     await emulator.create_file("/verify.sh", new TextEncoder().encode(GUEST_SCRIPT));
+    download.done = true;
     return manifest;
+}
+
+// --- boot progress ---------------------------------------------------------------------------------
+//
+// The bar follows the guest instructions executed, not the time: booting this guest to the mounted
+// share takes 6.33 G instructions every time (within 0.5 %), while the wall-clock time depends on the
+// host and on how fast the ISO streams in. Lines on the serial console are checkpoints: measured
+// over several boots, each completes at a fixed fraction of the instructions (within 0.3 %). The bar
+// jumps to a checkpoint that comes early and never runs past the next one that hasn't been seen.
+// The first ~45 % (firmware, kernel, initramfs) print nothing with "quiet".
+//
+// The instruction rate isn't constant (JIT warm-up, waits on the ISO), so the bar shows the
+// fraction of the boot *time* that this many instructions corresponds to: BOOT_TIME_CURVE maps
+// 0, 5, ..., 100 % of the instructions to the fraction of the time elapsed, averaged over three
+// boots (the curves agree within 2.3 points, also on a boot 15 % slower than the others). The
+// time left is the elapsed time scaled by that fraction, so it adapts to the host's speed.
+
+const BOOT_INSTRUCTIONS = 6.33e9;
+const BOOT_CHECKPOINTS = [
+    [/OpenRC .* is starting up/, 0.456],
+    [/Caching service dependencies/, 0.498],
+    [/Mounting modloop/, 0.520],
+    [/^ \[ ok \]$/, 0.579],                     // modloop verified
+    [/Starting busybox mdev/, 0.595],
+    [/Scanning hardware for mdev/, 0.618],
+    [/Loading hardware drivers/, 0.825],
+    [/Loading modules/, 0.878],
+    [/Mounting local filesystems/, 0.912],
+    [/Starting busybox syslog/, 0.946],
+    [/Starting firstboot/, 0.959],
+    [/^Welcome to Alpine Linux/, 0.971],
+    [/^Welcome to Alpine!/, 0.973],
+    [/@@MOUNTED@@/, 1],
+];
+const BOOT_TIME_CURVE = [0, 0.023, 0.069, 0.118, 0.187, 0.204, 0.287, 0.361, 0.435, 0.474, 0.554,
+    0.605, 0.648, 0.712, 0.756, 0.797, 0.839, 0.874, 0.906, 0.957, 1];
+const download = { loaded: 0, total: 0, done: false };
+// before the machine starts: v86 downloads its wasm, the BIOS, the kernel and the initramfs
+// (in turn, so their sizes are asked for up front to know the total from the start)
+const predownload = { files: {}, sizes: {}, started: false };
+const PREDOWNLOAD_FILES = ["../build/v86.wasm", "../bios/seabios.bin", "../bios/vgabios.bin",
+    ALPINE_BOOT + "vmlinuz-virt", ALPINE_BOOT + "initramfs-virt"];
+for(const url of PREDOWNLOAD_FILES)
+{
+    fetch(url, { method: "HEAD" }).then(r =>
+    {
+        const size = +r.headers.get("content-length");
+        if(r.ok && size) predownload.sizes[new URL(url, location.href).href] = size;
+    }, () => {});
+}
+
+const boot = {
+    instructions: 0,        // executed so far (the emulator's counter is a wrapping u32)
+    last_counter: 0,
+    floor: 0,               // the last checkpoint seen
+    ceiling: BOOT_CHECKPOINTS[0][1],
+    label: "starting the kernel",
+};
+
+function boot_checkpoint(line)
+{
+    for(const [re, fraction] of BOOT_CHECKPOINTS)
+    {
+        if(fraction > boot.floor && re.test(line))
+        {
+            boot.floor = fraction;
+            const next = BOOT_CHECKPOINTS.find(c => c[1] > fraction);
+            boot.ceiling = next ? next[1] : 1;
+            break;
+        }
+    }
+}
+
+// What OpenRC is doing, from the line it hasn't finished yet (" * Loading hardware drivers ...")
+function boot_label(partial_line)
+{
+    const m = /^\s*\* (.+?)(?: \.\.\.|$)/.exec(partial_line.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ""));
+    if(m && m[1].trim().length > 3) boot.label = m[1].trim().replace(/^\w/, c => c.toLowerCase());
+}
+
+// 0..1 of the boot's instructions
+function boot_fraction()
+{
+    const by_instructions = boot.instructions / BOOT_INSTRUCTIONS;
+    // a checkpoint that hasn't been seen caps the bar just below it
+    return Math.max(boot.floor, Math.min(by_instructions, boot.ceiling - 0.004));
+}
+
+// 0..1 of the boot's time, for the bar and the time left
+function boot_time_fraction()
+{
+    const x = boot_fraction() * (BOOT_TIME_CURVE.length - 1);
+    const i = Math.min(Math.floor(x), BOOT_TIME_CURVE.length - 2);
+    return BOOT_TIME_CURVE[i] + (BOOT_TIME_CURVE[i + 1] - BOOT_TIME_CURVE[i]) * (x - i);
+}
+
+function boot_tick()
+{
+    if(!predownload.started)
+    {
+        // the reported sizes, and the announced ones for the files that haven't started yet
+        const all = { ...predownload.sizes };
+        for(const [url, f] of Object.entries(predownload.files)) all[url] = Math.max(all[url] || 0, f.total);
+        const total = Object.values(all).reduce((n, size) => n + size, 0);
+        const loaded = Object.entries(predownload.files).reduce((n, [url, f]) => n + Math.min(f.loaded, all[url]), 0);
+        if(total) set_progress(loaded / total);
+        set_status("Step 1 of 2 · Downloading Alpine Linux" + (total ? ": " + fmt_bytes(loaded) + " of " + fmt_bytes(total) : "") + "…", "busy");
+        return;
+    }
+    const counter = emulator.get_instruction_counter();
+    boot.instructions += (counter - boot.last_counter) >>> 0;
+    boot.last_counter = counter;
+    set_progress(boot_time_fraction());
+    boot_status();
+}
+
+function boot_status()
+{
+    if(guest_state !== "boot" && guest_state !== "login" && guest_state !== "mount") return;
+    if(!predownload.started) return;
+    let text = guest_state === "boot" ? "Step 2 of 2 · Booting Alpine Linux: " + boot.label :
+               guest_state === "login" ? "Logging in" : "Mounting the shared folder";
+    const done = boot_time_fraction();
+    if(done > 0.08 && guest_state === "boot")
+    {
+        const elapsed = (Date.now() - boot_start) / 1000;
+        const seconds = elapsed * (1 - done) / done;
+        text += " · about " + (seconds > 20 ? Math.ceil(seconds / 5) * 5 : Math.max(1, Math.ceil(seconds))) + " s left";
+    }
+    if(!download.done && download.total)
+    {
+        text += " · Bitcoin Core " + fmt_bytes(download.loaded) + " of " + fmt_bytes(download.total);
+    }
+    set_status(text + "…", "busy");
 }
 
 function start_machine()
@@ -573,7 +703,7 @@ function start_machine()
         disable_mouse: true,
     });
     window.emulator = emulator;
-    set_progress(0.02, true);
+    set_progress(0, true);
 
     const decoder = new TextDecoder();
     let line_buf = "";
@@ -588,12 +718,12 @@ function start_machine()
             const line = line_buf.replace(/\r/g, "");
             line_buf = "";
             if(current) parse_line(line);
-            else if(guest_state === "boot" && /OpenRC .* is starting up/.test(line)) set_progress(0.45);
-            else if(guest_state === "boot" && /Starting busybox syslog/.test(line)) set_progress(0.6);
+            else if(guest_state !== "ready") boot_checkpoint(line);
         }
         else
         {
             line_buf += chr;
+            if(guest_state === "boot" && chr === ".") boot_label(line_buf);
         }
         // prompts don't end with a newline; they end with a space or a marker
         if(guest_state !== "ready" && guest_state !== "busy" && (chr === " " || chr === "@"))
@@ -602,7 +732,20 @@ function start_machine()
         }
     });
 
-    binaries = load_binaries().catch(e =>
+    emulator.add_listener("download-progress", e =>
+    {
+        if(e.lengthComputable || e.total) predownload.files[new URL(e.file_name, location.href).href] = { loaded: e.loaded, total: e.total };
+    });
+    // Bitcoin Core is only needed once the guest is up: fetch it after the files the boot needs
+    const started = new Promise(resolve => emulator.add_listener("emulator-started", resolve));
+    started.then(() =>
+    {
+        predownload.started = true;
+        boot_start = Date.now();
+        set_progress(0, true);
+        boot_status();
+    });
+    binaries = started.then(load_binaries).catch(e =>
     {
         set_status("Cannot load Bitcoin Core: " + e.message, "bad");
         guest_state = "dead";
@@ -611,19 +754,10 @@ function start_machine()
 
     const tick = setInterval(() =>
     {
-        if(guest_state === "boot" || guest_state === "login" || guest_state === "mount")
-        {
-            const s = Math.round((Date.now() - boot_start) / 1000);
-            if(status_el.textContent.startsWith("Booting Alpine Linux") && !status_el.textContent.includes("Bitcoin Core"))
-            {
-                set_status("Booting Alpine Linux… " + s + " s", "busy");
-            }
-        }
-        else
-        {
-            clearInterval(tick);
-        }
-    }, 1000);
+        if(guest_state === "boot" || guest_state === "login" || guest_state === "mount") boot_tick();
+        else clearInterval(tick);
+    }, 250);
+    boot_status();
 }
 
 // Walks the guest from the login prompt to a mounted share.
@@ -633,25 +767,25 @@ function check_prompts()
     if(guest_state === "boot" && /login: $/.test(tail))
     {
         guest_state = "login";
-        set_status("Logging in…", "busy");
-        set_progress(0.7);
+        boot_checkpoint("Welcome to Alpine Linux");
+        boot_status();
         emulator.serial0_send("root\n");
     }
     else if(guest_state === "login" && /:~# $/.test(tail))
     {
         guest_state = "mount";
-        set_status("Mounting the shared folder…", "busy");
-        set_progress(0.85);
-        // the marker is split so that the echoed command line doesn't match it
-        emulator.serial0_send("modprobe 9pnet_virtio; modprobe 9p; " +
+        boot_status();
+        // The chmod needs Bitcoin Core in the share: on a slow connection the download can take
+        // longer than the boot. The marker is split so that the echoed command line doesn't match it.
+        binaries.then(() => emulator.serial0_send("modprobe 9pnet_virtio; modprobe 9p; " +
             "mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose host9p /mnt && " +
-            "chmod 755 /mnt/ld-linux-x86-64.so.2 /mnt/bitcoin* && echo @@MOU''NTED@@\n");
+            "chmod 755 /mnt/ld-linux-x86-64.so.2 /mnt/bitcoin* && echo @@MOU''NTED@@\n"), () => {});
     }
     else if(guest_state === "mount" && tail.includes("@@MOUNTED@@"))
     {
         serial_text = "";
         guest_state = "ready";
-        set_status("Ready: pick a demo or drop a wallet file (booted in " + Math.round((Date.now() - boot_start) / 1000) + " s)", "ready");
+        set_status("Ready: pick a demo or drop a wallet file (ready in " + Math.round(performance.now() / 1000) + " s)", "ready");
         set_progress(1);
         run_next();
     }
