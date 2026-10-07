@@ -111,6 +111,12 @@ commands are at the top of [examples/xubuntu.html](examples/xubuntu.html)) and
 open http://localhost:8000/examples/xubuntu.html. Add `?serial` to see the
 serial console, `?mem=<MiB>` to change the memory size.
 
+**Bitcoin Core wallet check.** [examples/bitcoin-wallet-check.html](examples/bitcoin-wallet-check.html)
+boots Alpine headlessly (no display, no network device), runs the official x86_64
+Bitcoin Core in it with networking disabled, and imports a wallet file dropped on
+the page to verify it can be loaded. `./tools/stage-bitcoin.sh` downloads the
+release and stages it, with the glibc runtime it needs, in `images/bitcoin/`.
+
 **Internet access in the guest.** `./tools/serve.mjs --wisp` (after
 `npm install`) also runs a [Wisp](https://github.com/MercuryWorkshop/wisp-protocol)
 proxy at `/wisp/`, and the Xubuntu page connects its network card to it by
