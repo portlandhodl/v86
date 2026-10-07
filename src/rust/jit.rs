@@ -209,8 +209,7 @@ fn check_jit_state_invariants(ctx: &mut JitState) {
         }
         let entry = unsafe { cpu::tlb_pick_entry(page << 12) };
         if 0 != entry {
-            let tlb_physical_page =
-                Page::page_of(cpu::phys_of_tlb_entry(entry, page << 12));
+            let tlb_physical_page = Page::page_of(cpu::phys_of_tlb_entry(entry, page << 12));
             let w = match unsafe { cpu::tlb_code[page as usize] } {
                 None => None,
                 Some(c) => unsafe { Some(c.as_ref().wasm_table_index) },
@@ -471,8 +470,12 @@ fn jump_target(cpu: &CpuContext, virt_addr: u64, offset: i32, is_32: bool) -> u6
     }
     else {
         let cs_offset = cpu.cs_offset;
-        cs_offset.wrapping_add((virt_addr as u32).wrapping_sub(cs_offset).wrapping_add(offset as u32) & 0xFFFF)
-            as u64
+        cs_offset.wrapping_add(
+            (virt_addr as u32)
+                .wrapping_sub(cs_offset)
+                .wrapping_add(offset as u32)
+                & 0xFFFF,
+        ) as u64
     }
 }
 
@@ -593,12 +596,8 @@ fn jit_find_basic_blocks(
     let mut page_blacklist = HashSet::default();
 
     // 16-bit doesn't work correctly, most likely due to instruction pointer wrap-around
-    let max_pages = if cpu.state_flags.is_32() || cpu.state_flags.is_64() {
-        unsafe { MAX_PAGES }
-    }
-    else {
-        1
-    };
+    let max_pages =
+        if cpu.state_flags.is_32() || cpu.state_flags.is_64() { unsafe { MAX_PAGES } } else { 1 };
 
     for virt_addr in entry_points {
         let ok = follow_jump(
@@ -1517,7 +1516,8 @@ fn jit_generate_module(
                             ..
                         } => {
                             if jump_offset_is_32 {
-                                codegen::gen_set_eip_low_bits_and_jump_rel(ctx,
+                                codegen::gen_set_eip_low_bits_and_jump_rel(
+                                    ctx,
                                     block.end_addr as i32 & 0xFFF,
                                     jump_offset,
                                 );
@@ -1583,7 +1583,8 @@ fn jit_generate_module(
                         jump_offset_is_32,
                     } => {
                         if jump_offset_is_32 {
-                            codegen::gen_set_eip_low_bits_and_jump_rel(ctx,
+                            codegen::gen_set_eip_low_bits_and_jump_rel(
+                                ctx,
                                 block.end_addr as i32 & 0xFFF,
                                 jump_offset,
                             );
@@ -1611,7 +1612,8 @@ fn jit_generate_module(
 
                         if Page::page_of(next_block_addr) != Page::page_of(block.addr) {
                             if jump_offset_is_32 {
-                                codegen::gen_set_eip_low_bits_and_jump_rel(ctx,
+                                codegen::gen_set_eip_low_bits_and_jump_rel(
+                                    ctx,
                                     block.end_addr as i32 & 0xFFF,
                                     jump_offset,
                                 );
@@ -1636,7 +1638,11 @@ fn jit_generate_module(
                             );
 
                             #[cfg(debug_assertions)]
-                            codegen::gen_check_page_switch(ctx.builder, block.addr, next_block_addr);
+                            codegen::gen_check_page_switch(
+                                ctx.builder,
+                                block.addr,
+                                next_block_addr,
+                            );
                         }
 
                         if next_addr
@@ -1742,7 +1748,8 @@ fn jit_generate_module(
                                         ctx.builder.if_i32();
                                     }
                                     if jump_offset_is_32 {
-                                        codegen::gen_set_eip_low_bits_and_jump_rel(ctx,
+                                        codegen::gen_set_eip_low_bits_and_jump_rel(
+                                            ctx,
                                             block.end_addr as i32 & 0xFFF,
                                             jump_offset,
                                         );
@@ -1766,7 +1773,11 @@ fn jit_generate_module(
                                     );
 
                                     #[cfg(debug_assertions)]
-                                    codegen::gen_check_page_switch(ctx.builder, block.addr, next_block_addr);
+                                    codegen::gen_check_page_switch(
+                                        ctx.builder,
+                                        block.addr,
+                                        next_block_addr,
+                                    );
 
                                     if is_first {
                                         ctx.builder.const_i32(1);
@@ -1861,7 +1872,8 @@ fn jit_generate_module(
 
                                 if case == Case::BranchTaken {
                                     if jump_offset_is_32 {
-                                        codegen::gen_set_eip_low_bits_and_jump_rel(ctx,
+                                        codegen::gen_set_eip_low_bits_and_jump_rel(
+                                            ctx,
                                             block.end_addr as i32 & 0xFFF,
                                             jump_offset,
                                         );
@@ -1929,7 +1941,8 @@ fn jit_generate_module(
                                 ctx.builder.if_void();
 
                                 if jump_offset_is_32 {
-                                    codegen::gen_set_eip_low_bits_and_jump_rel(ctx,
+                                    codegen::gen_set_eip_low_bits_and_jump_rel(
+                                        ctx,
                                         block.end_addr as i32 & 0xFFF,
                                         jump_offset,
                                     );
@@ -1953,7 +1966,11 @@ fn jit_generate_module(
                                 );
 
                                 #[cfg(debug_assertions)]
-                                codegen::gen_check_page_switch(ctx.builder, block.addr, next_block_branch_taken_addr);
+                                codegen::gen_check_page_switch(
+                                    ctx.builder,
+                                    block.addr,
+                                    next_block_branch_taken_addr,
+                                );
 
                                 dbg_assert!(next_addr.unwrap().len() > 1);
 
@@ -2481,7 +2498,8 @@ fn jit_dirty_page_ctx(ctx: &mut JitState, page: Page) {
                 let page = unsafe { cpu::valid_tlb_entries[i as usize] };
                 let entry = unsafe { cpu::tlb_pick_entry(page << 12) };
                 if 0 != entry {
-                    let tlb_physical_page = Page::page_of(cpu::phys_of_tlb_entry(entry, page << 12));
+                    let tlb_physical_page =
+                        Page::page_of(cpu::phys_of_tlb_entry(entry, page << 12));
                     let slot = match unsafe { cpu::tlb_code_slot(page) } {
                         Some(slot) => slot,
                         None => continue,
@@ -2496,7 +2514,10 @@ fn jit_dirty_page_ctx(ctx: &mut JitState, page: Page) {
                                 if !ctx.entry_points.contains_key(&tlb_physical_page)
                                     && !ctx.pages.contains_key(&tlb_physical_page)
                                 {
-                                    cpu::tlb_put_entry(page << 12, entry & !(cpu::TLB_HAS_CODE as u64));
+                                    cpu::tlb_put_entry(
+                                        page << 12,
+                                        entry & !(cpu::TLB_HAS_CODE as u64),
+                                    );
                                 }
                             }
                         },

@@ -23,11 +23,17 @@ mod imp {
     #[inline(always)]
     pub fn load8(offset: u64) -> u8 { unsafe { *host_ptr(offset) } }
     #[inline(always)]
-    pub fn load16(offset: u64) -> u16 { unsafe { ptr::read_unaligned(host_ptr(offset) as *const u16) } }
+    pub fn load16(offset: u64) -> u16 {
+        unsafe { ptr::read_unaligned(host_ptr(offset) as *const u16) }
+    }
     #[inline(always)]
-    pub fn load32(offset: u64) -> u32 { unsafe { ptr::read_unaligned(host_ptr(offset) as *const u32) } }
+    pub fn load32(offset: u64) -> u32 {
+        unsafe { ptr::read_unaligned(host_ptr(offset) as *const u32) }
+    }
     #[inline(always)]
-    pub fn load64(offset: u64) -> u64 { unsafe { ptr::read_unaligned(host_ptr(offset) as *const u64) } }
+    pub fn load64(offset: u64) -> u64 {
+        unsafe { ptr::read_unaligned(host_ptr(offset) as *const u64) }
+    }
 
     #[inline(always)]
     pub fn store8(offset: u64, value: u8) { unsafe { *host_ptr(offset) = value } }
@@ -96,16 +102,24 @@ mod imp {
     pub extern "C" fn v86_guest_load64(offset: u64) -> u64 { placeholder!(3, offset) }
     #[no_mangle]
     #[inline(never)]
-    pub extern "C" fn v86_guest_store8(offset: u64, value: u32) { placeholder!(4, offset, value); }
+    pub extern "C" fn v86_guest_store8(offset: u64, value: u32) {
+        placeholder!(4, offset, value);
+    }
     #[no_mangle]
     #[inline(never)]
-    pub extern "C" fn v86_guest_store16(offset: u64, value: u32) { placeholder!(5, offset, value); }
+    pub extern "C" fn v86_guest_store16(offset: u64, value: u32) {
+        placeholder!(5, offset, value);
+    }
     #[no_mangle]
     #[inline(never)]
-    pub extern "C" fn v86_guest_store32(offset: u64, value: u32) { placeholder!(6, offset, value); }
+    pub extern "C" fn v86_guest_store32(offset: u64, value: u32) {
+        placeholder!(6, offset, value);
+    }
     #[no_mangle]
     #[inline(never)]
-    pub extern "C" fn v86_guest_store64(offset: u64, value: u64) { placeholder!(7, offset, value); }
+    pub extern "C" fn v86_guest_store64(offset: u64, value: u64) {
+        placeholder!(7, offset, value);
+    }
     #[no_mangle]
     #[inline(never)]
     pub extern "C" fn v86_guest_fill(offset: u64, value: u32, count: u64) {

@@ -41,7 +41,12 @@ fn x86_f32_op(a: f32, b: f32, op: fn(f32, f32) -> f32) -> f32 {
     }
     else {
         let r = op(a, b);
-        if r.is_nan() { f32::from_bits(F32_DEFAULT_NAN) } else { r }
+        if r.is_nan() {
+            f32::from_bits(F32_DEFAULT_NAN)
+        }
+        else {
+            r
+        }
     }
 }
 fn x86_f64_op(a: f64, b: f64, op: fn(f64, f64) -> f64) -> f64 {
@@ -53,7 +58,12 @@ fn x86_f64_op(a: f64, b: f64, op: fn(f64, f64) -> f64) -> f64 {
     }
     else {
         let r = op(a, b);
-        if r.is_nan() { f64::from_bits(0xFFF8_0000_0000_0000) } else { r }
+        if r.is_nan() {
+            f64::from_bits(0xFFF8_0000_0000_0000)
+        }
+        else {
+            r
+        }
     }
 }
 fn add_f32(a: f32, b: f32) -> f32 { x86_f32_op(a, b, |a, b| a + b) }
@@ -75,7 +85,9 @@ macro_rules! ssse3_pair {
         #[no_mangle]
         pub unsafe fn $name_reg(r1: i32, r2: i32) { $name(read_mmx64s(r1), r2) }
         #[no_mangle]
-        pub unsafe fn $name_mem(addr: u64, r: i32) { $name(return_on_pagefault!(safe_read64s(addr)), r) }
+        pub unsafe fn $name_mem(addr: u64, r: i32) {
+            $name(return_on_pagefault!(safe_read64s(addr)), r)
+        }
 
         pub unsafe fn $name66(source: reg128, r: i32) {
             let f: unsafe fn(reg128, reg128) -> reg128 = $xmm;
@@ -107,9 +119,14 @@ unsafe fn pshufb128(d: reg128, s: reg128) -> reg128 {
     r
 }
 ssse3_pair!(
-    instr_0F3800, instr_0F3800_reg, instr_0F3800_mem,
-    instr_660F3800, instr_660F3800_reg, instr_660F3800_mem,
-    pshufb64, pshufb128
+    instr_0F3800,
+    instr_0F3800_reg,
+    instr_0F3800_mem,
+    instr_660F3800,
+    instr_660F3800_reg,
+    instr_660F3800_mem,
+    pshufb64,
+    pshufb128
 );
 
 // horizontal add/subtract: the pairs of the destination, then the pairs of the source
@@ -131,7 +148,12 @@ unsafe fn hop_dwords64(d: u64, s: u64, f: fn(i32, i32) -> i32) -> u64 {
 }
 unsafe fn hop_dwords128(d: reg128, s: reg128, f: fn(i32, i32) -> i32) -> reg128 {
     reg128 {
-        i32: [f(d.i32[0], d.i32[1]), f(d.i32[2], d.i32[3]), f(s.i32[0], s.i32[1]), f(s.i32[2], s.i32[3])],
+        i32: [
+            f(d.i32[0], d.i32[1]),
+            f(d.i32[2], d.i32[3]),
+            f(s.i32[0], s.i32[1]),
+            f(s.i32[2], s.i32[3]),
+        ],
     }
 }
 fn addw(a: i16, b: i16) -> i16 { a.wrapping_add(b) }
@@ -142,34 +164,64 @@ fn addd(a: i32, b: i32) -> i32 { a.wrapping_add(b) }
 fn subd(a: i32, b: i32) -> i32 { a.wrapping_sub(b) }
 
 ssse3_pair!(
-    instr_0F3801, instr_0F3801_reg, instr_0F3801_mem,
-    instr_660F3801, instr_660F3801_reg, instr_660F3801_mem,
-    |d, s| hop_words64(d, s, addw), |d, s| hop_words128(d, s, addw)
+    instr_0F3801,
+    instr_0F3801_reg,
+    instr_0F3801_mem,
+    instr_660F3801,
+    instr_660F3801_reg,
+    instr_660F3801_mem,
+    |d, s| hop_words64(d, s, addw),
+    |d, s| hop_words128(d, s, addw)
 );
 ssse3_pair!(
-    instr_0F3802, instr_0F3802_reg, instr_0F3802_mem,
-    instr_660F3802, instr_660F3802_reg, instr_660F3802_mem,
-    |d, s| hop_dwords64(d, s, addd), |d, s| hop_dwords128(d, s, addd)
+    instr_0F3802,
+    instr_0F3802_reg,
+    instr_0F3802_mem,
+    instr_660F3802,
+    instr_660F3802_reg,
+    instr_660F3802_mem,
+    |d, s| hop_dwords64(d, s, addd),
+    |d, s| hop_dwords128(d, s, addd)
 );
 ssse3_pair!(
-    instr_0F3803, instr_0F3803_reg, instr_0F3803_mem,
-    instr_660F3803, instr_660F3803_reg, instr_660F3803_mem,
-    |d, s| hop_words64(d, s, addsw), |d, s| hop_words128(d, s, addsw)
+    instr_0F3803,
+    instr_0F3803_reg,
+    instr_0F3803_mem,
+    instr_660F3803,
+    instr_660F3803_reg,
+    instr_660F3803_mem,
+    |d, s| hop_words64(d, s, addsw),
+    |d, s| hop_words128(d, s, addsw)
 );
 ssse3_pair!(
-    instr_0F3805, instr_0F3805_reg, instr_0F3805_mem,
-    instr_660F3805, instr_660F3805_reg, instr_660F3805_mem,
-    |d, s| hop_words64(d, s, subw), |d, s| hop_words128(d, s, subw)
+    instr_0F3805,
+    instr_0F3805_reg,
+    instr_0F3805_mem,
+    instr_660F3805,
+    instr_660F3805_reg,
+    instr_660F3805_mem,
+    |d, s| hop_words64(d, s, subw),
+    |d, s| hop_words128(d, s, subw)
 );
 ssse3_pair!(
-    instr_0F3806, instr_0F3806_reg, instr_0F3806_mem,
-    instr_660F3806, instr_660F3806_reg, instr_660F3806_mem,
-    |d, s| hop_dwords64(d, s, subd), |d, s| hop_dwords128(d, s, subd)
+    instr_0F3806,
+    instr_0F3806_reg,
+    instr_0F3806_mem,
+    instr_660F3806,
+    instr_660F3806_reg,
+    instr_660F3806_mem,
+    |d, s| hop_dwords64(d, s, subd),
+    |d, s| hop_dwords128(d, s, subd)
 );
 ssse3_pair!(
-    instr_0F3807, instr_0F3807_reg, instr_0F3807_mem,
-    instr_660F3807, instr_660F3807_reg, instr_660F3807_mem,
-    |d, s| hop_words64(d, s, subsw), |d, s| hop_words128(d, s, subsw)
+    instr_0F3807,
+    instr_0F3807_reg,
+    instr_0F3807_mem,
+    instr_660F3807,
+    instr_660F3807_reg,
+    instr_660F3807_mem,
+    |d, s| hop_words64(d, s, subsw),
+    |d, s| hop_words128(d, s, subsw)
 );
 
 // pmaddubsw: unsigned bytes of the destination times signed bytes of the source, adjacent
@@ -193,16 +245,29 @@ unsafe fn pmaddubsw128(d: reg128, s: reg128) -> reg128 {
     r
 }
 ssse3_pair!(
-    instr_0F3804, instr_0F3804_reg, instr_0F3804_mem,
-    instr_660F3804, instr_660F3804_reg, instr_660F3804_mem,
-    pmaddubsw64, pmaddubsw128
+    instr_0F3804,
+    instr_0F3804_reg,
+    instr_0F3804_mem,
+    instr_660F3804,
+    instr_660F3804_reg,
+    instr_660F3804_mem,
+    pmaddubsw64,
+    pmaddubsw128
 );
 
 // psignb/w/d: negate, zero or keep the destination by the sign of the source
 macro_rules! psign {
     ($t:ty, $d:expr, $s:expr) => {{
         let (d, s): ($t, $t) = ($d, $s);
-        if s < 0 { d.wrapping_neg() } else if s == 0 { 0 } else { d }
+        if s < 0 {
+            d.wrapping_neg()
+        }
+        else if s == 0 {
+            0
+        }
+        else {
+            d
+        }
     }};
 }
 unsafe fn psignb64(d: u64, s: u64) -> u64 {
@@ -247,26 +312,46 @@ unsafe fn psignd128(d: reg128, s: reg128) -> reg128 {
     r
 }
 ssse3_pair!(
-    instr_0F3808, instr_0F3808_reg, instr_0F3808_mem,
-    instr_660F3808, instr_660F3808_reg, instr_660F3808_mem,
-    psignb64, psignb128
+    instr_0F3808,
+    instr_0F3808_reg,
+    instr_0F3808_mem,
+    instr_660F3808,
+    instr_660F3808_reg,
+    instr_660F3808_mem,
+    psignb64,
+    psignb128
 );
 ssse3_pair!(
-    instr_0F3809, instr_0F3809_reg, instr_0F3809_mem,
-    instr_660F3809, instr_660F3809_reg, instr_660F3809_mem,
-    psignw64, psignw128
+    instr_0F3809,
+    instr_0F3809_reg,
+    instr_0F3809_mem,
+    instr_660F3809,
+    instr_660F3809_reg,
+    instr_660F3809_mem,
+    psignw64,
+    psignw128
 );
 ssse3_pair!(
-    instr_0F380A, instr_0F380A_reg, instr_0F380A_mem,
-    instr_660F380A, instr_660F380A_reg, instr_660F380A_mem,
-    psignd64, psignd128
+    instr_0F380A,
+    instr_0F380A_reg,
+    instr_0F380A_mem,
+    instr_660F380A,
+    instr_660F380A_reg,
+    instr_660F380A_mem,
+    psignd64,
+    psignd128
 );
 
 // pmulhrsw: rounded high half of the 16x16 products
 fn mulhrs(a: i16, b: i16) -> i16 { ((((a as i32 * b as i32) >> 14) + 1) >> 1) as i16 }
 unsafe fn pmulhrsw64(d: u64, s: u64) -> u64 {
     let (d, s) = (mmx_words(d), mmx_words(s));
-    std::mem::transmute([mulhrs(d[0], s[0]), mulhrs(d[1], s[1]), mulhrs(d[2], s[2]), mulhrs(d[3], s[3])])
+    std::mem::transmute([
+        mulhrs(d[0], s[0]),
+        mulhrs(d[1], s[1]),
+        mulhrs(d[2], s[2]),
+        mulhrs(d[3], s[3]),
+    ])
 }
 unsafe fn pmulhrsw128(d: reg128, s: reg128) -> reg128 {
     let mut r = reg128 { i16: [0; 8] };
@@ -276,9 +361,14 @@ unsafe fn pmulhrsw128(d: reg128, s: reg128) -> reg128 {
     r
 }
 ssse3_pair!(
-    instr_0F380B, instr_0F380B_reg, instr_0F380B_mem,
-    instr_660F380B, instr_660F380B_reg, instr_660F380B_mem,
-    pmulhrsw64, pmulhrsw128
+    instr_0F380B,
+    instr_0F380B_reg,
+    instr_0F380B_mem,
+    instr_660F380B,
+    instr_660F380B_reg,
+    instr_660F380B_mem,
+    pmulhrsw64,
+    pmulhrsw128
 );
 
 // pabsb/w/d: absolute value of the source (the destination is only written)
@@ -299,7 +389,12 @@ unsafe fn pabsb128(_d: reg128, s: reg128) -> reg128 {
 }
 unsafe fn pabsw64(_d: u64, s: u64) -> u64 {
     let s = mmx_words(s);
-    std::mem::transmute([s[0].unsigned_abs(), s[1].unsigned_abs(), s[2].unsigned_abs(), s[3].unsigned_abs()])
+    std::mem::transmute([
+        s[0].unsigned_abs(),
+        s[1].unsigned_abs(),
+        s[2].unsigned_abs(),
+        s[3].unsigned_abs(),
+    ])
 }
 unsafe fn pabsw128(_d: reg128, s: reg128) -> reg128 {
     let mut r = reg128 { u16: [0; 8] };
@@ -320,19 +415,34 @@ unsafe fn pabsd128(_d: reg128, s: reg128) -> reg128 {
     r
 }
 ssse3_pair!(
-    instr_0F381C, instr_0F381C_reg, instr_0F381C_mem,
-    instr_660F381C, instr_660F381C_reg, instr_660F381C_mem,
-    pabsb64, pabsb128
+    instr_0F381C,
+    instr_0F381C_reg,
+    instr_0F381C_mem,
+    instr_660F381C,
+    instr_660F381C_reg,
+    instr_660F381C_mem,
+    pabsb64,
+    pabsb128
 );
 ssse3_pair!(
-    instr_0F381D, instr_0F381D_reg, instr_0F381D_mem,
-    instr_660F381D, instr_660F381D_reg, instr_660F381D_mem,
-    pabsw64, pabsw128
+    instr_0F381D,
+    instr_0F381D_reg,
+    instr_0F381D_mem,
+    instr_660F381D,
+    instr_660F381D_reg,
+    instr_660F381D_mem,
+    pabsw64,
+    pabsw128
 );
 ssse3_pair!(
-    instr_0F381E, instr_0F381E_reg, instr_0F381E_mem,
-    instr_660F381E, instr_660F381E_reg, instr_660F381E_mem,
-    pabsd64, pabsd128
+    instr_0F381E,
+    instr_0F381E_reg,
+    instr_0F381E_mem,
+    instr_660F381E,
+    instr_660F381E_reg,
+    instr_660F381E_mem,
+    pabsd64,
+    pabsd128
 );
 
 // palignr: the concatenation destination:source shifted right by imm8 bytes
@@ -345,7 +455,9 @@ pub unsafe fn instr_0F3A0F(source: u64, r: i32, imm8: i32) {
     transition_fpu_to_mmx();
 }
 #[no_mangle]
-pub unsafe fn instr_0F3A0F_reg(r1: i32, r2: i32, imm: i32) { instr_0F3A0F(read_mmx64s(r1), r2, imm) }
+pub unsafe fn instr_0F3A0F_reg(r1: i32, r2: i32, imm: i32) {
+    instr_0F3A0F(read_mmx64s(r1), r2, imm)
+}
 #[no_mangle]
 pub unsafe fn instr_0F3A0F_mem(addr: u64, r: i32, imm: i32) {
     instr_0F3A0F(return_on_pagefault!(safe_read64s(addr)), r, imm)
@@ -363,7 +475,9 @@ pub unsafe fn instr_660F3A0F(source: reg128, r: i32, imm8: i32) {
     write_xmm_reg128(r, result);
 }
 #[no_mangle]
-pub unsafe fn instr_660F3A0F_reg(r1: i32, r2: i32, imm: i32) { instr_660F3A0F(read_xmm128s(r1), r2, imm) }
+pub unsafe fn instr_660F3A0F_reg(r1: i32, r2: i32, imm: i32) {
+    instr_660F3A0F(read_xmm128s(r1), r2, imm)
+}
 #[no_mangle]
 pub unsafe fn instr_660F3A0F_mem(addr: u64, r: i32, imm: i32) {
     instr_660F3A0F(return_on_pagefault!(safe_read128s(addr)), r, imm)
@@ -381,7 +495,9 @@ macro_rules! xmm_op {
         #[no_mangle]
         pub unsafe fn $name_reg(r1: i32, r2: i32) { $name(read_xmm128s(r1), r2) }
         #[no_mangle]
-        pub unsafe fn $name_mem(addr: u64, r: i32) { $name(return_on_pagefault!(safe_read128s(addr)), r) }
+        pub unsafe fn $name_mem(addr: u64, r: i32) {
+            $name(return_on_pagefault!(safe_read128s(addr)), r)
+        }
     };
 }
 macro_rules! xmm_op_imm {
@@ -400,36 +516,51 @@ macro_rules! xmm_op_imm {
 }
 
 // pblendvb, blendvps, blendvpd: select by the sign bits of xmm0
-xmm_op!(instr_660F3810, instr_660F3810_reg, instr_660F3810_mem, |d, s| {
-    let mask = read_xmm128s(0);
-    let mut r = d;
-    for i in 0..16 {
-        if mask.i8[i] < 0 {
-            r.u8[i] = s.u8[i];
+xmm_op!(
+    instr_660F3810,
+    instr_660F3810_reg,
+    instr_660F3810_mem,
+    |d, s| {
+        let mask = read_xmm128s(0);
+        let mut r = d;
+        for i in 0..16 {
+            if mask.i8[i] < 0 {
+                r.u8[i] = s.u8[i];
+            }
         }
+        r
     }
-    r
-});
-xmm_op!(instr_660F3814, instr_660F3814_reg, instr_660F3814_mem, |d, s| {
-    let mask = read_xmm128s(0);
-    let mut r = d;
-    for i in 0..4 {
-        if mask.i32[i] < 0 {
-            r.u32[i] = s.u32[i];
+);
+xmm_op!(
+    instr_660F3814,
+    instr_660F3814_reg,
+    instr_660F3814_mem,
+    |d, s| {
+        let mask = read_xmm128s(0);
+        let mut r = d;
+        for i in 0..4 {
+            if mask.i32[i] < 0 {
+                r.u32[i] = s.u32[i];
+            }
         }
+        r
     }
-    r
-});
-xmm_op!(instr_660F3815, instr_660F3815_reg, instr_660F3815_mem, |d, s| {
-    let mask = read_xmm128s(0);
-    let mut r = d;
-    for i in 0..2 {
-        if mask.i64[i] < 0 {
-            r.u64[i] = s.u64[i];
+);
+xmm_op!(
+    instr_660F3815,
+    instr_660F3815_reg,
+    instr_660F3815_mem,
+    |d, s| {
+        let mask = read_xmm128s(0);
+        let mut r = d;
+        for i in 0..2 {
+            if mask.i64[i] < 0 {
+                r.u64[i] = s.u64[i];
+            }
         }
+        r
     }
-    r
-});
+);
 
 // ptest: zf = (source & destination) == 0, cf = (source & !destination) == 0
 pub unsafe fn instr_660F3817(source: reg128, r: i32) {
@@ -469,77 +600,190 @@ unsafe fn read_m64(addr: u64) -> OrPageFault<u64> { safe_read64s(addr) }
 unsafe fn read_m32(addr: u64) -> OrPageFault<u64> { Ok(safe_read32s(addr)? as u32 as u64) }
 unsafe fn read_m16(addr: u64) -> OrPageFault<u64> { Ok(safe_read16(addr)? as u16 as u64) }
 
-pmovx!(instr_660F3820, instr_660F3820_reg, instr_660F3820_mem, read_m64, |s| {
-    let b = s.to_le_bytes();
-    let mut r = reg128 { i16: [0; 8] };
-    for i in 0..8 {
-        r.i16[i] = b[i] as i8 as i16;
+pmovx!(
+    instr_660F3820,
+    instr_660F3820_reg,
+    instr_660F3820_mem,
+    read_m64,
+    |s| {
+        let b = s.to_le_bytes();
+        let mut r = reg128 { i16: [0; 8] };
+        for i in 0..8 {
+            r.i16[i] = b[i] as i8 as i16;
+        }
+        r
     }
-    r
-});
-pmovx!(instr_660F3821, instr_660F3821_reg, instr_660F3821_mem, read_m32, |s| {
-    let b = s.to_le_bytes();
-    let mut r = reg128 { i32: [0; 4] };
-    for i in 0..4 {
-        r.i32[i] = b[i] as i8 as i32;
+);
+pmovx!(
+    instr_660F3821,
+    instr_660F3821_reg,
+    instr_660F3821_mem,
+    read_m32,
+    |s| {
+        let b = s.to_le_bytes();
+        let mut r = reg128 { i32: [0; 4] };
+        for i in 0..4 {
+            r.i32[i] = b[i] as i8 as i32;
+        }
+        r
     }
-    r
-});
-pmovx!(instr_660F3822, instr_660F3822_reg, instr_660F3822_mem, read_m16, |s| {
-    let b = s.to_le_bytes();
-    reg128 { i64: [b[0] as i8 as i64, b[1] as i8 as i64] }
-});
-pmovx!(instr_660F3823, instr_660F3823_reg, instr_660F3823_mem, read_m64, |s| {
-    let w = mmx_words(s);
-    reg128 { i32: [w[0] as i32, w[1] as i32, w[2] as i32, w[3] as i32] }
-});
-pmovx!(instr_660F3824, instr_660F3824_reg, instr_660F3824_mem, read_m32, |s| {
-    let w = mmx_words(s);
-    reg128 { i64: [w[0] as i64, w[1] as i64] }
-});
-pmovx!(instr_660F3825, instr_660F3825_reg, instr_660F3825_mem, read_m64, |s| {
-    let d = mmx_dwords(s);
-    reg128 { i64: [d[0] as i64, d[1] as i64] }
-});
-pmovx!(instr_660F3830, instr_660F3830_reg, instr_660F3830_mem, read_m64, |s| {
-    let b = s.to_le_bytes();
-    let mut r = reg128 { u16: [0; 8] };
-    for i in 0..8 {
-        r.u16[i] = b[i] as u16;
+);
+pmovx!(
+    instr_660F3822,
+    instr_660F3822_reg,
+    instr_660F3822_mem,
+    read_m16,
+    |s| {
+        let b = s.to_le_bytes();
+        reg128 {
+            i64: [b[0] as i8 as i64, b[1] as i8 as i64],
+        }
     }
-    r
-});
-pmovx!(instr_660F3831, instr_660F3831_reg, instr_660F3831_mem, read_m32, |s| {
-    let b = s.to_le_bytes();
-    reg128 { u32: [b[0] as u32, b[1] as u32, b[2] as u32, b[3] as u32] }
-});
-pmovx!(instr_660F3832, instr_660F3832_reg, instr_660F3832_mem, read_m16, |s| {
-    let b = s.to_le_bytes();
-    reg128 { u64: [b[0] as u64, b[1] as u64] }
-});
-pmovx!(instr_660F3833, instr_660F3833_reg, instr_660F3833_mem, read_m64, |s| {
-    let w = mmx_words(s);
-    reg128 { u32: [w[0] as u16 as u32, w[1] as u16 as u32, w[2] as u16 as u32, w[3] as u16 as u32] }
-});
-pmovx!(instr_660F3834, instr_660F3834_reg, instr_660F3834_mem, read_m32, |s| {
-    let w = mmx_words(s);
-    reg128 { u64: [w[0] as u16 as u64, w[1] as u16 as u64] }
-});
-pmovx!(instr_660F3835, instr_660F3835_reg, instr_660F3835_mem, read_m64, |s| {
-    let d = mmx_dwords(s);
-    reg128 { u64: [d[0] as u32 as u64, d[1] as u32 as u64] }
-});
+);
+pmovx!(
+    instr_660F3823,
+    instr_660F3823_reg,
+    instr_660F3823_mem,
+    read_m64,
+    |s| {
+        let w = mmx_words(s);
+        reg128 {
+            i32: [w[0] as i32, w[1] as i32, w[2] as i32, w[3] as i32],
+        }
+    }
+);
+pmovx!(
+    instr_660F3824,
+    instr_660F3824_reg,
+    instr_660F3824_mem,
+    read_m32,
+    |s| {
+        let w = mmx_words(s);
+        reg128 {
+            i64: [w[0] as i64, w[1] as i64],
+        }
+    }
+);
+pmovx!(
+    instr_660F3825,
+    instr_660F3825_reg,
+    instr_660F3825_mem,
+    read_m64,
+    |s| {
+        let d = mmx_dwords(s);
+        reg128 {
+            i64: [d[0] as i64, d[1] as i64],
+        }
+    }
+);
+pmovx!(
+    instr_660F3830,
+    instr_660F3830_reg,
+    instr_660F3830_mem,
+    read_m64,
+    |s| {
+        let b = s.to_le_bytes();
+        let mut r = reg128 { u16: [0; 8] };
+        for i in 0..8 {
+            r.u16[i] = b[i] as u16;
+        }
+        r
+    }
+);
+pmovx!(
+    instr_660F3831,
+    instr_660F3831_reg,
+    instr_660F3831_mem,
+    read_m32,
+    |s| {
+        let b = s.to_le_bytes();
+        reg128 {
+            u32: [b[0] as u32, b[1] as u32, b[2] as u32, b[3] as u32],
+        }
+    }
+);
+pmovx!(
+    instr_660F3832,
+    instr_660F3832_reg,
+    instr_660F3832_mem,
+    read_m16,
+    |s| {
+        let b = s.to_le_bytes();
+        reg128 {
+            u64: [b[0] as u64, b[1] as u64],
+        }
+    }
+);
+pmovx!(
+    instr_660F3833,
+    instr_660F3833_reg,
+    instr_660F3833_mem,
+    read_m64,
+    |s| {
+        let w = mmx_words(s);
+        reg128 {
+            u32: [
+                w[0] as u16 as u32,
+                w[1] as u16 as u32,
+                w[2] as u16 as u32,
+                w[3] as u16 as u32,
+            ],
+        }
+    }
+);
+pmovx!(
+    instr_660F3834,
+    instr_660F3834_reg,
+    instr_660F3834_mem,
+    read_m32,
+    |s| {
+        let w = mmx_words(s);
+        reg128 {
+            u64: [w[0] as u16 as u64, w[1] as u16 as u64],
+        }
+    }
+);
+pmovx!(
+    instr_660F3835,
+    instr_660F3835_reg,
+    instr_660F3835_mem,
+    read_m64,
+    |s| {
+        let d = mmx_dwords(s);
+        reg128 {
+            u64: [d[0] as u32 as u64, d[1] as u32 as u64],
+        }
+    }
+);
 
 // pmuldq: signed products of the even dwords
-xmm_op!(instr_660F3828, instr_660F3828_reg, instr_660F3828_mem, |d, s| {
-    reg128 { i64: [d.i32[0] as i64 * s.i32[0] as i64, d.i32[2] as i64 * s.i32[2] as i64] }
-});
-// pcmpeqq
-xmm_op!(instr_660F3829, instr_660F3829_reg, instr_660F3829_mem, |d, s| {
-    reg128 {
-        i64: [-((d.u64[0] == s.u64[0]) as i64), -((d.u64[1] == s.u64[1]) as i64)],
+xmm_op!(
+    instr_660F3828,
+    instr_660F3828_reg,
+    instr_660F3828_mem,
+    |d, s| {
+        reg128 {
+            i64: [
+                d.i32[0] as i64 * s.i32[0] as i64,
+                d.i32[2] as i64 * s.i32[2] as i64,
+            ],
+        }
     }
-});
+);
+// pcmpeqq
+xmm_op!(
+    instr_660F3829,
+    instr_660F3829_reg,
+    instr_660F3829_mem,
+    |d, s| {
+        reg128 {
+            i64: [
+                -((d.u64[0] == s.u64[0]) as i64),
+                -((d.u64[1] == s.u64[1]) as i64),
+            ],
+        }
+    }
+);
 
 // movntdqa xmm, m128 (memory only)
 #[no_mangle]
@@ -551,21 +795,34 @@ pub unsafe fn instr_660F382A_mem(addr: u64, r: i32) {
 }
 
 // packusdw: signed dwords to unsigned words with saturation, destination first
-xmm_op!(instr_660F382B, instr_660F382B_reg, instr_660F382B_mem, |d, s| {
-    let mut r = reg128 { u16: [0; 8] };
-    for i in 0..4 {
-        r.u16[i] = satu16(d.i32[i]);
-        r.u16[i + 4] = satu16(s.i32[i]);
+xmm_op!(
+    instr_660F382B,
+    instr_660F382B_reg,
+    instr_660F382B_mem,
+    |d, s| {
+        let mut r = reg128 { u16: [0; 8] };
+        for i in 0..4 {
+            r.u16[i] = satu16(d.i32[i]);
+            r.u16[i + 4] = satu16(s.i32[i]);
+        }
+        r
     }
-    r
-});
+);
 
 // pcmpgtq (sse4.2)
-xmm_op!(instr_660F3837, instr_660F3837_reg, instr_660F3837_mem, |d, s| {
-    reg128 {
-        i64: [-((d.i64[0] > s.i64[0]) as i64), -((d.i64[1] > s.i64[1]) as i64)],
+xmm_op!(
+    instr_660F3837,
+    instr_660F3837_reg,
+    instr_660F3837_mem,
+    |d, s| {
+        reg128 {
+            i64: [
+                -((d.i64[0] > s.i64[0]) as i64),
+                -((d.i64[1] > s.i64[1]) as i64),
+            ],
+        }
     }
-});
+);
 
 // pminsb, pminsd, pminuw, pminud, pmaxsb, pmaxsd, pmaxuw, pmaxud
 macro_rules! lanewise {
@@ -579,28 +836,80 @@ macro_rules! lanewise {
         }
     };
 }
-xmm_op!(instr_660F3838, instr_660F3838_reg, instr_660F3838_mem, lanewise!(i8, 16, i8::min));
-xmm_op!(instr_660F3839, instr_660F3839_reg, instr_660F3839_mem, lanewise!(i32, 4, i32::min));
-xmm_op!(instr_660F383A, instr_660F383A_reg, instr_660F383A_mem, lanewise!(u16, 8, u16::min));
-xmm_op!(instr_660F383B, instr_660F383B_reg, instr_660F383B_mem, lanewise!(u32, 4, u32::min));
-xmm_op!(instr_660F383C, instr_660F383C_reg, instr_660F383C_mem, lanewise!(i8, 16, i8::max));
-xmm_op!(instr_660F383D, instr_660F383D_reg, instr_660F383D_mem, lanewise!(i32, 4, i32::max));
-xmm_op!(instr_660F383E, instr_660F383E_reg, instr_660F383E_mem, lanewise!(u16, 8, u16::max));
-xmm_op!(instr_660F383F, instr_660F383F_reg, instr_660F383F_mem, lanewise!(u32, 4, u32::max));
+xmm_op!(
+    instr_660F3838,
+    instr_660F3838_reg,
+    instr_660F3838_mem,
+    lanewise!(i8, 16, i8::min)
+);
+xmm_op!(
+    instr_660F3839,
+    instr_660F3839_reg,
+    instr_660F3839_mem,
+    lanewise!(i32, 4, i32::min)
+);
+xmm_op!(
+    instr_660F383A,
+    instr_660F383A_reg,
+    instr_660F383A_mem,
+    lanewise!(u16, 8, u16::min)
+);
+xmm_op!(
+    instr_660F383B,
+    instr_660F383B_reg,
+    instr_660F383B_mem,
+    lanewise!(u32, 4, u32::min)
+);
+xmm_op!(
+    instr_660F383C,
+    instr_660F383C_reg,
+    instr_660F383C_mem,
+    lanewise!(i8, 16, i8::max)
+);
+xmm_op!(
+    instr_660F383D,
+    instr_660F383D_reg,
+    instr_660F383D_mem,
+    lanewise!(i32, 4, i32::max)
+);
+xmm_op!(
+    instr_660F383E,
+    instr_660F383E_reg,
+    instr_660F383E_mem,
+    lanewise!(u16, 8, u16::max)
+);
+xmm_op!(
+    instr_660F383F,
+    instr_660F383F_reg,
+    instr_660F383F_mem,
+    lanewise!(u32, 4, u32::max)
+);
 
 // pmulld: low dwords of the products
-xmm_op!(instr_660F3840, instr_660F3840_reg, instr_660F3840_mem, lanewise!(i32, 4, i32::wrapping_mul));
+xmm_op!(
+    instr_660F3840,
+    instr_660F3840_reg,
+    instr_660F3840_mem,
+    lanewise!(i32, 4, i32::wrapping_mul)
+);
 
 // phminposuw: the minimum unsigned word of the source and its (lowest) index
-xmm_op!(instr_660F3841, instr_660F3841_reg, instr_660F3841_mem, |_d, s| {
-    let mut index = 0;
-    for i in 1..8 {
-        if s.u16[i] < s.u16[index] {
-            index = i;
+xmm_op!(
+    instr_660F3841,
+    instr_660F3841_reg,
+    instr_660F3841_mem,
+    |_d, s| {
+        let mut index = 0;
+        for i in 1..8 {
+            if s.u16[i] < s.u16[index] {
+                index = i;
+            }
+        }
+        reg128 {
+            u64: [s.u16[index] as u64 | (index as u64) << 16, 0],
         }
     }
-    reg128 { u64: [s.u16[index] as u64 | (index as u64) << 16, 0] }
-});
+);
 
 // crc32 (sse4.2): crc32c of the source into the low dword of the destination register
 fn crc32c(mut crc: u32, value: u64, bytes: usize) -> u32 {
@@ -637,7 +946,9 @@ pub unsafe fn instr16_F20F38F1_mem(addr: u64, r: i32) {
     crc32_into(r, return_on_pagefault!(safe_read16(addr)) as u64, 2)
 }
 #[no_mangle]
-pub unsafe fn instr32_F20F38F1_reg(r1: i32, r: i32) { crc32_into(r, read_reg32(r1) as u32 as u64, 4) }
+pub unsafe fn instr32_F20F38F1_reg(r1: i32, r: i32) {
+    crc32_into(r, read_reg32(r1) as u32 as u64, 4)
+}
 #[no_mangle]
 pub unsafe fn instr32_F20F38F1_mem(addr: u64, r: i32) {
     crc32_into(r, return_on_pagefault!(safe_read32s(addr)) as u32 as u64, 4)
@@ -650,7 +961,12 @@ pub unsafe fn instr64_F20F38F1_mem(addr: u64, r: i32) {
 // roundps, roundpd, roundss, roundsd: imm8 bits 1:0 give the rounding mode, bit 2 selects
 // mxcsr.rc instead, bit 3 (suppress the precision exception) has no effect here
 fn rounding_mode(imm8: i32) -> i32 {
-    if imm8 & 4 != 0 { unsafe { *mxcsr >> 13 & 3 } } else { imm8 & 3 }
+    if imm8 & 4 != 0 {
+        unsafe { *mxcsr >> 13 & 3 }
+    }
+    else {
+        imm8 & 3
+    }
 }
 fn round_f32(x: f32, mode: i32) -> f32 {
     if x.is_nan() {
@@ -674,24 +990,47 @@ fn round_f64(x: f64, mode: i32) -> f64 {
         _ => x.trunc(),
     }
 }
-xmm_op_imm!(instr_660F3A08, instr_660F3A08_reg, instr_660F3A08_mem, |_d, s, imm| {
-    let mode = rounding_mode(imm);
-    reg128 {
-        f32: [round_f32(s.f32[0], mode), round_f32(s.f32[1], mode), round_f32(s.f32[2], mode), round_f32(s.f32[3], mode)],
+xmm_op_imm!(
+    instr_660F3A08,
+    instr_660F3A08_reg,
+    instr_660F3A08_mem,
+    |_d, s, imm| {
+        let mode = rounding_mode(imm);
+        reg128 {
+            f32: [
+                round_f32(s.f32[0], mode),
+                round_f32(s.f32[1], mode),
+                round_f32(s.f32[2], mode),
+                round_f32(s.f32[3], mode),
+            ],
+        }
     }
-});
-xmm_op_imm!(instr_660F3A09, instr_660F3A09_reg, instr_660F3A09_mem, |_d, s, imm| {
-    let mode = rounding_mode(imm);
-    reg128 { f64: [round_f64(s.f64[0], mode), round_f64(s.f64[1], mode)] }
-});
+);
+xmm_op_imm!(
+    instr_660F3A09,
+    instr_660F3A09_reg,
+    instr_660F3A09_mem,
+    |_d, s, imm| {
+        let mode = rounding_mode(imm);
+        reg128 {
+            f64: [round_f64(s.f64[0], mode), round_f64(s.f64[1], mode)],
+        }
+    }
+);
 pub unsafe fn instr_660F3A0A(source: f32, r: i32, imm8: i32) {
     write_xmm_f32(r, round_f32(source, rounding_mode(imm8)));
 }
 #[no_mangle]
-pub unsafe fn instr_660F3A0A_reg(r1: i32, r2: i32, imm: i32) { instr_660F3A0A(read_xmm_f32(r1), r2, imm) }
+pub unsafe fn instr_660F3A0A_reg(r1: i32, r2: i32, imm: i32) {
+    instr_660F3A0A(read_xmm_f32(r1), r2, imm)
+}
 #[no_mangle]
 pub unsafe fn instr_660F3A0A_mem(addr: u64, r: i32, imm: i32) {
-    instr_660F3A0A(f32::from_bits(return_on_pagefault!(safe_read32s(addr)) as u32), r, imm)
+    instr_660F3A0A(
+        f32::from_bits(return_on_pagefault!(safe_read32s(addr)) as u32),
+        r,
+        imm,
+    )
 }
 pub unsafe fn instr_660F3A0B(source: f64, r: i32, imm8: i32) {
     write_xmm_f64(r, round_f64(source, rounding_mode(imm8)));
@@ -702,37 +1041,56 @@ pub unsafe fn instr_660F3A0B_reg(r1: i32, r2: i32, imm: i32) {
 }
 #[no_mangle]
 pub unsafe fn instr_660F3A0B_mem(addr: u64, r: i32, imm: i32) {
-    instr_660F3A0B(f64::from_bits(return_on_pagefault!(safe_read64s(addr))), r, imm)
+    instr_660F3A0B(
+        f64::from_bits(return_on_pagefault!(safe_read64s(addr))),
+        r,
+        imm,
+    )
 }
 
 // blendps, blendpd, pblendw: select the source's element i if bit i of imm8 is set
-xmm_op_imm!(instr_660F3A0C, instr_660F3A0C_reg, instr_660F3A0C_mem, |d, s, imm| {
-    let mut r = d;
-    for i in 0..4 {
-        if imm & 1 << i != 0 {
-            r.u32[i] = s.u32[i];
+xmm_op_imm!(
+    instr_660F3A0C,
+    instr_660F3A0C_reg,
+    instr_660F3A0C_mem,
+    |d, s, imm| {
+        let mut r = d;
+        for i in 0..4 {
+            if imm & 1 << i != 0 {
+                r.u32[i] = s.u32[i];
+            }
         }
+        r
     }
-    r
-});
-xmm_op_imm!(instr_660F3A0D, instr_660F3A0D_reg, instr_660F3A0D_mem, |d, s, imm| {
-    let mut r = d;
-    for i in 0..2 {
-        if imm & 1 << i != 0 {
-            r.u64[i] = s.u64[i];
+);
+xmm_op_imm!(
+    instr_660F3A0D,
+    instr_660F3A0D_reg,
+    instr_660F3A0D_mem,
+    |d, s, imm| {
+        let mut r = d;
+        for i in 0..2 {
+            if imm & 1 << i != 0 {
+                r.u64[i] = s.u64[i];
+            }
         }
+        r
     }
-    r
-});
-xmm_op_imm!(instr_660F3A0E, instr_660F3A0E_reg, instr_660F3A0E_mem, |d, s, imm| {
-    let mut r = d;
-    for i in 0..8 {
-        if imm & 1 << i != 0 {
-            r.u16[i] = s.u16[i];
+);
+xmm_op_imm!(
+    instr_660F3A0E,
+    instr_660F3A0E_reg,
+    instr_660F3A0E_mem,
+    |d, s, imm| {
+        let mut r = d;
+        for i in 0..8 {
+            if imm & 1 << i != 0 {
+                r.u16[i] = s.u16[i];
+            }
         }
+        r
     }
-    r
-});
+);
 
 // pextrb, pextrw, pextrd/pextrq, extractps: r1 (or the memory operand) is the destination, r2
 // the xmm source; register destinations are zero-extended
@@ -742,7 +1100,10 @@ pub unsafe fn instr_660F3A14_reg(r1: i32, r2: i32, imm: i32) {
 }
 #[no_mangle]
 pub unsafe fn instr_660F3A14_mem(addr: u64, r: i32, imm: i32) {
-    return_on_pagefault!(safe_write8(addr, read_xmm128s(r).u8[(imm & 15) as usize] as i32));
+    return_on_pagefault!(safe_write8(
+        addr,
+        read_xmm128s(r).u8[(imm & 15) as usize] as i32
+    ));
 }
 #[no_mangle]
 pub unsafe fn instr_660F3A15_reg(r1: i32, r2: i32, imm: i32) {
@@ -750,7 +1111,10 @@ pub unsafe fn instr_660F3A15_reg(r1: i32, r2: i32, imm: i32) {
 }
 #[no_mangle]
 pub unsafe fn instr_660F3A15_mem(addr: u64, r: i32, imm: i32) {
-    return_on_pagefault!(safe_write16(addr, read_xmm128s(r).u16[(imm & 7) as usize] as i32));
+    return_on_pagefault!(safe_write16(
+        addr,
+        read_xmm128s(r).u16[(imm & 7) as usize] as i32
+    ));
 }
 #[no_mangle]
 pub unsafe fn instr_660F3A16_reg(r1: i32, r2: i32, imm: i32) {
@@ -789,7 +1153,9 @@ pub unsafe fn instr_660F3A20(source: i32, r: i32, imm8: i32) {
     write_xmm_reg128(r, x);
 }
 #[no_mangle]
-pub unsafe fn instr_660F3A20_reg(r1: i32, r2: i32, imm: i32) { instr_660F3A20(read_reg32(r1), r2, imm) }
+pub unsafe fn instr_660F3A20_reg(r1: i32, r2: i32, imm: i32) {
+    instr_660F3A20(read_reg32(r1), r2, imm)
+}
 #[no_mangle]
 pub unsafe fn instr_660F3A20_mem(addr: u64, r: i32, imm: i32) {
     instr_660F3A20(return_on_pagefault!(safe_read8(addr)), r, imm)
@@ -839,54 +1205,70 @@ pub unsafe fn instr_660F3A22_mem(addr: u64, r: i32, imm: i32) {
 
 // dpps, dppd: the products selected by imm8 bits 7:4 are summed ((p0 + p1) + (p2 + p3)), the sum
 // is written to the elements selected by bits 3:0, the others are cleared
-xmm_op_imm!(instr_660F3A40, instr_660F3A40_reg, instr_660F3A40_mem, |d, s, imm| {
-    let mut p = [0.0f32; 4];
-    for i in 0..4 {
-        if imm & 0x10 << i != 0 {
-            p[i] = mul_f32(d.f32[i], s.f32[i]);
+xmm_op_imm!(
+    instr_660F3A40,
+    instr_660F3A40_reg,
+    instr_660F3A40_mem,
+    |d, s, imm| {
+        let mut p = [0.0f32; 4];
+        for i in 0..4 {
+            if imm & 0x10 << i != 0 {
+                p[i] = mul_f32(d.f32[i], s.f32[i]);
+            }
         }
-    }
-    let sum = add_f32(add_f32(p[0], p[1]), add_f32(p[2], p[3]));
-    let mut r = reg128 { f32: [0.0; 4] };
-    for i in 0..4 {
-        if imm & 1 << i != 0 {
-            r.f32[i] = sum;
+        let sum = add_f32(add_f32(p[0], p[1]), add_f32(p[2], p[3]));
+        let mut r = reg128 { f32: [0.0; 4] };
+        for i in 0..4 {
+            if imm & 1 << i != 0 {
+                r.f32[i] = sum;
+            }
         }
+        r
     }
-    r
-});
-xmm_op_imm!(instr_660F3A41, instr_660F3A41_reg, instr_660F3A41_mem, |d, s, imm| {
-    let mut p = [0.0f64; 2];
-    for i in 0..2 {
-        if imm & 0x10 << i != 0 {
-            p[i] = mul_f64(d.f64[i], s.f64[i]);
+);
+xmm_op_imm!(
+    instr_660F3A41,
+    instr_660F3A41_reg,
+    instr_660F3A41_mem,
+    |d, s, imm| {
+        let mut p = [0.0f64; 2];
+        for i in 0..2 {
+            if imm & 0x10 << i != 0 {
+                p[i] = mul_f64(d.f64[i], s.f64[i]);
+            }
         }
-    }
-    let sum = add_f64(p[0], p[1]);
-    let mut r = reg128 { f64: [0.0; 2] };
-    for i in 0..2 {
-        if imm & 1 << i != 0 {
-            r.f64[i] = sum;
+        let sum = add_f64(p[0], p[1]);
+        let mut r = reg128 { f64: [0.0; 2] };
+        for i in 0..2 {
+            if imm & 1 << i != 0 {
+                r.f64[i] = sum;
+            }
         }
+        r
     }
-    r
-});
+);
 
 // mpsadbw: sums of absolute differences of the source dword selected by imm8 bits 1:0 against
 // 8 overlapping 4-byte windows of the destination, starting at byte 4 * bit 2
-xmm_op_imm!(instr_660F3A42, instr_660F3A42_reg, instr_660F3A42_mem, |d, s, imm| {
-    let source_offset = ((imm & 3) * 4) as usize;
-    let destination_offset = ((imm >> 2 & 1) * 4) as usize;
-    let mut r = reg128 { u16: [0; 8] };
-    for i in 0..8 {
-        let mut sum = 0;
-        for j in 0..4 {
-            sum += (d.u8[destination_offset + i + j] as i32 - s.u8[source_offset + j] as i32).unsigned_abs();
+xmm_op_imm!(
+    instr_660F3A42,
+    instr_660F3A42_reg,
+    instr_660F3A42_mem,
+    |d, s, imm| {
+        let source_offset = ((imm & 3) * 4) as usize;
+        let destination_offset = ((imm >> 2 & 1) * 4) as usize;
+        let mut r = reg128 { u16: [0; 8] };
+        for i in 0..8 {
+            let mut sum = 0;
+            for j in 0..4 {
+                sum += (d.u8[destination_offset + i + j] as i32 - s.u8[source_offset + j] as i32)
+                    .unsigned_abs();
+            }
+            r.u16[i] = sum as u16;
         }
-        r.u16[i] = sum as u16;
+        r
     }
-    r
-});
+);
 
 // pcmpestrm, pcmpestri, pcmpistrm, pcmpistri (sse4.2): compare the elements of the destination
 // register (a) with those of the source (b), as selected by imm8:
@@ -919,7 +1301,10 @@ fn pcmpstr(a: reg128, b: reg128, explicit: Option<(i64, i64)>, imm8: i32) -> Str
     };
     let implicit_len = |x: &reg128| (0..n).find(|&i| element(x, i) == 0).unwrap_or(n);
     let (len_a, len_b) = match explicit {
-        Some((la, lb)) => (la.unsigned_abs().min(n as u64) as u32, lb.unsigned_abs().min(n as u64) as u32),
+        Some((la, lb)) => (
+            la.unsigned_abs().min(n as u64) as u32,
+            lb.unsigned_abs().min(n as u64) as u32,
+        ),
         None => (implicit_len(&a), implicit_len(&b)),
     };
 
@@ -988,7 +1373,12 @@ fn pcmpstr(a: reg128, b: reg128, explicit: Option<(i64, i64)>, imm8: i32) -> Str
         3 => result1 ^ ((1u32 << len_b) - 1),
         _ => result1,
     };
-    StrCmp { result, elements: n, len_a, len_b }
+    StrCmp {
+        result,
+        elements: n,
+        len_a,
+        len_b,
+    }
 }
 
 unsafe fn pcmpstr_set_flags(c: &StrCmp) {
@@ -1058,7 +1448,9 @@ pub unsafe fn instr_660F3A63(source: reg128, r: i32, imm8: i32) {
 macro_rules! pcmpstr_forms {
     ($name:ident, $name_reg:ident, $name_mem:ident) => {
         #[no_mangle]
-        pub unsafe fn $name_reg(r1: i32, r2: i32, imm: i32) { $name(read_xmm128s(r1), r2, imm & 0xFF) }
+        pub unsafe fn $name_reg(r1: i32, r2: i32, imm: i32) {
+            $name(read_xmm128s(r1), r2, imm & 0xFF)
+        }
         #[no_mangle]
         pub unsafe fn $name_mem(addr: u64, r: i32, imm: i32) {
             $name(return_on_pagefault!(safe_read128s(addr)), r, imm & 0xFF)
