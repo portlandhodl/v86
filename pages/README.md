@@ -20,8 +20,9 @@ image server in [../server](../server/README.md). Nothing outside this directory
   under `moved` in `site.json` are published as redirects to their new addresses.
 - Icons: [../icons/](../icons/) holds the favicon (`favicon.svg`) and its PNG renders, used by
   every page and by the web app manifest.
-- [og.png](og.png): the 1200×630 link preview, rendered from [og-card.html](og-card.html)
-  around a screenshot of a booted machine (`terminal.png`).
+- [og.jpg](og.jpg): the 1200×630 link preview (a baseline JPEG well under 300 KB, which
+  WhatsApp needs), rendered from [og-card.html](og-card.html) around a screenshot of a
+  booted machine ([terminal.png](terminal.png)).
 
 To publish: Settings → Pages → Source: **GitHub Actions**; the workflow then deploys on every
 push to master. The image server must list the Pages origin (`https://<user>.github.io`) in

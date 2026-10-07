@@ -1,8 +1,10 @@
 <!doctype html>
 <!--
-    Source of og.png, the link preview of the Pages site. Render at 1200x630 with a
+    Source of og.jpg, the link preview of the Pages site. Render at 1200x630 with a
     screenshot of a booted machine saved next to it as terminal.png, e.g. with Chrome:
-    google-chrome -headless -screenshot=og.png -window-size=1200,630 og-card.html
+    google-chrome --headless --hide-scrollbars --window-size=1200,630 --screenshot=og.png og-card.html
+    magick og.png -strip -sampling-factor 4:4:4 -quality 88 og.jpg
+    (baseline JPEG under 300 KB: WhatsApp drops larger previews)
 -->
 <meta charset="utf-8">
 <style>
@@ -112,6 +114,7 @@
     .titlebar .mips { margin-left: auto; color: #3ad7ff; }
     .screen {
         position: relative;
+        padding: 12px 14px;
         background: #000;
         line-height: 0;
     }
