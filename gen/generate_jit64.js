@@ -231,6 +231,23 @@ function gen_instruction_body_after_fixed_g(encoding, size)
     {
         return ["jit64::instr_FB_jit64(ctx);"];
     }
+    if(encoding.opcode === 0xFA && !process.env.DISABLE_NATIVE_CLI)
+    {
+        // the cold #GP path of jit64::gen_cli calls the interpreter's handler
+        register_wrapper(encoding, "instr_FA", []);
+        return ["jit64::gen_cli(ctx);"];
+    }
+    if(!process.env.DISABLE_NATIVE_STRING &&
+        ([0xA4, 0xAA, 0xAC].includes(encoding.opcode) || encoding.opcode === 0xA5 && size !== 16 ||
+        encoding.opcode === 0xAB && size !== 16 || encoding.opcode === 0xAD && size !== 16))
+    {
+        // movs/stos/lods without rep: one flagless access plus rsi/rdi updates
+        const op = encoding.opcode;
+        const bits = op === 0xA4 || op === 0xAA || op === 0xAC ? 8 : size;
+        const kind = op === 0xA4 || op === 0xA5 ? "movs" : op === 0xAA || op === 0xAB ? "stos" : "lods";
+        const fallback = register_wrapper(encoding, name, []);
+        return [`jit64::gen_string_${kind}(ctx, ${bits}, "${fallback}");`];
+    }
     if(encoding.opcode === 0x8D)
     {
         return [`jit64::instr_8D_jit64(ctx, modrm_byte, ${size});`];
@@ -362,6 +379,8 @@ const ALU_OPS = { 0: "OP_ADD", 1: "OP_OR", 4: "OP_AND", 5: "OP_SUB", 6: "OP_XOR"
 // of natively compiled instructions (see native_group)
 const NATIVE64_SKIP = (process.env.NATIVE64_SKIP || "").split(",").filter(x => x);
 
+const SHIFT_OPS = [0xC0, 0xC1, 0xD0, 0xD1, 0xD2, 0xD3];
+
 function native_group(op, encoding)
 {
     if(op <= 0x3F && ((op >> 3) === 2 || (op >> 3) === 3)) return "adc";
@@ -375,7 +394,7 @@ function native_group(op, encoding)
     if(op >= 0x0FB6 && op <= 0x0FBF || op === 0x63) return "movx";
     if(op === 0xFE || op === 0xFF && encoding.fixed_g < 2) return "incdec";
     if(op === 0xC3) return "ret";
-    if(op === 0xC1 || op === 0xD1 || op === 0xD3) return "shift";
+    if(SHIFT_OPS.includes(op)) return "shift";
     if(op === 0x0FAF || op === 0x69 || op === 0x6B) return "imul";
     if((op & 0xFFF0) === 0x0F90 || (op & 0xFFF0) === 0x0F40) return "cc";
     if(op === 0xFF) return "jump";
@@ -395,12 +414,53 @@ function gen_native(encoding, size, imm, generic)
 
 function gen_native_any(encoding, size, imm, generic)
 {
+    const op = encoding.opcode;
+    // SSSE3 pshufb/palignr (register form): natively compiled like the other integer
+    // SSE instructions; the memory forms keep the interpreter's wrapper
+    if(op === 0x660F00 && encoding.map === 0x38)
+    {
+        const mem_wrapper = register_wrapper(encoding, "instr_660F3800_mem", ["u64", "i32"]);
+        return [{
+            type: "if-else",
+            if_blocks: [{
+                condition: "modrm_byte < 0xC0",
+                body: [
+                    "let addr = jit64::decode_modrm(ctx.cpu, modrm_byte);",
+                    `jit64::gen_generic_mem(ctx, "${mem_wrapper}", &addr, &[jit64::A::I32((modrm_byte >> 3 & 7) as i32 | ctx.cpu.rex_r() as i32)]);`,
+                ],
+            }],
+            else_block: {
+                body: ["jit64::gen_sse_pshufb(ctx, modrm_byte);"],
+            },
+        }];
+    }
+    if(op === 0x660F0F && encoding.map === 0x3A)
+    {
+        assert(imm && imm[1] === "I32");
+        const mem_wrapper = register_wrapper(encoding, "instr_660F3A0F_mem", ["u64", "i32", "i32"]);
+        return [{
+            type: "if-else",
+            if_blocks: [{
+                condition: "modrm_byte < 0xC0",
+                body: [
+                    "let addr = jit64::decode_modrm(ctx.cpu, modrm_byte);",
+                    `let imm = ${imm[0]};`,
+                    `jit64::gen_generic_mem(ctx, "${mem_wrapper}", &addr, &[jit64::A::I32((modrm_byte >> 3 & 7) as i32 | ctx.cpu.rex_r() as i32), jit64::A::I32(imm)]);`,
+                ],
+            }],
+            else_block: {
+                body: [
+                    `let imm = ${imm[0]};`,
+                    "jit64::gen_sse_palignr(ctx, imm, modrm_byte);",
+                ],
+            },
+        }];
+    }
     if(encoding.map)
     {
         // three-byte maps: their opcodes would alias 0F xx in the checks below
         return undefined;
     }
-    const op = encoding.opcode;
     const bits_of = wide => wide ? size : 8;
     const R = "r";
     const RM_REG = "((modrm_byte & 7) as u32 | ctx.cpu.rex_b())";
@@ -432,9 +492,9 @@ function gen_native_any(encoding, size, imm, generic)
     {
         return ["jit64::gen_sse_mov_store(ctx, modrm_byte);"];
     }
-    if(op === 0x660FFC || op === 0x660FFD || op === 0x660FFE)
+    if([0x660FFC, 0x660FFD, 0x660FFE, 0x660FF8, 0x660FF9, 0x660FFA].includes(op))
     {
-        // paddb/paddw/paddd: native for the register form
+        // paddb/paddw/paddd/psubb/psubw/psubd: native for the register form
         assert(!imm);
         const mem_wrapper = register_wrapper(encoding, `instr_${sse_nm}_mem`, ["u64", "i32"]);
         return [{
@@ -633,22 +693,36 @@ function gen_native_any(encoding, size, imm, generic)
     {
         return ["jit64::gen_ret64(ctx, 0);"];
     }
-    if((op === 0xC1 || op === 0xD1 || op === 0xD3) && size !== 16 && [0, 1, 4, 5, 7].includes(encoding.fixed_g))
+    if(!process.env.DISABLE_NATIVE_SHIFT && SHIFT_OPS.includes(op) && [0, 1, 4, 5, 7].includes(encoding.fixed_g))
     {
-        if(op === 0xD3)
+        const bits = (op === 0xC1 || op === 0xD1 || op === 0xD3) ? size : 8;
+        const kind = encoding.fixed_g;
+        // rotates are only native for 32/64-bit operands: for 8/16-bit rotates the
+        // effective count wraps at the operand width and the flags differ
+        if(kind < 4 && bits < 32)
         {
-            return modrm_form(size, rm => [`jit64::gen_shift(ctx, ${encoding.fixed_g}, ${size}, ${rm}, jit64::ShiftCount::Cl);`]);
+            return undefined;
         }
-        // shifts by a constant (the count byte follows the modrm operand)
-        return modrm_form(size, (rm, i) => [].concat(
-            op === 0xC1 ?
-                [`let count = match ${i} { jit64::Opnd::Imm(i) => i as u32, _ => 0 } & ${size - 1};`] :
-                ["let count = 1;"],
+        if(op === 0xD2 || op === 0xD3)
+        {
+            return modrm_form(bits, rm => [`jit64::gen_shift(ctx, ${kind}, ${bits}, ${rm}, jit64::ShiftCount::Cl);`]);
+        }
+        if(op === 0xD0 || op === 0xD1)
+        {
+            return modrm_form(bits, rm => [`jit64::gen_shift(ctx, ${kind}, ${bits}, ${rm}, jit64::ShiftCount::Imm(1));`]);
+        }
+        // shifts by a constant (the count byte follows the modrm operand); counts are
+        // masked to 5 bits (6 for 64-bit operands), like the interpreter's handlers
+        const count_mask = bits === 64 ? 63 : 31;
+        return modrm_form(bits, (rm, i) => [].concat(
+            [`let count = match ${i} { jit64::Opnd::Imm(i) => i as u32, _ => 0 } & ${count_mask};`],
             {
                 type: "if-else",
-                if_blocks: [{ condition: "count != 0", body: [`jit64::gen_shift(ctx, ${encoding.fixed_g}, ${size}, ${rm}, jit64::ShiftCount::Imm(count));`] }],
-                // note: the interpreter writes the (unchanged) register, which zero-extends it
-                else_block: { body: [`jit64::gen_shift_by_zero(ctx, ${size}, ${rm});`] },
+                if_blocks: [{ condition: "count != 0", body: [`jit64::gen_shift(ctx, ${kind}, ${bits}, ${rm}, jit64::ShiftCount::Imm(count));`] }],
+                // note: the interpreter writes the (unchanged) register, which zero-extends
+                // 32-bit operands; for 8/16 bits the register write is a no-op and the
+                // memory operand is still read and written back (gen_shift_by_zero)
+                else_block: { body: [`jit64::gen_shift_by_zero(ctx, ${bits}, ${rm});`] },
             }
         ));
     }

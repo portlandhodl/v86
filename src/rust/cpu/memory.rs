@@ -367,6 +367,56 @@ pub unsafe fn memset_no_mmap_or_dirty_check(addr: u64, value: u8, count: u32) {
     guest::fill(phys_to_host(addr), value, count as u64)
 }
 
+/// rep stosw/stosd/stosq: fill count elements of the given size (the caller ensures the
+/// address is element-aligned and not in mmio)
+pub unsafe fn memset16_no_mmap_or_dirty_check(addr: u64, value: u16, count: u32) {
+    let mut a = phys_to_host(addr);
+    let pattern = (value as u64) * 0x0001_0001_0001_0001;
+    let mut c = count;
+    if c >= 4 && a & 7 == 6 {
+        guest::store16(a, value);
+        a += 2;
+        c -= 1;
+    }
+    while c >= 4 {
+        guest::store64(a, pattern);
+        a += 8;
+        c -= 4;
+    }
+    while c != 0 {
+        guest::store16(a, value);
+        a += 2;
+        c -= 1;
+    }
+}
+
+pub unsafe fn memset32_no_mmap_or_dirty_check(addr: u64, value: u32, count: u32) {
+    let mut a = phys_to_host(addr);
+    let pattern = value as u64 | (value as u64) << 32;
+    let mut c = count;
+    if c >= 2 && a & 7 == 4 {
+        guest::store32(a, value);
+        a += 4;
+        c -= 1;
+    }
+    while c >= 2 {
+        guest::store64(a, pattern);
+        a += 8;
+        c -= 2;
+    }
+    if c == 1 {
+        guest::store32(a, value);
+    }
+}
+
+pub unsafe fn memset64_no_mmap_or_dirty_check(addr: u64, value: u64, count: u32) {
+    let mut a = phys_to_host(addr);
+    for _ in 0..count {
+        guest::store64(a, value);
+        a += 8;
+    }
+}
+
 pub unsafe fn memcpy_no_mmap_or_dirty_check(src_addr: u64, dst_addr: u64, count: u32) {
     dbg_assert!(!in_mapped_range(src_addr));
     dbg_assert!(!in_mapped_range(dst_addr));

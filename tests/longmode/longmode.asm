@@ -1364,10 +1364,126 @@ t109_3:
     movq rbx, xmm11
     mov [r15 + 126*8], rbx           ; 0x0000000013121110
 
-    ; mask all PIC interrupts: user mode runs with IF set below (test 84)
-    mov al, 0xFF
-    out 0x21, al
-    out 0xA1, al
+    ; ======== tests 127-141: natively compiled 8/16-bit shifts, cli and
+    ; pshufb/palignr, in a hot loop so the jitted paths are validated ========
+    mov r10d, 2000
+t127_loop:
+        ; ======== test 127-135: natively compiled 8/16-bit shifts ========
+        ; shl r8 by a count larger than the operand: result 0, cf = 0
+        mov bl, 0xFF
+        shl bl, 9
+        movzx rbx, bl
+        mov [r15 + 127*8], rbx           ; 0
+        ; cf after shl r8, 4 (bit 4 of 0xFF shifted out)
+        mov bl, 0xFF
+        shl bl, 4
+        setc al
+        movzx rbx, bl
+        movzx rax, al
+        shl rax, 8
+        or  rbx, rax                     ; value 0xF0 in the low byte, cf in bit 8
+        mov [r15 + 128*8], rbx           ; 0x1F0
+        ; shr r16 by 12
+        mov bx, 0x8765
+        shr bx, 12
+        movzx rbx, bx
+        mov [r15 + 129*8], rbx           ; 0x8
+        ; sar r8 with a count larger than the operand: sign fill, cf = sign
+        mov bl, 0x80
+        sar bl, 12
+        movzx rbx, bl
+        setc al
+        movzx rax, al
+        shl rax, 8
+        or  rbx, rax
+        mov [r15 + 130*8], rbx           ; 0x1FF
+        ; sar r8, 3
+        mov bl, 0x70
+        sar bl, 3
+        movzx rbx, bl
+        mov [r15 + 131*8], rbx           ; 0x0E
+        ; shl m16 by 20
+        mov word [abs 0x92800], 0xABCD
+        shl word [abs 0x92800], 20
+        movzx rbx, word [abs 0x92800]
+        mov [r15 + 132*8], rbx           ; 0
+        ; D2: shl r8, cl with cl > 8 (masked to 5 bits)
+        mov cl, 35
+        mov bl, 0x41
+        shl bl, cl
+        movzx rbx, bl
+        mov [r15 + 133*8], rbx           ; 0x08
+        ; D3: shr r16, cl
+        mov cl, 1
+        mov bx, 0x8000
+        shr bx, cl
+        movzx rbx, bx
+        mov [r15 + 134*8], rbx           ; 0x4000
+        ; D0: sar r8, 1
+        mov bl, 0xF0
+        sar bl, 1
+        movzx rbx, bl
+        mov [r15 + 135*8], rbx           ; 0xF8
+
+        ; mask all PIC interrupts: user mode runs with IF set below (test 84)
+        mov al, 0xFF
+        out 0x21, al
+        out 0xA1, al
+
+        ; ======== test 136: natively compiled cli (IF cleared at cpl 0, then sti) ========
+        cli
+        pushfq
+        pop rax
+        and rax, 0x200
+        mov [r15 + 136*8], rax           ; 0 (IF clear)
+        sti
+
+        ; ======== test 137-141: natively compiled pshufb/palignr (register source) ========
+        ; pshufb: selector = 02 81 0F 00 1F 04 80 06 | 07 08 09 0A 0B 0C 0D 0E,
+        ; data = 0x10..0x1F
+        mov rax, 0x0680041F000F8102
+        mov [abs 0x92800], rax
+        mov rax, 0x0E0D0C0B0A090807
+        mov [abs 0x92800 + 8], rax
+        movdqa xmm5, [abs 0x92800]
+        mov rax, 0x1716151413121110
+        mov [abs 0x92800 + 16], rax
+        mov rax, 0x1F1E1D1C1B1A1918
+        mov [abs 0x92800 + 24], rax
+        movdqa xmm6, [abs 0x92800 + 16]
+        pshufb xmm6, xmm5
+        movdqa [abs 0x92800 + 16], xmm6
+        mov rbx, [abs 0x92800 + 16]
+        mov [r15 + 137*8], rbx
+        mov rbx, [abs 0x92800 + 24]
+        mov [r15 + 138*8], rbx
+        ; palignr: dst = 0x10..0x1F, src = 0x00..0x0F, shift 5
+        mov rax, 0x1716151413121110
+        mov [abs 0x92800 + 16], rax
+        mov rax, 0x1F1E1D1C1B1A1918
+        mov [abs 0x92800 + 24], rax
+        mov rax, 0x0706050403020100
+        mov [abs 0x92800], rax
+        mov rax, 0x0F0E0D0C0B0A0908
+        mov [abs 0x92800 + 8], rax
+        movdqa xmm7, [abs 0x92800 + 16]
+        movdqa xmm8, [abs 0x92800]
+        palignr xmm7, xmm8, 5
+        movdqa [abs 0x92800 + 16], xmm7
+        mov rbx, [abs 0x92800 + 16]
+        mov [r15 + 139*8], rbx
+        ; palignr with shift 17: entirely from the destination
+        movdqa xmm7, [abs 0x92800 + 16]
+        palignr xmm7, xmm8, 17
+        movq rbx, xmm7
+        mov [r15 + 140*8], rbx
+        ; palignr with shift 40: zero
+        palignr xmm7, xmm8, 40
+        movq rbx, xmm7
+        mov [r15 + 141*8], rbx
+    dec r10d
+    jnz t127_loop
+
 
     ; set DF before the syscall: r11 must carry it, rflags must lose it
     pushfq
