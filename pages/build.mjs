@@ -7,10 +7,8 @@
 // verified and published with the site, as a fallback catalogue used while the image server is
 // unreachable.
 //
-// The examples listed under "examples" are published too, with what they load (currently
-// examples/bitcoin-wallet-check.html and examples/anchorwatch-recovery.html: Alpine's kernel and
-// initramfs from the bundled ISO, which needs bsdtar, Bitcoin Core from tools/stage-bitcoin.sh,
-// which needs an x86_64 glibc host, and the example's own "files").
+// The pages listed under "moved" are published as redirects to where they live now (the Bitcoin
+// tools moved to https://github.com/portlandhodl/wasm-bitcoin-tools), so old links keep working.
 //
 //   make all build/v86-fallback.wasm && node pages/build.mjs [--out _site] [--catalogue <url>]
 
@@ -18,7 +16,6 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..");
@@ -131,54 +128,19 @@ function card_tags({ url, title, description, image, image_alt, site_name = "v86
     ].join("\n");
 }
 
-// examples published with the site (pages/site.json "examples"), each with its own link preview
-for(const example of site.examples || [])
+// pages that moved elsewhere: a redirect at the old address
+for(const { page, to } of site.moved || [])
 {
-    // the examples that run Bitcoin Core in Alpine
-    if(!["bitcoin-wallet-check", "anchorwatch-recovery"].includes(example.page)) throw new Error(`unknown example ${example.page}`);
-    // Alpine's kernel and initramfs, from the bundled ISO, and Bitcoin Core with its glibc runtime
-    const alpine = site.bundle.find(item => item.file.startsWith("alpine-virt-"));
-    if(!alpine) throw new Error(`${example.page} needs the Alpine virt ISO in bundle`);
-    const alpine_name = alpine.file.replace(/\.iso$/, "");
-    const boot = path.join(root, "images", alpine_name, "boot");
-    if(!fs.existsSync(path.join(boot, "vmlinuz-virt")))
-    {
-        execFileSync(path.join(root, "tools/stage-images.sh"), [path.join(cache, alpine.file)], { stdio: "inherit" });
-    }
-    const bitcoin = path.join(root, "images", "bitcoin");
-    if(!fs.existsSync(path.join(bitcoin, "manifest.json")))
-    {
-        execFileSync(path.join(root, "tools/stage-bitcoin.sh"), [], { stdio: "inherit" });
-    }
-    const copy = (src, dest) =>
-    {
-        fs.mkdirSync(path.dirname(path.join(out, dest)), { recursive: true });
-        fs.copyFileSync(src, path.join(out, dest));
-    };
-    for(const file of ["vmlinuz-virt", "initramfs-virt"]) copy(path.join(boot, file), `images/${alpine_name}/boot/${file}`);
-    const manifest = JSON.parse(fs.readFileSync(path.join(bitcoin, "manifest.json"), "utf8"));
-    for(const file of ["manifest.json", ...manifest.files.map(f => f.name)]) copy(path.join(bitcoin, file), `images/bitcoin/${file}`);
-    copy(path.join(root, "build/libv86.js"), "build/libv86.js");
-    const page = `examples/${example.page}.html`;
-    let page_html = fs.readFileSync(path.join(root, page), "utf8");
-    if(!/<\/title>\n/.test(page_html)) throw new Error(`${page}: no <title> to insert the meta tags after`);
-    page_html = page_html.replace(/<\/title>\n/, () => "</title>\n" + card_tags({
-        url: new URL(page, site_url).href,
-        ...example,
-    }) + `\n<meta name="description" content="${escape(example.description)}">\n<meta name="theme-color" content="${example.theme_color || "#f7931a"}">\n`);
+    const target = escape(to);
     fs.mkdirSync(path.dirname(path.join(out, page)), { recursive: true });
-    fs.writeFileSync(path.join(out, page), page_html);
-    if(example.image) copy(path.join(here, example.image), example.image);
-    // the example's own files (demo wallets, the sample kit): "dir/*.ext" or a path
-    for(const pattern of example.files || [])
-    {
-        const dir = path.dirname(pattern), base = path.basename(pattern);
-        const match = base.startsWith("*") ? f => f.endsWith(base.slice(1)) : f => f === base;
-        const found = fs.readdirSync(path.join(root, dir)).filter(match);
-        if(!found.length) throw new Error(`${example.page}: nothing matches ${pattern}`);
-        for(const file of found) copy(path.join(root, dir, file), `${dir}/${file}`);
-    }
-    console.log(`example: ${page} (Bitcoin Core ${manifest.bitcoin_core})`);
+    fs.writeFileSync(path.join(out, page), `<!doctype html>
+<meta charset="utf-8">
+<title>Moved</title>
+<link rel="canonical" href="${target}">
+<meta http-equiv="refresh" content="0; url=${target}">
+<p>This page moved to <a href="${target}">${target}</a>.</p>
+`);
+    console.log(`moved: ${page} -> ${to}`);
 }
 
 // the image server first, the bundled machines while it's unreachable

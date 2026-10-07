@@ -15,11 +15,9 @@ image server in [../server](../server/README.md). Nothing outside this directory
   published with the site. The page tries the image server's catalogue first and falls back
   to the bundled one when the server is unreachable or has nothing ready, so the site works
   before (or without) an image server. Pages serves range requests, so they stream the same way.
-- **Examples**: the pages under `examples` in `site.json` are published with what they load,
-  each with its own link preview (title, description, image) and its own `files`. Currently the
-  Bitcoin Core wallet check, whose card [og-bitcoin-wallet-check.png](og-bitcoin-wallet-check.png)
-  is rendered from [og-bitcoin-wallet-check.html](og-bitcoin-wallet-check.html), and the
-  AnchorWatch vault recovery check (no card image yet).
+- **Moved pages**: the Bitcoin tools (the wallet check and the AnchorWatch recovery check) now
+  live in [wasm-bitcoin-tools](https://github.com/portlandhodl/wasm-bitcoin-tools). The pages
+  under `moved` in `site.json` are published as redirects to their new addresses.
 - Icons: [../icons/](../icons/) holds the favicon (`favicon.svg`) and its PNG renders, used by
   every page and by the web app manifest.
 - [og.png](og.png): the 1200×630 link preview, rendered from [og-card.html](og-card.html)
