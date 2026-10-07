@@ -168,6 +168,41 @@ Setup (from the repository root):
                 white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; font-size: 12px; }
     .step pre:empty { display: none; }
 
+    /* descriptors and addresses */
+    #addresses { margin-top: 12px; padding: 16px 18px; }
+    #addresses h3 { margin: 0 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+    #addresses .hint { color: var(--muted); font-size: 13.5px; margin: 0 0 14px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+    .tabs button { font: inherit; font-size: 13.5px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line2);
+                   background: var(--card); color: var(--fg); cursor: pointer; }
+    .tabs button[aria-selected=true] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
+    .origin { font-size: 13px; color: var(--muted); margin-bottom: 10px; overflow-wrap: anywhere; }
+    .origin code { color: var(--fg); }
+    .chains { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .chainbox { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-width: 0; background: var(--card2); }
+    .chainbox .head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; white-space: nowrap; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 14px; }
+    .chainbox .head .path { color: var(--muted); font-weight: normal; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+    .mini { margin-left: auto; font: inherit; font-size: 12px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--line2);
+            background: var(--card); color: var(--fg); cursor: pointer; }
+    .mini:hover { border-color: var(--accent); }
+    .mini + .mini { margin-left: 0; }
+    ol.addrs { list-style: none; margin: 0; padding: 4px 0; }
+    ol.addrs li { display: flex; gap: 8px; padding: 3px 10px; align-items: baseline; cursor: copy; }
+    ol.addrs li:hover { background: var(--accent-bg); }
+    ol.addrs .i { color: var(--muted); width: 1.4em; text-align: right; flex: none; font-size: 12px; }
+    ol.addrs .a { word-break: break-all; font-size: 11.5px; letter-spacing: -.01em; }
+    ol.addrs .issued { margin-left: auto; font: 11px system-ui, sans-serif; padding: 1px 7px; border-radius: 999px;
+                       background: var(--accent-bg); color: var(--accent-strong); flex: none; }
+    .chainbox .desc { border-top: 1px solid var(--line); padding: 8px 12px; font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+    .chainbox .err { padding: 10px 12px; color: var(--bad); font-size: 13px; }
+    details.others { margin-top: 14px; font-size: 13.5px; }
+    details.others summary { cursor: pointer; color: var(--muted); }
+    details.others ul { margin: 8px 0 0; padding-left: 18px; }
+    details.others li { overflow-wrap: anywhere; font-size: 12px; margin: 4px 0; }
+    .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--fg); color: var(--bg);
+             padding: 8px 16px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+    .toast.show { opacity: 1; }
+
     details.console { margin-top: 28px; }
     details.console summary { cursor: pointer; color: var(--muted); font-size: 14px; }
     #serial { background: var(--term-bg); color: var(--term-fg); padding: 12px; border-radius: 10px; height: 320px; overflow: auto;
@@ -175,7 +210,7 @@ Setup (from the repository root):
     .error { color: var(--bad); }
     footer { color: var(--muted); font-size: 12.5px; margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); }
     @media (max-width: 700px) {
-        .own, .grid2 { grid-template-columns: 1fr; }
+        .own, .grid2, .chains { grid-template-columns: 1fr; }
         .drop { border-right: 0; border-bottom: 1px solid var(--line); }
         header.hero { padding-top: 24px; }
     }
@@ -244,6 +279,7 @@ Setup (from the repository root):
             <div class="panel card"><h3>Summary</h3><dl class="summary" id="summary"></dl></div>
             <div class="panel card"><h3>Steps in the guest</h3><div id="steps"></div></div>
         </div>
+        <div id="addresses" class="card" hidden></div>
     </section>
 
     <details class="console">
@@ -252,6 +288,7 @@ Setup (from the repository root):
     </details>
 
     <footer id="footer"></footer>
+    <div class="toast" id="toast" role="status"></div>
 </main>
 
 <script>
@@ -386,8 +423,29 @@ step info
 $CLI -rpcwallet="$NAME" getwalletinfo 2>&1
 end info $?
 step descriptors
-$CLI -rpcwallet="$NAME" listdescriptors 2>&1
-end descriptors $?
+$CLI -rpcwallet="$NAME" listdescriptors > $D/descs 2>&1
+rc=$?
+cat $D/descs
+end descriptors $rc
+step addresses
+# the first 10 addresses (index 0-9) of each active descriptor, receive and change, derived
+# from the public descriptor: the wallet itself is not touched. One line per descriptor:
+#   addr <internal> <descriptor> <address>,<address>,...
+awk -F'"' '
+    /"desc":/ { if(d != "") print a, i, d; d = $4; a = "false"; i = "false" }
+    /"active": true/ { a = "true" }
+    /"internal": true/ { i = "true" }
+    END { if(d != "") print a, i, d }' $D/descs |
+while read -r active internal desc; do
+    [ "$active" = true ] || continue
+    out=$($CLI deriveaddresses "$desc" "[0,9]" 2>&1)
+    if [ $? = 0 ]; then
+        echo "addr $internal $desc $(echo "$out" | tr -d ' []"' | tr '\n' ',' | sed 's/^,*//; s/,*$//')"
+    else
+        echo "addr-error $internal $desc $(echo "$out" | tr '\n' ' ')"
+    fi
+done
+end addresses 0
 if [ -n "$PASS" ]; then
     step passphrase
     printf '%s\n' "$PASS" 5 | $CLI -stdin -rpcwallet="$NAME" walletpassphrase 2>&1
@@ -636,7 +694,7 @@ function parse_line(line)
     }
 }
 
-const STEP_ORDER = ["file", "node", "net", "chain", "import", "info", "descriptors", "passphrase", "unload"];
+const STEP_ORDER = ["file", "node", "net", "chain", "import", "info", "descriptors", "addresses", "passphrase", "unload"];
 const STEP_TITLES = {
     file: "Wallet file",
     node: "bitcoind",
@@ -645,6 +703,7 @@ const STEP_TITLES = {
     import: "Import (restorewallet / migratewallet)",
     info: "Wallet (getwalletinfo)",
     descriptors: "Descriptors (listdescriptors)",
+    addresses: "Addresses (deriveaddresses)",
     passphrase: "Passphrase (walletpassphrase)",
     unload: "Unload (unloadwallet)",
 };
@@ -683,6 +742,181 @@ function render_step(step)
     step.el.querySelector("pre").textContent = step.lines.join("\n");
 }
 
+// --- descriptors and addresses ---------------------------------------------------------------------
+
+const SCRIPT_TYPES = [
+    { re: /^tr\(/, name: "Taproot", detail: "P2TR, BIP86" },
+    { re: /^wpkh\(/, name: "Native SegWit", detail: "P2WPKH, BIP84" },
+    { re: /^sh\(wpkh\(/, name: "Nested SegWit", detail: "P2SH-P2WPKH, BIP49" },
+    { re: /^pkh\(/, name: "Legacy", detail: "P2PKH, BIP44" },
+];
+
+function script_type(desc)
+{
+    return SCRIPT_TYPES.find(t => t.re.test(desc)) || { name: desc.replace(/\(.*$/, ""), detail: "" };
+}
+
+// [fingerprint/84h/0h/0h]xpub.../0/*  ->  { fingerprint, path: "m/84h/0h/0h", branch: "/0/*" }
+function key_origin(desc)
+{
+    const m = /\[([0-9a-f]{8})((?:\/\d+['h]?)*)\]\w+((?:\/\d+['h]?)*\/\*['h]?)?/.exec(desc);
+    return m ? { fingerprint: m[1], path: "m" + m[2].replace(/'/g, "h"), branch: m[3] || "" } : null;
+}
+
+let toast_timer;
+function copy_text(text, what)
+{
+    const done = () =>
+    {
+        $("toast").textContent = "Copied " + what;
+        $("toast").classList.add("show");
+        clearTimeout(toast_timer);
+        toast_timer = setTimeout(() => $("toast").classList.remove("show"), 1400);
+    };
+    if(navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => {});
+}
+
+function render_addresses()
+{
+    const box = $("addresses");
+    const step = current.steps.find(s => s.name === "addresses");
+    const derived = [];
+    for(const line of step ? step.lines : [])
+    {
+        const m = /^(addr|addr-error) (true|false) (\S+) ?(.*)$/.exec(line);
+        if(m) derived.push({ ok: m[1] === "addr", internal: m[2] === "true", desc: m[3],
+                             addresses: m[1] === "addr" ? m[4].split(",").filter(Boolean) : [], error: m[1] === "addr" ? "" : m[4] });
+    }
+    const list = current.steps.find(s => s.name === "descriptors");
+    const all = (list && step_json(list) || {}).descriptors || [];
+    if(!derived.length && !all.length) { box.hidden = true; return; }
+
+    // receive and change descriptors of one script type and account, side by side
+    const groups = [];
+    for(const d of derived)
+    {
+        const type = script_type(d.desc), origin = key_origin(d.desc);
+        const key = type.name + " " + (origin ? origin.fingerprint + origin.path : d.desc);
+        let g = groups.find(g => g.key === key);
+        if(!g) groups.push(g = { key, type, origin, receive: null, change: null });
+        g[d.internal ? "change" : "receive"] = d;
+    }
+    groups.sort((a, b) => SCRIPT_TYPES.indexOf(a.type) - SCRIPT_TYPES.indexOf(b.type));
+
+    box.innerHTML = "<h3>Descriptors and addresses</h3><p class=hint></p><div class=tabs role=tablist></div><div class=pane></div>";
+    box.querySelector(".hint").textContent = groups.length ?
+        "The first 10 receive and change addresses (index 0\u20139) of each active descriptor, derived by bitcoind from the " +
+        "wallet's public descriptors. Compare them with your other wallet software or hardware wallet. Addresses marked " +
+        "\u201cissued\u201d have already been handed out by the wallet (below its next index). Click an address to copy it." :
+        "The wallet has no active descriptors, so no addresses are derived.";
+    const pane = box.querySelector(".pane");
+
+    function show(g)
+    {
+        for(const b of box.querySelectorAll(".tabs button")) b.setAttribute("aria-selected", b.dataset.key === g.key);
+        pane.textContent = "";
+        const origin = document.createElement("div");
+        origin.className = "origin";
+        origin.innerHTML = g.type.detail ? "<b></b> \u00b7 " : "<b></b>";
+        origin.querySelector("b").textContent = g.type.name + (g.type.detail ? " (" + g.type.detail + ")" : "");
+        if(g.origin)
+        {
+            origin.append("master fingerprint ");
+            const fp = document.createElement("code");
+            fp.textContent = g.origin.fingerprint;
+            origin.append(fp, ", account ");
+            const path = document.createElement("code");
+            path.textContent = g.origin.path;
+            origin.append(path);
+        }
+        pane.appendChild(origin);
+        const chains = document.createElement("div");
+        chains.className = "chains";
+        for(const [label, d] of [["Receive", g.receive], ["Change", g.change]])
+        {
+            if(!d) continue;
+            const c = document.createElement("div");
+            c.className = "chainbox";
+            c.innerHTML = "<div class=head><span class=label></span><span class=path></span>" +
+                "<button class=mini data-copy=addresses title=\"Copy the 10 addresses\">Copy all</button>" +
+                "<button class=mini data-copy=desc title=\"Copy the descriptor\">Descriptor</button></div>";
+            c.querySelector(".label").textContent = label;
+            const o = key_origin(d.desc);
+            c.querySelector(".path").textContent = o ? o.path + o.branch : "";
+            c.querySelector("[data-copy=addresses]").onclick = () => copy_text(d.addresses.join("\n"), label.toLowerCase() + " addresses");
+            c.querySelector("[data-copy=desc]").onclick = () => copy_text(d.desc, label.toLowerCase() + " descriptor");
+            if(d.ok)
+            {
+                const listed = all.find(x => x.desc === d.desc);
+                const next_index = listed && listed.next_index || 0;
+                const ol = document.createElement("ol");
+                ol.className = "addrs mono";
+                d.addresses.forEach((a, i) =>
+                {
+                    const li = document.createElement("li");
+                    li.innerHTML = "<span class=i></span><span class=a></span>";
+                    li.querySelector(".i").textContent = i;
+                    li.querySelector(".a").textContent = a;
+                    if(i < next_index)
+                    {
+                        const tag = document.createElement("span");
+                        tag.className = "issued";
+                        tag.textContent = "issued";
+                        tag.title = "The wallet has already handed out this address (next index " + next_index + ")";
+                        li.appendChild(tag);
+                    }
+                    li.title = "Copy " + a;
+                    li.onclick = () => copy_text(a, label.toLowerCase() + " address " + i);
+                    ol.appendChild(li);
+                });
+                c.appendChild(ol);
+            }
+            else
+            {
+                const err = document.createElement("div");
+                err.className = "err";
+                err.textContent = "Cannot derive addresses: " + d.error;
+                c.appendChild(err);
+            }
+            const desc = document.createElement("div");
+            desc.className = "desc mono";
+            desc.textContent = d.desc;
+            c.appendChild(desc);
+            chains.appendChild(c);
+        }
+        pane.appendChild(chains);
+    }
+    for(const g of groups)
+    {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.setAttribute("role", "tab");
+        b.dataset.key = g.key;
+        b.textContent = g.type.name;
+        b.onclick = () => show(g);
+        box.querySelector(".tabs").appendChild(b);
+    }
+    if(groups.length) show(groups[0]);
+
+    const others = all.filter(d => !d.active);
+    if(others.length)
+    {
+        const det = document.createElement("details");
+        det.className = "others";
+        det.innerHTML = "<summary></summary><ul class=mono></ul>";
+        det.querySelector("summary").textContent = others.length + " inactive descriptor" + (others.length > 1 ? "s" : "") +
+            " (imported or migrated keys; no addresses are derived from them)";
+        for(const d of others)
+        {
+            const li = document.createElement("li");
+            li.textContent = d.desc;
+            det.querySelector("ul").appendChild(li);
+        }
+        box.appendChild(det);
+    }
+    box.hidden = false;
+}
+
 function finish_step(step)
 {
     render_step(step);
@@ -692,6 +926,7 @@ function finish_step(step)
     step.el.className = "step " + (step.rc === 0 ? "ok" : "bad");
     step.el.querySelector(".si").textContent = step.rc === 0 ? "✓" : "✕";
     if(step.rc !== 0) step.el.open = true;
+    if(step.name === "addresses") render_addresses();
     update_summary();
 }
 
@@ -755,6 +990,14 @@ function update_summary()
         const active = desc.descriptors.filter(d => d.active).length;
         add_summary("Descriptors", desc.descriptors.length + " (" + active + " active): " +
             desc.descriptors.map(d => d.desc.replace(/\(.*$/, "")).filter((v, i, a) => a.indexOf(v) === i).join(", "));
+    }
+    const addrs = by_name.addresses;
+    if(addrs && addrs.rc !== undefined)
+    {
+        const n = addrs.lines.filter(l => l.startsWith("addr ")).length;
+        const bad = addrs.lines.filter(l => l.startsWith("addr-error ")).length;
+        add_summary("Addresses", n ? "first 10 of " + n + " active descriptor" + (n > 1 ? "s" : "") + " (see below)" +
+            (bad ? "; " + bad + " could not be derived" : "") : "no active descriptors", bad ? "error" : "");
     }
     const pass = by_name.passphrase;
     if(pass && pass.rc !== undefined)
@@ -828,6 +1071,8 @@ async function run_next()
     $("result").hidden = false;
     $("steps").textContent = "";
     $("summary").textContent = "";
+    $("addresses").hidden = true;
+    $("addresses").textContent = "";
     for(const name of STEP_ORDER) if(name !== "passphrase" || job.passphrase) step_element(name);
     set_verdict("wait", "Checking " + job.file_name + "…", "Each step runs in the guest; expand one to see its output.");
     if(job.demo) for(const b of document.querySelectorAll(".demo")) b.classList.toggle("active", b.dataset.file === job.demo);
