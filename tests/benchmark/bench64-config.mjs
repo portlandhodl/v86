@@ -16,7 +16,7 @@ const asm_file = path.join(__dirname, "bench64.asm");
 const bin_file = path.join(__dirname, `bench${mode}.bin`);
 execFileSync("nasm", ["-w+error", "-f", "bin", ...(mode === "64" ? ["-DMODE64"] : []), "-o", bin_file, asm_file]);
 
-for (let r = 0; r < runs; r++) {
+for(let r = 0; r < runs; r++) {
     await new Promise(resolve => {
         const emulator = new V86({
             wasm_path: root_path + "/build/v86.wasm",
@@ -25,9 +25,9 @@ for (let r = 0; r < runs; r++) {
             memory_size: 64 * 1024 * 1024,
             log_level: 0,
         });
-        if (config) {
+        if(config) {
             emulator.bus.register("emulator-started", () => {
-                for (const kv of config.split(" ")) {
+                for(const kv of config.split(" ")) {
                     const [k, v] = kv.split("=");
                     emulator.v86.cpu.wm.exports["set_jit_config"](+k, +v);
                 }
@@ -36,7 +36,7 @@ for (let r = 0; r < runs; r++) {
         let start;
         emulator.bus.register("emulator-started", () => { start = performance.now(); });
         emulator.add_listener("serial0-output-byte", byte => {
-            if (byte !== 0x4B) return;
+            if(byte !== 0x4B) return;
             const elapsed = performance.now() - start;
             const instructions = emulator.get_instruction_counter();
             console.log(`run ${r}: ${(instructions / elapsed / 1000).toFixed(1)} MIPS`);

@@ -17,7 +17,7 @@ const emulator = new V86({
 });
 const cfg = Object.fromEntries((process.argv[2] || "").split(",").filter(s => s).map(s => s.split("=")).map(([a,b])=>[+a,+b]));
 emulator.bus.register("emulator-started", () => {
-    for (const [k, v] of Object.entries(cfg)) emulator.v86.cpu.wm.exports["set_jit_config"](k, v);
+    for(const [k, v] of Object.entries(cfg)) emulator.v86.cpu.wm.exports["set_jit_config"](k, v);
 });
 const start = Date.now();
 let output = "";
