@@ -1,4 +1,3 @@
-
 #![allow(non_snake_case)]
 
 //! Code generation for 64-bit (long mode) code.
@@ -193,8 +192,11 @@ fn gen_profile_count(ctx: &mut JitContext, name: &str) {
 #[no_mangle]
 pub unsafe fn jit64_print_profile() {
     #[allow(static_mut_refs)]
-    let mut v: Vec<(u32, &String)> =
-        PROFILE_NAMES.iter().enumerate().map(|(i, n)| (PROFILE_COUNTS[i], n)).collect();
+    let mut v: Vec<(u32, &String)> = PROFILE_NAMES
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (PROFILE_COUNTS[i], n))
+        .collect();
     v.sort_by(|a, b| b.0.cmp(&a.0));
     for (count, name) in v.iter().take(40) {
         dbg_log!("{:>12} {}", count, name);
@@ -225,7 +227,10 @@ fn gen_call_wrapper(ctx: &mut JitContext, name: &str, mem: Option<&Modrm64>, arg
                 i32_args += 1;
             },
             A::I64(x) => {
-                dbg_assert!(i == 0 && mem.is_none(), "only the first argument can be 64-bit");
+                dbg_assert!(
+                    i == 0 && mem.is_none(),
+                    "only the first argument can be 64-bit"
+                );
                 ctx.builder.const_i64(x as i64);
                 first_is_i64 = true;
             },
@@ -367,9 +372,8 @@ pub fn jit_instruction(ctx: &mut JitContext, instr_flags: &mut u32) {
 fn jit_opcode(ctx: &mut JitContext, instr_flags: &mut u32) {
     let opcode = ctx.cpu.read_imm8() as u32;
     if opcode & 0xF0 == 0x40 {
-        ctx.cpu.prefixes = ctx.cpu.prefixes & !PREFIX_MASK_REX
-            | PREFIX_REX_PRESENT
-            | ((opcode as u16 & 0xF) << 8);
+        ctx.cpu.prefixes =
+            ctx.cpu.prefixes & !PREFIX_MASK_REX | PREFIX_REX_PRESENT | ((opcode as u16 & 0xF) << 8);
         return jit_opcode(ctx, instr_flags);
     }
     let tier = if ctx.cpu.prefixes & PREFIX_REX_W != 0
@@ -419,11 +423,19 @@ fn jit_handle_legacy_prefix(prefix: u16, ctx: &mut JitContext, f: &mut u32) {
     ctx.cpu.prefixes = ctx.cpu.prefixes & !PREFIX_MASK_REX | prefix;
     jit_handle_prefix(ctx, f)
 }
-pub fn instr_66_jit64(ctx: &mut JitContext, f: &mut u32) { jit_handle_legacy_prefix(PREFIX_66, ctx, f) }
-pub fn instr_67_jit64(ctx: &mut JitContext, f: &mut u32) { jit_handle_legacy_prefix(PREFIX_67, ctx, f) }
+pub fn instr_66_jit64(ctx: &mut JitContext, f: &mut u32) {
+    jit_handle_legacy_prefix(PREFIX_66, ctx, f)
+}
+pub fn instr_67_jit64(ctx: &mut JitContext, f: &mut u32) {
+    jit_handle_legacy_prefix(PREFIX_67, ctx, f)
+}
 pub fn instr_F0_jit64(ctx: &mut JitContext, f: &mut u32) { jit_handle_legacy_prefix(0, ctx, f) }
-pub fn instr_F2_jit64(ctx: &mut JitContext, f: &mut u32) { jit_handle_legacy_prefix(PREFIX_F2, ctx, f) }
-pub fn instr_F3_jit64(ctx: &mut JitContext, f: &mut u32) { jit_handle_legacy_prefix(PREFIX_F3, ctx, f) }
+pub fn instr_F2_jit64(ctx: &mut JitContext, f: &mut u32) {
+    jit_handle_legacy_prefix(PREFIX_F2, ctx, f)
+}
+pub fn instr_F3_jit64(ctx: &mut JitContext, f: &mut u32) {
+    jit_handle_legacy_prefix(PREFIX_F3, ctx, f)
+}
 
 pub fn instr16_0F_jit64(ctx: &mut JitContext, f: &mut u32) {
     let opcode = ctx.cpu.read_imm8() as u32;
@@ -526,7 +538,10 @@ pub enum Flags64 {
     Logic(u32),
     /// inc/dec with the operand size: like add/sub of 1, but cf comes from the previous flags
     /// (the carry is kept in the cf flag local while the state is deferred)
-    IncDec { bits: u32, is_dec: bool },
+    IncDec {
+        bits: u32,
+        is_dec: bool,
+    },
 }
 
 /// Whether the 64-bit jit keeps lazy-flag values in wasm locals within a basic block instead
@@ -566,9 +581,7 @@ impl FlagLocals64 {
     }
 }
 
-fn flag_locals(ctx: &JitContext) -> FlagLocals64 {
-    ctx.jit64_flag_locals.as_ref().unwrap().clone()
-}
+fn flag_locals(ctx: &JitContext) -> FlagLocals64 { ctx.jit64_flag_locals.as_ref().unwrap().clone() }
 
 fn defer_flags_enabled(ctx: &JitContext) -> bool {
     ctx.jit64_flag_locals.is_some() && unsafe { JIT64_DEFER_FLAGS }
@@ -680,13 +693,9 @@ fn gen_tlb_cache_hit_condition(
 }
 
 #[cfg(feature = "mem64")]
-fn cached_entry_val(c: &TlbCacheLocals) -> Val {
-    Val::I64(c.entry.unsafe_clone())
-}
+fn cached_entry_val(c: &TlbCacheLocals) -> Val { Val::I64(c.entry.unsafe_clone()) }
 #[cfg(not(feature = "mem64"))]
-fn cached_entry_val(c: &TlbCacheLocals) -> Val {
-    Val::I32(c.entry.unsafe_clone())
-}
+fn cached_entry_val(c: &TlbCacheLocals) -> Val { Val::I32(c.entry.unsafe_clone()) }
 
 /// A new local for a host pointer (i64 under mem64)
 fn new_pointer_local(ctx: &mut JitContext) -> Val {
@@ -852,7 +861,8 @@ fn gen_get_last_op1(ctx: &mut JitContext, bits: u32) {
         return;
     }
     if bits == 64 {
-        ctx.builder.load_fixed_i64(global_pointers::last_op1_64 as u32)
+        ctx.builder
+            .load_fixed_i64(global_pointers::last_op1_64 as u32)
     }
     else {
         ctx.builder.load_fixed_i32(global_pointers::last_op1 as u32)
@@ -869,10 +879,12 @@ fn gen_get_last_result(ctx: &mut JitContext, bits: u32) {
         return;
     }
     if bits == 64 {
-        ctx.builder.load_fixed_i64(global_pointers::last_result_64 as u32)
+        ctx.builder
+            .load_fixed_i64(global_pointers::last_result_64 as u32)
     }
     else {
-        ctx.builder.load_fixed_i32(global_pointers::last_result as u32)
+        ctx.builder
+            .load_fixed_i32(global_pointers::last_result as u32)
     }
 }
 
@@ -1366,8 +1378,7 @@ pub fn gen_chain_to_next_module(ctx: &mut JitContext, reenter_label: Label) {
                     ctx.builder.get_local(&code);
                     ctx.builder
                         .load_aligned_u16(offset_of!(Code, wasm_table_index) as u32);
-                    ctx.builder
-                        .const_i32(ctx.wasm_table_index.to_u16() as i32);
+                    ctx.builder.const_i32(ctx.wasm_table_index.to_u16() as i32);
                     ctx.builder.eq_i32();
                     ctx.builder.if_void();
                     {
@@ -1513,7 +1524,9 @@ pub fn set_new_val(ctx: &mut JitContext, bits: u32) -> Val {
     }
 }
 
-fn reg_local(ctx: &JitContext, r: u32) -> WasmLocalI64 { ctx.register_locals64[r as usize].unsafe_clone() }
+fn reg_local(ctx: &JitContext, r: u32) -> WasmLocalI64 {
+    ctx.register_locals64[r as usize].unsafe_clone()
+}
 
 /// 8-bit registers: with a REX prefix, registers 4-7 are spl/bpl/sil/dil, without they are
 /// ah/ch/dh/bh. Returns the register and whether it's the high byte
@@ -1941,10 +1954,18 @@ fn gen_write_slow_path(ctx: &mut JitContext, bits: u32, address: &WasmLocalI64, 
     value.get(ctx);
     ctx.builder.const_i32(eip_and_wasm_table_index(ctx));
     match bits {
-        8 => ctx.builder.call_fn3_i64_i32_i32_ret("safe_write8_slow_jit64"),
-        16 => ctx.builder.call_fn3_i64_i32_i32_ret("safe_write16_slow_jit64"),
-        32 => ctx.builder.call_fn3_i64_i32_i32_ret("safe_write32_slow_jit64"),
-        _ => ctx.builder.call_fn3_i64_i64_i32_ret("safe_write64_slow_jit64"),
+        8 => ctx
+            .builder
+            .call_fn3_i64_i32_i32_ret("safe_write8_slow_jit64"),
+        16 => ctx
+            .builder
+            .call_fn3_i64_i32_i32_ret("safe_write16_slow_jit64"),
+        32 => ctx
+            .builder
+            .call_fn3_i64_i32_i32_ret("safe_write32_slow_jit64"),
+        _ => ctx
+            .builder
+            .call_fn3_i64_i64_i32_ret("safe_write64_slow_jit64"),
     }
 }
 
@@ -2087,8 +2108,7 @@ pub fn opsize(bits: u32) -> i32 {
 
 fn gen_set_last_op1(ctx: &mut JitContext, bits: u32, value: &Val) {
     if bits == 64 {
-        ctx.builder
-            .const_i32(global_pointers::last_op1_64 as i32);
+        ctx.builder.const_i32(global_pointers::last_op1_64 as i32);
         value.get(ctx);
         ctx.builder.store_aligned_i64(0);
     }
@@ -2106,8 +2126,7 @@ fn gen_set_last_result(ctx: &mut JitContext, bits: u32, value: &Val) {
         ctx.builder.store_aligned_i64(0);
     }
     else {
-        ctx.builder
-            .const_i32(global_pointers::last_result as i32);
+        ctx.builder.const_i32(global_pointers::last_result as i32);
         value.get(ctx);
         ctx.builder.store_aligned_i32(0);
     }
@@ -2115,8 +2134,7 @@ fn gen_set_last_result(ctx: &mut JitContext, bits: u32, value: &Val) {
 fn gen_set_op_size_and_flags_changed(ctx: &mut JitContext, bits: u32, flags_changed: i32) {
     // last_op_size and flags_changed are adjacent: write both with one store
     dbg_assert!(global_pointers::flags_changed as u32 == global_pointers::last_op_size as u32 + 4);
-    ctx.builder
-        .const_i32(global_pointers::last_op_size as i32);
+    ctx.builder.const_i32(global_pointers::last_op_size as i32);
     ctx.builder
         .const_i64((flags_changed as u32 as i64) << 32 | opsize(bits) as u32 as i64);
     ctx.builder.store_aligned_i64(0);
@@ -2145,7 +2163,14 @@ pub fn gen_flags_arith(ctx: &mut JitContext, bits: u32, op1: &Val, result: &Val,
 pub fn gen_flags_logic(ctx: &mut JitContext, bits: u32, result: &Val) {
     let flags_changed = FLAGS_ALL & !FLAG_CARRY & !FLAG_OVERFLOW & !FLAG_ADJUST;
     if defer_flags_enabled(ctx) {
-        gen_defer_flags(ctx, bits, None, result, flags_changed, FLAG_CARRY | FLAG_OVERFLOW | FLAG_ADJUST);
+        gen_defer_flags(
+            ctx,
+            bits,
+            None,
+            result,
+            flags_changed,
+            FLAG_CARRY | FLAG_OVERFLOW | FLAG_ADJUST,
+        );
         return;
     }
     gen_set_last_result(ctx, bits, result);
@@ -2311,7 +2336,14 @@ pub fn gen_alu(ctx: &mut JitContext, op: u32, bits: u32, dst: Opnd, src: Opnd) {
 }
 
 /// movzx/movsx/movsxd r, r/m: the source has src_bits, the destination dst_bits
-pub fn gen_movx(ctx: &mut JitContext, signed: bool, src_bits: u32, dst_bits: u32, r: u32, src: Opnd) {
+pub fn gen_movx(
+    ctx: &mut JitContext,
+    signed: bool,
+    src_bits: u32,
+    dst_bits: u32,
+    r: u32,
+    src: Opnd,
+) {
     gen_get_operand(ctx, src_bits, &src);
     if signed && src_bits < 32 {
         let shift = 32 - src_bits as i32;
@@ -2395,8 +2427,7 @@ pub fn gen_incdec(ctx: &mut JitContext, is_dec: bool, bits: u32, dst: Opnd) {
         ctx.flags64 = Flags64::Unknown;
     }
     let one = set_new_val_const(ctx, bits, 1);
-    let flags_changed =
-        FLAGS_ALL & !FLAG_CARRY | if is_dec { FLAG_SUB } else { 0 };
+    let flags_changed = FLAGS_ALL & !FLAG_CARRY | if is_dec { FLAG_SUB } else { 0 };
     let op = if is_dec { OP_SUB } else { OP_ADD };
     let compute = |ctx: &mut JitContext, op1: &Val| -> Val {
         op1.get(ctx);
@@ -2505,7 +2536,6 @@ pub unsafe fn jit64_save_cf() {
     *global_pointers::flags = *global_pointers::flags & !FLAG_CARRY | cf as i32;
 }
 
-
 pub enum ShiftCount {
     /// already masked, non-zero
     Imm(u32),
@@ -2606,8 +2636,7 @@ pub fn gen_shift(ctx: &mut JitContext, kind: u32, bits: u32, dst: Opnd, count: S
         let msb = shift_const(bits as i32 - 1);
 
         if kind == 0 || kind == 1 {
-            ctx.builder
-                .const_i32(global_pointers::flags_changed as i32);
+            ctx.builder.const_i32(global_pointers::flags_changed as i32);
             ctx.builder
                 .load_fixed_i32(global_pointers::flags_changed as u32);
             ctx.builder.const_i32(!(FLAG_CARRY | FLAG_OVERFLOW));
@@ -3124,7 +3153,11 @@ fn next_instructions_overwrite_flags(ctx: &JitContext) -> bool {
         let writes_all = match opcode {
             0x00..=0x3F => {
                 let op = opcode >> 3;
-                op != 2 && op != 3 && (opcode & 7 == 4 || opcode & 7 == 5 || opcode & 7 < 4 && cpu.read_imm8() >= 0xC0)
+                op != 2
+                    && op != 3
+                    && (opcode & 7 == 4
+                        || opcode & 7 == 5
+                        || opcode & 7 < 4 && cpu.read_imm8() >= 0xC0)
             },
             0x80 | 0x81 | 0x83 => {
                 let modrm = cpu.read_imm8();
@@ -3214,8 +3247,7 @@ fn gen_getcf_generic(ctx: &mut JitContext) {
                 .load_fixed_i32(global_pointers::last_result as u32);
             ctx.builder.xor_i32();
             ctx.builder.get_local(&mask);
-            ctx.builder
-                .load_fixed_i32(global_pointers::last_op1 as u32);
+            ctx.builder.load_fixed_i32(global_pointers::last_op1 as u32);
             ctx.builder.xor_i32();
             ctx.builder.ltu_i32();
             ctx.builder.free_local(mask);
@@ -3294,12 +3326,14 @@ pub fn gen_adc_sbb(ctx: &mut JitContext, is_sbb: bool, bits: u32, dst: Opnd, src
         gen_set_op_size_and_flags_changed(
             ctx,
             bits,
-            FLAGS_ALL & !FLAG_CARRY & !FLAG_ADJUST & !FLAG_OVERFLOW | if is_sbb { FLAG_SUB } else { 0 },
+            FLAGS_ALL & !FLAG_CARRY & !FLAG_ADJUST & !FLAG_OVERFLOW
+                | if is_sbb { FLAG_SUB } else { 0 },
         );
 
         ctx.builder.const_i32(global_pointers::flags as i32);
         ctx.builder.load_fixed_i32(global_pointers::flags as u32);
-        ctx.builder.const_i32(!(FLAG_CARRY | FLAG_ADJUST | FLAG_OVERFLOW));
+        ctx.builder
+            .const_i32(!(FLAG_CARRY | FLAG_ADJUST | FLAG_OVERFLOW));
         ctx.builder.and_i32();
         // cf: adc: msb(x ^ ((x ^ y) & (y ^ res))), sbb: msb(res ^ ((res ^ y) & (y ^ x)))
         let (a, b) = if is_sbb { (&res, x) } else { (x, &res) };
@@ -3349,7 +3383,12 @@ pub fn gen_adc_sbb(ctx: &mut JitContext, is_sbb: bool, bits: u32, dst: Opnd, src
 }
 
 /// Apply compute to a register or memory operand and write the result back
-fn gen_rmw(ctx: &mut JitContext, bits: u32, dst: Opnd, compute: &dyn Fn(&mut JitContext, &Val) -> Val) {
+fn gen_rmw(
+    ctx: &mut JitContext,
+    bits: u32,
+    dst: Opnd,
+    compute: &dyn Fn(&mut JitContext, &Val) -> Val,
+) {
     match dst {
         Opnd::Reg(r) => {
             gen_get_reg(ctx, bits, r);
@@ -3417,8 +3456,7 @@ pub fn gen_bt(ctx: &mut JitContext, kind: u32, bits: u32, dst: Opnd, offset: Opn
         ctx.builder.and_i32();
         ctx.builder.or_i32();
         ctx.builder.store_aligned_i32(0);
-        ctx.builder
-            .const_i32(global_pointers::flags_changed as i32);
+        ctx.builder.const_i32(global_pointers::flags_changed as i32);
         ctx.builder
             .load_fixed_i32(global_pointers::flags_changed as u32);
         ctx.builder.const_i32(!FLAG_CARRY);

@@ -1,0 +1,111 @@
+<!doctype html>
+<!--
+    Source of og-bitcoin-wallet-check.png, the link preview of examples/bitcoin-wallet-check.html
+    on the Pages site. Self-contained; render at 1200x630, e.g. with Chrome:
+    google-chrome --headless=new --hide-scrollbars --screenshot=og-bitcoin-wallet-check.png \
+        --window-size=1200,630 og-bitcoin-wallet-check.html
+-->
+<meta charset="utf-8">
+<style>
+    * { box-sizing: border-box; margin: 0; }
+    html, body { width: 1200px; height: 630px; overflow: hidden; }
+    body {
+        position: relative;
+        background:
+            radial-gradient(ellipse 55% 70% at 80% 50%, rgba(247, 147, 26, 0.18), transparent 70%),
+            radial-gradient(ellipse 50% 60% at 0% 100%, rgba(57, 255, 136, 0.10), transparent 70%),
+            linear-gradient(rgba(247, 147, 26, 0.04) 1px, transparent 1px) 0 0 / 40px 40px,
+            linear-gradient(90deg, rgba(247, 147, 26, 0.04) 1px, transparent 1px) 0 0 / 40px 40px,
+            #05070a;
+        color: #f1ece4;
+        font-family: system-ui, "Inter", "Segoe UI", sans-serif;
+    }
+    .mono { font-family: "JetBrains Mono", "Fira Code", "DejaVu Sans Mono", monospace; }
+    .left { position: absolute; left: 64px; top: 62px; width: 520px; }
+    .brand { font-size: 22px; font-weight: bold; color: #39ff88; text-shadow: 0 0 10px rgba(57, 255, 136, 0.6); }
+    .brand span { color: #5f8a77; font-weight: normal; font-size: 17px; margin-left: 8px; text-shadow: none; }
+    .logo {
+        margin-top: 40px; width: 72px; height: 72px; border-radius: 20px;
+        background: linear-gradient(145deg, #ffb347, #f7931a 55%, #d9720a);
+        display: grid; place-items: center; box-shadow: 0 10px 34px rgba(247, 147, 26, 0.45);
+    }
+    .logo svg { width: 42px; height: 42px; }
+    h1 { margin-top: 26px; font-size: 54px; line-height: 1.05; letter-spacing: -0.02em; color: #fff; }
+    h1 em { font-style: normal; color: #f7931a; }
+    .sub { margin-top: 20px; font-size: 21px; line-height: 1.5; color: #b3aa9d; }
+    .sub b { color: #f1ece4; font-weight: 600; }
+    .chips { margin-top: 26px; display: flex; gap: 10px; flex-wrap: wrap; }
+    .chip {
+        padding: 6px 13px; border-radius: 999px; font-size: 16px; font-weight: 600;
+        border: 1px solid #3a2a17; background: #1a120a; color: #ffb866;
+    }
+    .url { position: absolute; left: 64px; bottom: 40px; font-size: 17px; color: #7d756a; }
+    .url b { color: #f7931a; font-weight: normal; }
+
+    .window {
+        position: absolute; right: 52px; top: 70px; width: 520px;
+        border: 1px solid #3a2a17; border-radius: 14px; background: #0f1216; overflow: hidden;
+        transform: perspective(1400px) rotateY(-9deg) rotateX(3deg);
+        box-shadow: 0 0 0 1px #000, 0 30px 70px rgba(0, 0, 0, 0.75), 0 0 70px rgba(247, 147, 26, 0.22);
+    }
+    .titlebar {
+        display: flex; align-items: center; gap: 8px; padding: 11px 16px; font-size: 13px;
+        background: #14181e; border-bottom: 1px solid #262c35; color: #9a958d;
+    }
+    .tdot { width: 11px; height: 11px; border-radius: 50%; background: #2a3039; }
+    .tdot.o { background: #f7931a; box-shadow: 0 0 8px #f7931a; }
+    .titlebar .name { margin-left: 8px; color: #e9e6e1; font-weight: 600; }
+    .titlebar .state { margin-left: auto; color: #3fcf8e; }
+    .body { padding: 18px; }
+    .verdict {
+        display: flex; gap: 14px; align-items: center; padding: 14px 16px; border-radius: 12px;
+        background: #10261c; border: 1px solid #3fcf8e;
+    }
+    .vi { width: 38px; height: 38px; border-radius: 50%; background: #3fcf8e; color: #08130d; display: grid; place-items: center;
+          font-size: 20px; font-weight: 800; flex: none; }
+    .verdict b { display: block; font-size: 17px; color: #fff; }
+    .verdict span { font-size: 14px; color: #9fc7b2; }
+    .steps { margin-top: 14px; display: grid; gap: 2px; }
+    .step { display: flex; align-items: center; gap: 12px; padding: 7px 4px; font-size: 15px; color: #d6d1ca; }
+    .step .si { width: 20px; height: 20px; border-radius: 50%; background: #3fcf8e; color: #08130d; font-size: 12px;
+                font-weight: 800; display: grid; place-items: center; flex: none; }
+    .step code { font-size: 13px; color: #8d877e; }
+    .step .ok { margin-left: auto; font-size: 13px; color: #3fcf8e; }
+</style>
+
+<div class="left">
+    <div class="brand mono">&#x259A; v86_64<span>// examples</span></div>
+    <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 5h6a3.5 3.5 0 0 1 0 7H8zm0 7h7a3.5 3.5 0 0 1 0 7H8zM8 5v14M10 3v2M14 3v2M10 19v2M14 19v2"/></svg>
+    </div>
+    <h1>Bitcoin Core<br><em>wallet check</em></h1>
+    <p class="sub">Prove a <b>wallet.dat</b> opens in Bitcoin Core 31.1: imported offline, in a Linux VM running in your browser.</p>
+    <div class="chips">
+        <span class="chip">No network</span>
+        <span class="chip">Nothing uploaded</span>
+        <span class="chip">7 one-click demos</span>
+    </div>
+</div>
+<div class="url mono">&#x25B6; <b>portlandhodl.github.io/v86_64</b>/examples/bitcoin-wallet-check.html</div>
+
+<div class="window">
+    <div class="titlebar">
+        <span class="tdot o"></span><span class="tdot"></span><span class="tdot"></span>
+        <span class="name">bitcoind 31.1 · Alpine x86_64</span><span class="state mono">● offline</span>
+    </div>
+    <div class="body">
+        <div class="verdict">
+            <div class="vi">✓</div>
+            <div><b>example-encrypted.dat imports</b><span>Checked offline on main in 15 s; the passphrase unlocks it.</span></div>
+        </div>
+        <div class="steps">
+            <div class="step"><span class="si">✓</span>Wallet file <code class="mono">SQLite · main</code><span class="ok">ok</span></div>
+            <div class="step"><span class="si">✓</span>bitcoind <code class="mono">-networkactive=0</code><span class="ok">ok</span></div>
+            <div class="step"><span class="si">✓</span>Import <code class="mono">restorewallet</code><span class="ok">ok</span></div>
+            <div class="step"><span class="si">✓</span>Wallet <code class="mono">getwalletinfo</code><span class="ok">ok</span></div>
+            <div class="step"><span class="si">✓</span>Descriptors <code class="mono">pkh, sh, tr, wpkh</code><span class="ok">ok</span></div>
+            <div class="step"><span class="si">✓</span>Passphrase <code class="mono">walletpassphrase</code><span class="ok">ok</span></div>
+        </div>
+    </div>
+</div>

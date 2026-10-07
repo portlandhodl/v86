@@ -621,8 +621,7 @@ impl WasmBuilder {
     pub fn return_call_indirect_jit64(&mut self) {
         dbg_assert!(self.import_function_table);
         self.instruction_body.push(op::OP_RETURNCALLINDIRECT);
-        self.instruction_body
-            .push(FunctionType::FN_JIT64.to_u8());
+        self.instruction_body.push(FunctionType::FN_JIT64.to_u8());
         self.instruction_body.push(0); // table index
     }
 
@@ -647,12 +646,13 @@ impl WasmBuilder {
         self.output.push(op::SC_FUNCTION);
         self.output.push(2); // length of this section
         self.output.push(1); // count of signature indices
-        self.output.push(if self.arg_count == WASM_MODULE_ARGUMENT_COUNT_JIT64 {
-            FunctionType::FN_JIT64.to_u8()
-        }
-        else {
-            FunctionType::FN1.to_u8()
-        });
+        self.output
+            .push(if self.arg_count == WASM_MODULE_ARGUMENT_COUNT_JIT64 {
+                FunctionType::FN_JIT64.to_u8()
+            }
+            else {
+                FunctionType::FN1.to_u8()
+            });
     }
 
     pub fn write_export_section(&mut self) {
@@ -718,10 +718,7 @@ impl WasmBuilder {
         }
     }
     pub fn free_local(&mut self, local: WasmLocal) {
-        dbg_assert!(
-            (self.arg_count..self.local_count + self.arg_count)
-                .contains(&local.0)
-        );
+        dbg_assert!((self.arg_count..self.local_count + self.arg_count).contains(&local.0));
         self.free_locals_i32.push(local)
     }
 
@@ -767,10 +764,7 @@ impl WasmBuilder {
         }
     }
     pub fn free_local_i64(&mut self, local: WasmLocalI64) {
-        dbg_assert!(
-            (self.arg_count..self.local_count + self.arg_count)
-                .contains(&local.0)
-        );
+        dbg_assert!((self.arg_count..self.local_count + self.arg_count).contains(&local.0));
         self.free_locals_i64.push(local)
     }
     #[must_use = "local allocated but not used"]
@@ -1153,7 +1147,9 @@ impl WasmBuilder {
     pub fn call_fn1_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN1_I64) }
     #[allow(dead_code)]
     pub fn call_fn2_i64_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN2_I64_I64) }
-    pub fn call_fn3_i32_i32_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN3_I32_I32_I64) }
+    pub fn call_fn3_i32_i32_i64(&mut self, name: &str) {
+        self.call_fn(name, FunctionType::FN3_I32_I32_I64)
+    }
     pub fn call_fn1_ret(&mut self, name: &str) { self.call_fn(name, FunctionType::FN1_RET) }
     pub fn call_fn1_ret_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN1_RET_I64) }
     pub fn call_fn1_f32_ret(&mut self, name: &str) { self.call_fn(name, FunctionType::FN1_F32_RET) }
