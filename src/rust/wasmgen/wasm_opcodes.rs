@@ -220,3 +220,21 @@ c!(MEM_NO_ALIGN, 0);
 c!(MEM_ALIGN16, 1);
 c!(MEM_ALIGN32, 2);
 c!(MEM_ALIGN64, 3);
+
+// SIMD (0xFD-prefixed); the opcode immediate is LEB128-encoded
+c!(OP_SIMD_PREFIX, 0xfd);
+pub const SIMD_V128_LOAD: u32 = 0x00;
+pub const SIMD_V128_STORE: u32 = 0x0b;
+pub const SIMD_V128_CONST: u32 = 0x0c;
+pub const SIMD_I8X16_SHUFFLE: u32 = 0x0d;
+pub const SIMD_I8X16_ADD: u32 = 0x6e;
+pub const SIMD_I16X8_ADD: u32 = 0x8e;
+pub const SIMD_I16X8_SHL: u32 = 0x8b;
+pub const SIMD_I16X8_SHR_S: u32 = 0x8c;
+pub const SIMD_I16X8_SHR_U: u32 = 0x8d;
+pub const SIMD_I32X4_ADD: u32 = 0xae;
+pub const SIMD_I32X4_SHL: u32 = 0xab;
+pub const SIMD_I32X4_SHR_S: u32 = 0xac;
+pub const SIMD_I32X4_SHR_U: u32 = 0xad;
+pub const SIMD_I64X2_SHL: u32 = 0xcb;
+pub const SIMD_I64X2_SHR_U: u32 = 0xcd;

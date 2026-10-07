@@ -1261,6 +1261,109 @@ t109_3:
     mov rax, [rel gp_error]
     mov [r15 + 111*8], rax
 
+    ; ======== test 112-119: natively compiled integer SSE (66 0F EF/EB/DB/D4, 6F, 7F) ========
+    ; pxor reg, reg zeroes
+    mov rax, 0x1122334455667788
+    movq xmm5, rax
+    movq xmm6, rax
+    pxor xmm5, xmm6
+    movq rbx, xmm5
+    mov [r15 + 112*8], rbx           ; 0
+
+    ; pxor with a memory operand, result stored back with movdqa (both halves)
+    mov rax, 0xA5A5A5A5A5A5A5A5
+    mov [rel sse_native_area], rax
+    mov [rel sse_native_area + 8], rax
+    movdqa xmm7, [rel sse_native_area]      ; both halves = 0xA5...
+    mov rax, 0x0F0F0F0F0F0F0F0F
+    mov [rel sse_native_area + 16], rax
+    mov rax, 0x33CC33CC33CC33CC
+    mov [rel sse_native_area + 24], rax
+    pxor xmm7, [rel sse_native_area + 16]
+    movdqa [rel sse_native_area + 16], xmm7
+    mov rbx, [rel sse_native_area + 16]
+    mov [r15 + 113*8], rbx           ; 0xAAAAAAAAAAAAAAAA
+    mov rbx, [rel sse_native_area + 24]
+    mov [r15 + 114*8], rbx           ; 0x6996699669966996
+
+    ; paddq with a carry from the low qword into the high qword
+    mov qword [rel sse_native_area], 0x2000
+    mov qword [rel sse_native_area + 8], 1
+    mov rax, 0xFFFFFFFFFFFFFFF8
+    movq xmm13, rax
+    paddq xmm13, [rel sse_native_area]
+    movdqa [rel sse_native_area + 16], xmm13
+    mov rbx, [rel sse_native_area + 16]
+    mov [r15 + 115*8], rbx           ; 0x1FF8
+    mov rbx, [rel sse_native_area + 24]
+    mov [r15 + 116*8], rbx           ; 2
+
+    ; movdqa register to register copy
+    movdqa xmm14, xmm13
+    movq rbx, xmm14
+    mov [r15 + 117*8], rbx           ; 0x1FF8
+
+    ; movdqa load and store crossing a page boundary (and unaligned)
+    mov rax, 0x99AABBCCDDEEFF00
+    mov [abs 0x92FF8], rax
+    mov qword [abs 0x93000], 0
+    movdqa xmm14, [abs 0x92FF8]
+    movdqa [rel sse_native_area + 16], xmm14
+    mov rbx, [rel sse_native_area + 16]
+    mov [r15 + 118*8], rbx           ; 0x99AABBCCDDEEFF00
+    movdqa [abs 0x92FF8], xmm13      ; store across the page boundary
+    mov rbx, [abs 0x93000]
+    mov [r15 + 119*8], rbx           ; 0
+
+    ; ======== test 120-126: natively compiled SSE padd/shifts/shuffles/movaps ========
+    ; paddd with per-lane wraparound (i32 lanes [0xFFFFFFFF, 1] + [2, 2] = [1, 3])
+    mov rax, 0x00000001FFFFFFFF
+    movq xmm5, rax                   ; high half zeroed by movq
+    mov rax, 0x0000000200000002
+    movq xmm6, rax
+    paddd xmm5, xmm6
+    movq rbx, xmm5
+    mov [r15 + 120*8], rbx           ; 0x0000000300000001
+
+    ; psrld by 3 then pslld by 4
+    mov rax, 0x123456789ABCDEF0
+    movq xmm5, rax
+    psrld xmm5, 3
+    movq rbx, xmm5
+    mov [r15 + 121*8], rbx           ; 0x02468ACF13579BDE
+    pslld xmm5, 4
+    movq rbx, xmm5
+    mov [r15 + 122*8], rbx           ; 0x2468ACF03579BDE0 (per-lane, bits don't cross)
+
+    ; pshufd with imm 0x1B (lanes 3,2,1,0)
+    mov rax, 0x1122334455667788
+    mov [rel sse_native_area], rax
+    mov rax, 0x99AABBCCDDEEFF00
+    mov [rel sse_native_area + 8], rax
+    movdqa xmm7, [rel sse_native_area]
+    pshufd xmm8, xmm7, 0x1B
+    movdqa [rel sse_native_area + 16], xmm8
+    mov rbx, [rel sse_native_area + 16]
+    mov [r15 + 123*8], rbx           ; 0x99AABBCCDDEEFF00
+    mov rbx, [rel sse_native_area + 24]
+    mov [r15 + 124*8], rbx           ; 0x1122334455667788
+
+    ; punpcklqdq
+    mov rax, 0x00000000AAAAAAAA
+    movq xmm9, rax                   ; lo = 0xAAAAAAAA, hi = 0
+    movq xmm10, rax
+    punpcklqdq xmm9, xmm10           ; [lo, lo]
+    movq rbx, xmm9
+    mov [r15 + 125*8], rbx           ; 0xAAAAAAAA (low qword of [lo, lo])
+
+    ; psrldq by 12
+    mov rax, 0x131211100F0E0D0C
+    mov [rel sse_native_area + 8], rax
+    movdqa xmm11, [rel sse_native_area]
+    psrldq xmm11, 12
+    movq rbx, xmm11
+    mov [r15 + 126*8], rbx           ; 0x0000000013121110
+
     ; mask all PIC interrupts: user mode runs with IF set below (test 84)
     mov al, 0xFF
     out 0x21, al
@@ -1418,6 +1521,9 @@ sse3_unaligned: dq 1.5, 2.25          ; test 91
 align 16
 ATOM: times 4 dq 0                 ; tests 98-100
 stos_buf: times 32 dq 0            ; rep stosq playground
+
+align 16
+sse_native_area: times 8 dq 0      ; tests 112-119 (16-byte aligned)
 
 idt_ptr:
     dw 0xFF                      ; 16 entries - 1

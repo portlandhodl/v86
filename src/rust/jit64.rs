@@ -26,6 +26,8 @@ use crate::prefix::{
     PREFIX_REX_PRESENT, PREFIX_REX_W,
 };
 use crate::regs::{CS, DS, ES, FS, GS, SS};
+use crate::wasmgen::wasm_builder::WasmBuilder;
+use crate::wasmgen::wasm_opcodes as op;
 
 /// Set when the interpreter delivers an exception or interrupt, or when a page with compiled
 /// code is written to: the 64-bit jit must not continue with the rest of the compiled block
@@ -150,6 +152,311 @@ pub fn gen_modrm_address(ctx: &mut JitContext, m: &Modrm64) {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Native code generation for common integer SSE instructions (66 prefix). These instructions
+// set no flags and don't touch general-purpose registers, so unlike gen_call_wrapper they
+// don't commit the deferred lazy flags, don't spill registers and don't reset the data tlb
+// cache; the only exceptions they can raise are #NM (task switch) and page faults on the
+// memory operand.
+
+/// #NM check as the interpreter's SSE handlers do it (task_switch_test_mmx): the cold branch
+/// commits the deferred lazy flags before the exception is delivered.
+pub fn gen_sse_task_switch_check(ctx: &mut JitContext) {
+    let cr0_offset = global_pointers::get_creg_offset(0);
+    ctx.builder.load_fixed_u8(cr0_offset);
+    ctx.builder
+        .const_i32((crate::regs::CR0_EM | crate::regs::CR0_TS) as i32);
+    ctx.builder.and_i32();
+    ctx.builder.if_void();
+    {
+        gen_commit_deferred_flags_cold(ctx);
+        codegen::gen_debug_track_jit_exit(ctx.builder, ctx.start_of_current_instruction);
+        codegen::gen_fn1_const(
+            ctx.builder,
+            "task_switch_test_mmx_jit",
+            (ctx.start_of_current_instruction & 0xFFF) as u32,
+        );
+        ctx.builder.br(ctx.exit_with_fault_label);
+    }
+    ctx.builder.block_end();
+}
+
+/// Read the low and high 64-bit halves of the memory operand of an SSE instruction into
+/// locals. Two independent 64-bit reads, so a page-crossing access faults like
+/// safe_read128s (and the second read hits the data tlb cache).
+fn gen_sse_read_mem_halves(ctx: &mut JitContext, m: &Modrm64) -> (WasmLocalI64, WasmLocalI64) {
+    gen_modrm_address(ctx, m);
+    let addr = ctx.builder.set_new_local_i64();
+    gen_safe_read(ctx, 64, &addr);
+    let lo = ctx.builder.set_new_local_i64();
+    ctx.builder.get_local_i64(&addr);
+    ctx.builder.const_i64(8);
+    ctx.builder.add_i64();
+    let addr2 = ctx.builder.set_new_local_i64();
+    gen_safe_read(ctx, 64, &addr2);
+    let hi = ctx.builder.set_new_local_i64();
+    ctx.builder.free_local_i64(addr);
+    ctx.builder.free_local_i64(addr2);
+    (lo, hi)
+}
+
+/// dst = dst op src, one lane_op per 64-bit half (pxor/por/pand/paddq)
+pub fn gen_sse_binary64(ctx: &mut JitContext, op: u32, modrm_byte: u8) {
+    gen_sse_task_switch_check(ctx);
+    let r = (modrm_byte >> 3 & 7) as u32 | ctx.cpu.rex_r();
+    let lane_op: fn(&mut WasmBuilder) = match op {
+        0x660FEF => WasmBuilder::xor_i64,
+        0x660FEB => WasmBuilder::or_i64,
+        0x660FDB => WasmBuilder::and_i64,
+        0x660FD4 => WasmBuilder::add_i64,
+        _ => unreachable!(),
+    };
+    let (lo, hi) = if modrm_byte >= 0xC0 {
+        let rm = (modrm_byte & 7) as u32 | ctx.cpu.rex_b();
+        let off = global_pointers::get_reg_xmm_offset(rm);
+        ctx.builder.load_fixed_i64(off);
+        let lo = ctx.builder.set_new_local_i64();
+        ctx.builder.load_fixed_i64(off + 8);
+        let hi = ctx.builder.set_new_local_i64();
+        (lo, hi)
+    }
+    else {
+        let m = decode_modrm(ctx.cpu, modrm_byte);
+        gen_sse_read_mem_halves(ctx, &m)
+    };
+    apply_sse_binary64(ctx, r, &lo, &hi, lane_op);
+    ctx.builder.free_local_i64(lo);
+    ctx.builder.free_local_i64(hi);
+}
+
+fn apply_sse_binary64(
+    ctx: &mut JitContext,
+    dst: u32,
+    lo: &WasmLocalI64,
+    hi: &WasmLocalI64,
+    lane_op: fn(&mut WasmBuilder),
+) {
+    let dst_off = global_pointers::get_reg_xmm_offset(dst);
+    ctx.builder.const_i32(dst_off as i32);
+    ctx.builder.load_fixed_i64(dst_off);
+    ctx.builder.get_local_i64(lo);
+    lane_op(&mut ctx.builder);
+    ctx.builder.store_aligned_i64(0);
+    ctx.builder.const_i32(dst_off as i32 + 8);
+    ctx.builder.load_fixed_i64(dst_off + 8);
+    ctx.builder.get_local_i64(hi);
+    lane_op(&mut ctx.builder);
+    ctx.builder.store_aligned_i64(0);
+}
+
+/// movdqa/movdqu (66/F3 0F 6F): xmm = xmm/m128
+pub fn gen_sse_mov_load(ctx: &mut JitContext, modrm_byte: u8) {
+    gen_sse_task_switch_check(ctx);
+    let r = (modrm_byte >> 3 & 7) as u32 | ctx.cpu.rex_r();
+    let (lo, hi) = if modrm_byte >= 0xC0 {
+        let rm = (modrm_byte & 7) as u32 | ctx.cpu.rex_b();
+        let off = global_pointers::get_reg_xmm_offset(rm);
+        ctx.builder.load_fixed_i64(off);
+        let lo = ctx.builder.set_new_local_i64();
+        ctx.builder.load_fixed_i64(off + 8);
+        let hi = ctx.builder.set_new_local_i64();
+        (lo, hi)
+    }
+    else {
+        let m = decode_modrm(ctx.cpu, modrm_byte);
+        gen_sse_read_mem_halves(ctx, &m)
+    };
+    let dst_off = global_pointers::get_reg_xmm_offset(r);
+    ctx.builder.const_i32(dst_off as i32);
+    ctx.builder.get_local_i64(&lo);
+    ctx.builder.store_aligned_i64(0);
+    ctx.builder.const_i32(dst_off as i32 + 8);
+    ctx.builder.get_local_i64(&hi);
+    ctx.builder.store_aligned_i64(0);
+    ctx.builder.free_local_i64(lo);
+    ctx.builder.free_local_i64(hi);
+}
+
+/// movdqa/movdqu store (66/F3 0F 7F): xmm/m128 = xmm
+pub fn gen_sse_mov_store(ctx: &mut JitContext, modrm_byte: u8) {
+    gen_sse_task_switch_check(ctx);
+    let r = (modrm_byte >> 3 & 7) as u32 | ctx.cpu.rex_r();
+    let src_off = global_pointers::get_reg_xmm_offset(r);
+    if modrm_byte >= 0xC0 {
+        // register to register: copy both halves
+        let rm = (modrm_byte & 7) as u32 | ctx.cpu.rex_b();
+        let dst_off = global_pointers::get_reg_xmm_offset(rm);
+        ctx.builder.load_fixed_i64(src_off);
+        ctx.builder.const_i32(dst_off as i32);
+        ctx.builder.store_aligned_i64(0);
+        ctx.builder.load_fixed_i64(src_off + 8);
+        ctx.builder.const_i32(dst_off as i32 + 8);
+        ctx.builder.store_aligned_i64(0);
+        return;
+    }
+    let m = decode_modrm(ctx.cpu, modrm_byte);
+    gen_modrm_address(ctx, &m);
+    let addr = ctx.builder.set_new_local_i64();
+    ctx.builder.load_fixed_i64(src_off);
+    let lo = ctx.builder.set_new_local_i64();
+    gen_safe_write(ctx, 64, &addr, &Val::I64(lo.unsafe_clone()));
+    ctx.builder.get_local_i64(&addr);
+    ctx.builder.const_i64(8);
+    ctx.builder.add_i64();
+    let addr2 = ctx.builder.set_new_local_i64();
+    ctx.builder.load_fixed_i64(src_off + 8);
+    let hi = ctx.builder.set_new_local_i64();
+    gen_safe_write(ctx, 64, &addr2, &Val::I64(hi.unsafe_clone()));
+    ctx.builder.free_local_i64(addr);
+    ctx.builder.free_local_i64(addr2);
+    ctx.builder.free_local_i64(lo);
+    ctx.builder.free_local_i64(hi);
+}
+
+/// Load the full xmm register as v128 (for the SIMD-native instructions below)
+fn gen_xmm_load_v128(ctx: &mut JitContext, r: u32) {
+    ctx.builder
+        .const_i32(global_pointers::get_reg_xmm_offset(r) as i32);
+    ctx.builder.load_v128(0);
+}
+
+/// Store the v128 on the stack into the xmm register; the caller must have pushed the
+/// register's address first (wasm stores take the address below the value)
+fn gen_xmm_store_v128(ctx: &mut JitContext, _r: u32) {
+    ctx.builder.store_v128(0);
+}
+
+/// Push the address of an xmm register (for gen_xmm_store_v128)
+fn gen_xmm_addr(ctx: &mut JitContext, r: u32) {
+    ctx.builder
+        .const_i32(global_pointers::get_reg_xmm_offset(r) as i32);
+}
+
+/// 66 0F FC/FD/FE (paddb/paddw/paddd) with a register source: one v128 add
+pub fn gen_sse_padd(ctx: &mut JitContext, op: u32, modrm_byte: u8) {
+    gen_sse_task_switch_check(ctx);
+    dbg_assert!(modrm_byte >= 0xC0);
+    let add_op = match op {
+        0x660FFC => op::SIMD_I8X16_ADD,
+        0x660FFD => op::SIMD_I16X8_ADD,
+        0x660FFE => op::SIMD_I32X4_ADD,
+        _ => unreachable!(),
+    };
+    let r = (modrm_byte >> 3 & 7) as u32 | ctx.cpu.rex_r();
+    let rm = (modrm_byte & 7) as u32 | ctx.cpu.rex_b();
+    gen_xmm_addr(ctx, r);
+    gen_xmm_load_v128(ctx, r);
+    gen_xmm_load_v128(ctx, rm);
+    ctx.builder.simd_binop(add_op);
+    gen_xmm_store_v128(ctx, r);
+}
+
+/// 66 0F 71/72/73 group shifts by an immediate (imm already read as a constant):
+/// 71: psrlw/psraw/psllw (/2 /4 /6), 72: psrld/psrad/pslld, 73: psrlq/psllq and the
+/// byte shifts psrldq (/3) / pslldq (/7). Memory forms are #UD (handled by the caller).
+pub fn gen_sse_shift_imm(ctx: &mut JitContext, op: u32, kind: u32, imm: i32, modrm_byte: u8) {
+    gen_sse_task_switch_check(ctx);
+    dbg_assert!(modrm_byte >= 0xC0);
+    let r = (modrm_byte & 7) as u32 | ctx.cpu.rex_b();
+    // psrldq/psrlq-family byte shifts: shuffle the lanes (zero as the second operand)
+    if op == 0x660F73 && (kind == 3 || kind == 7) {
+        let s = (imm as u32).min(16) as usize;
+        let mut lanes = [16u8; 16]; // default: second operand (zero)
+        for i in 0..16 {
+            if kind == 3 {
+                // psrldq: out[i] = in[i + s]
+                if i + s < 16 {
+                    lanes[i] = (i + s) as u8;
+                }
+            }
+            else {
+                // pslldq: out[i] = in[i - s]
+                if i >= s {
+                    lanes[i] = (i - s) as u8;
+                }
+            }
+        }
+        gen_xmm_addr(ctx, r);
+        gen_xmm_load_v128(ctx, r);
+        ctx.builder.const_v128(&[0; 16]);
+        ctx.builder.i8x16_shuffle(&lanes);
+        gen_xmm_store_v128(ctx, r);
+        return;
+    }
+    // plain lane shifts: (wasm op, lane width, signed?)
+    let (shift_op, width, signed): (u32, i32, bool) = match (op, kind) {
+        (0x660F71, 2) => (op::SIMD_I16X8_SHR_U, 16, false),
+        (0x660F71, 4) => (op::SIMD_I16X8_SHR_S, 16, true),
+        (0x660F71, 6) => (op::SIMD_I16X8_SHL, 16, false),
+        (0x660F72, 2) => (op::SIMD_I32X4_SHR_U, 32, false),
+        (0x660F72, 4) => (op::SIMD_I32X4_SHR_S, 32, true),
+        (0x660F72, 6) => (op::SIMD_I32X4_SHL, 32, false),
+        (0x660F73, 2) => (op::SIMD_I64X2_SHR_U, 64, false),
+        (0x660F73, 6) => (op::SIMD_I64X2_SHL, 64, false),
+        _ => unreachable!(),
+    };
+    // signed shifts clamp at width-1 (shifting by the lane width or more gives the
+    // sign-fill, which the shift by width-1 already produces); logical/left shifts
+    // give zero. Wasm shifts take the count modulo the lane width, so the count must
+    // be masked here either way.
+    let imm = if signed { imm.min(width - 1) } else { imm };
+    if !signed && imm >= width {
+        gen_xmm_store_zero(ctx, r);
+        return;
+    }
+    gen_xmm_addr(ctx, r);
+    gen_xmm_load_v128(ctx, r);
+    ctx.builder.const_i32(imm);
+    ctx.builder.simd_shift(shift_op);
+    gen_xmm_store_v128(ctx, r);
+}
+
+fn gen_xmm_store_zero(ctx: &mut JitContext, r: u32) {
+    gen_xmm_addr(ctx, r);
+    ctx.builder.const_v128(&[0; 16]);
+    gen_xmm_store_v128(ctx, r);
+}
+
+/// 66 0F 70 pshufd (register source): select four dwords by the immediate
+pub fn gen_sse_pshufd(ctx: &mut JitContext, imm: i32, modrm_byte: u8) {
+    gen_sse_task_switch_check(ctx);
+    dbg_assert!(modrm_byte >= 0xC0);
+    let r = (modrm_byte >> 3 & 7) as u32 | ctx.cpu.rex_r();
+    let rm = (modrm_byte & 7) as u32 | ctx.cpu.rex_b();
+    let mut lanes = [0u8; 16];
+    for k in 0..4u32 {
+        let sel = ((imm as u32) >> (2 * k)) & 3;
+        for j in 0..4u32 {
+            lanes[(k * 4 + j) as usize] = (sel * 4 + j) as u8;
+        }
+    }
+    gen_xmm_addr(ctx, r);
+    gen_xmm_load_v128(ctx, rm);
+    gen_xmm_load_v128(ctx, rm);
+    ctx.builder.i8x16_shuffle(&lanes);
+    gen_xmm_store_v128(ctx, r);
+}
+
+/// 66 0F 6C/6D punpcklqdq/punpckhqdq (register source)
+pub fn gen_sse_punpckqdq(ctx: &mut JitContext, op: u32, modrm_byte: u8) {
+    gen_sse_task_switch_check(ctx);
+    dbg_assert!(modrm_byte >= 0xC0);
+    let r = (modrm_byte >> 3 & 7) as u32 | ctx.cpu.rex_r();
+    let rm = (modrm_byte & 7) as u32 | ctx.cpu.rex_b();
+    let lo = op == 0x660F6C;
+    let mut lanes = [0u8; 16];
+    for i in 0..8u32 {
+        lanes[i as usize] = if lo { i as u8 } else { (i + 8) as u8 };
+        lanes[(i + 8) as usize] = if lo { (i + 16) as u8 } else { (i + 24) as u8 };
+    }
+    gen_xmm_addr(ctx, r);
+    gen_xmm_load_v128(ctx, r);
+    gen_xmm_load_v128(ctx, rm);
+    ctx.builder.i8x16_shuffle(&lanes);
+    gen_xmm_store_v128(ctx, r);
+}
+
+
 /// Start and end of the current instruction within its page, packed for the wrappers
 fn instruction_ips(ctx: &JitContext) -> i32 {
     (ctx.start_of_current_instruction & 0xFFF | (ctx.cpu.eip & 0xFFF) << 12) as i32
@@ -199,7 +506,10 @@ pub unsafe fn jit64_print_profile() {
         .collect();
     v.sort_by(|a, b| b.0.cmp(&a.0));
     for (count, name) in v.iter().take(40) {
-        dbg_log!("{:>12} {}", count, name);
+        #[cfg(target_arch = "wasm32")]
+        crate::dbg::console_log_to_js_console(format!("{:>12} {}", count, name));
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = (count, name);
     }
 }
 
@@ -840,7 +1150,7 @@ pub fn gen_commit_deferred_flags(ctx: &mut JitContext) {
 /// Commit the deferred lazy-flag state inside a cold branch (a memory slow path): the branch
 /// may not be taken at runtime, so the compile-time state stays deferred — the stores are
 /// idempotent and the flag locals remain authoritative on both paths.
-fn gen_commit_deferred_flags_cold(ctx: &mut JitContext) {
+pub fn gen_commit_deferred_flags_cold(ctx: &mut JitContext) {
     match ctx.jit64_deferred {
         Some(d) => gen_emit_deferred_flags(ctx, &d),
         None => {},
