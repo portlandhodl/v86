@@ -144,6 +144,21 @@ const expected = [
     120n,                // 109: #GP on non-canonical data addresses (40 * 3)
     0x2828282828n,       // 110: loads through the canonical alias still work (40 * value)
     0n,                  // 111: #GP error codes are 0
+    0n,                  // 112: pxor xmm, xmm (native) zeroes
+    0xAAAAAAAAAAAAAAAAn, // 113: pxor xmm, m128 (native), low half
+    0x9669966996699669n, // 114: pxor high half via movdqa store
+    0x1FF8n,             // 115: paddq low half (lane wraps, no cross-lane carry)
+    1n,                  // 116: paddq high half (independent lane)
+    0x1FF8n,             // 117: movdqa register-to-register copy
+    0x99AABBCCDDEEFF00n, // 118: movdqa load crossing a page boundary
+    1n,                  // 119: movdqa store crossing a page boundary (high half of xmm13)
+    0x0000000300000001n, // 120: paddd with per-lane wraparound
+    0x02468ACF13579BDEn, // 121: psrld 3
+    0x2468ACF03579BDE0n, // 122: pslld 4 (per-lane, bits don't cross lanes)
+    0xDDEEFF0099AABBCCn, // 123: pshufd 0x1B low qword
+    0x5566778811223344n, // 124: pshufd 0x1B high qword
+    0xAAAAAAAAn,         // 125: punpcklqdq low qword
+    0x0000000013121110n, // 126: psrldq 12
 ];
 
 const emulator = new V86({

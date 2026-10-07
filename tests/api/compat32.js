@@ -3,7 +3,7 @@
 // memhog payload (memhog.rs, `make tests/api/memhog`, an i386 static ELF) on it. 32-bit
 // userspace on a 64-bit kernel exercises compat mode: 32-bit code segments with EFER.LMA=1,
 // int 0x80 delivery through the 64-bit IDT, syscall/sysenter from compat mode, and page
-// faults/signals with a 32-bit CS (TODOS.md §2.6).
+// faults/signals with a 32-bit CS (TODOS.md §3.4, §5).
 //
 //   ALPINE_ISO=images/alpine-virt-3.19.1-x86_64.iso ./tests/api/compat32.js
 //

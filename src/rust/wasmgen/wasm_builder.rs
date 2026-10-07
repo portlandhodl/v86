@@ -977,6 +977,44 @@ impl WasmBuilder {
         self.mem_op(op::OP_I64STORE, op::MEM_NO_ALIGN, byte_offset)
     }
 
+    // SIMD (v128) support, used by the native code generation for SSE instructions
+
+    fn simd_op(&mut self, opcode: u32) {
+        self.instruction_body.push(op::OP_SIMD_PREFIX);
+        write_leb_u32(&mut self.instruction_body, opcode);
+    }
+
+    /// v128.load from the address (i32) on the stack
+    pub fn load_v128(&mut self, byte_offset: u32) {
+        self.simd_op(op::SIMD_V128_LOAD);
+        self.instruction_body.push(op::MEM_NO_ALIGN);
+        write_leb_u32(&mut self.instruction_body, byte_offset);
+    }
+
+    /// v128.store to the address (i32) on the stack, value on top
+    pub fn store_v128(&mut self, byte_offset: u32) {
+        self.simd_op(op::SIMD_V128_STORE);
+        self.instruction_body.push(op::MEM_NO_ALIGN);
+        write_leb_u32(&mut self.instruction_body, byte_offset);
+    }
+
+    pub fn const_v128(&mut self, bytes: &[u8; 16]) {
+        self.simd_op(op::SIMD_V128_CONST);
+        self.instruction_body.extend_from_slice(bytes);
+    }
+
+    /// i8x16.shuffle with 16 immediate lane indices (0..32; 16..31 read the second operand)
+    pub fn i8x16_shuffle(&mut self, lanes: &[u8; 16]) {
+        self.simd_op(op::SIMD_I8X16_SHUFFLE);
+        self.instruction_body.extend_from_slice(lanes);
+    }
+
+    /// Binary v128 op (both operands on the stack)
+    pub fn simd_binop(&mut self, opcode: u32) { self.simd_op(opcode) }
+
+    /// Lane shift: v128 below, i32 shift count on top
+    pub fn simd_shift(&mut self, opcode: u32) { self.simd_op(opcode) }
+
     pub fn add_i32(&mut self) { self.instruction_body.push(op::OP_I32ADD); }
     pub fn add_i64(&mut self) { self.instruction_body.push(op::OP_I64ADD); }
     pub fn sub_i32(&mut self) { self.instruction_body.push(op::OP_I32SUB); }

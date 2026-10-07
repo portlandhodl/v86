@@ -406,6 +406,115 @@ function gen_native_any(encoding, size, imm, generic)
     const RM_REG = "((modrm_byte & 7) as u32 | ctx.cpu.rex_b())";
     const IMM = imm && imm[1] === "I32" ? `jit64::Opnd::Imm(${imm[0]} as i64)` : undefined;
 
+    // Common 66-prefixed integer SSE instructions, compiled natively: they set no flags and
+    // don't touch general-purpose registers, so they skip the interpreter-call ceremony
+    // (flag commit, register spill, tlb cache reset). See jit64::gen_sse_binary64 etc.
+    // Memory-operand forms that aren't covered fall back to the interpreter's wrapper.
+    const sse_nm = `${hex(op >> 16 & 0xFF, 2)}${hex(op >> 8 & 0xFF, 2)}${hex(op & 0xFF, 2)}`;
+    if(op === 0x660FEF || op === 0x660FEB || op === 0x660FDB || op === 0x660FD4)
+    {
+        return [`jit64::gen_sse_binary64(ctx, ${op}, modrm_byte);`];
+    }
+    if(op === 0x660F6F || op === 0xF30F6F)
+    {
+        return ["jit64::gen_sse_mov_load(ctx, modrm_byte);"];
+    }
+    if(op === 0x660F7F || op === 0xF30F7F)
+    {
+        return ["jit64::gen_sse_mov_store(ctx, modrm_byte);"];
+    }
+    if(op === 0x0F10 || op === 0x0F28)
+    {
+        // movups/movaps xmm, xmm/m128 (also unaligned, like the interpreter)
+        return ["jit64::gen_sse_mov_load(ctx, modrm_byte);"];
+    }
+    if(op === 0x0F11 || op === 0x0F29)
+    {
+        return ["jit64::gen_sse_mov_store(ctx, modrm_byte);"];
+    }
+    if(op === 0x660FFC || op === 0x660FFD || op === 0x660FFE)
+    {
+        // paddb/paddw/paddd: native for the register form
+        assert(!imm);
+        const mem_wrapper = register_wrapper(encoding, `instr_${sse_nm}_mem`, ["u64", "i32"]);
+        return [{
+            type: "if-else",
+            if_blocks: [{
+                condition: "modrm_byte < 0xC0",
+                body: [
+                    "let addr = jit64::decode_modrm(ctx.cpu, modrm_byte);",
+                    `jit64::gen_generic_mem(ctx, "${mem_wrapper}", &addr, &[jit64::A::I32((modrm_byte >> 3 & 7) as i32 | ctx.cpu.rex_r() as i32)]);`,
+                ],
+            }],
+            else_block: {
+                body: [`jit64::gen_sse_padd(ctx, ${op}, modrm_byte);`],
+            },
+        }];
+    }
+    if(op === 0x660F71 || op === 0x660F72 || op === 0x660F73)
+    {
+        assert(imm && imm[1] === "I32");
+        const kind = encoding.fixed_g;
+        // the register form is natively compiled; the (memory) form keeps the wrapper
+        const mem_wrapper = register_wrapper(encoding, `instr_${sse_nm}_${kind}_mem`, ["u64", "i32"]);
+        return [{
+            type: "if-else",
+            if_blocks: [{
+                condition: "modrm_byte < 0xC0",
+                body: [
+                    "let addr = jit64::decode_modrm(ctx.cpu, modrm_byte);",
+                    `let imm = ${imm[0]};`,
+                    `jit64::gen_generic_mem(ctx, "${mem_wrapper}", &addr, &[jit64::A::I32(imm)]);`,
+                ],
+            }],
+            else_block: {
+                body: [
+                    `let imm = ${imm[0]};`,
+                    `jit64::gen_sse_shift_imm(ctx, ${op}, ${kind}, imm, modrm_byte);`,
+                ],
+            },
+        }];
+    }
+    if(op === 0x660F70)
+    {
+        assert(imm && imm[1] === "I32");
+        const mem_wrapper = register_wrapper(encoding, `instr_${sse_nm}_mem`, ["u64", "i32", "i32"]);
+        return [{
+            type: "if-else",
+            if_blocks: [{
+                condition: "modrm_byte < 0xC0",
+                body: [
+                    "let addr = jit64::decode_modrm(ctx.cpu, modrm_byte);",
+                    `let imm = ${imm[0]};`,
+                    `jit64::gen_generic_mem(ctx, "${mem_wrapper}", &addr, &[jit64::A::I32((modrm_byte >> 3 & 7) as i32 | ctx.cpu.rex_r() as i32), jit64::A::I32(imm)]);`,
+                ],
+            }],
+            else_block: {
+                body: [
+                    `let imm = ${imm[0]};`,
+                    "jit64::gen_sse_pshufd(ctx, imm, modrm_byte);",
+                ],
+            },
+        }];
+    }
+    if(op === 0x660F6C || op === 0x660F6D)
+    {
+        const mem_wrapper = register_wrapper(encoding, `instr_${sse_nm}_mem`, ["u64", "i32"]);
+        return [{
+            type: "if-else",
+            if_blocks: [{
+                condition: "modrm_byte < 0xC0",
+                body: [
+                    "let addr = jit64::decode_modrm(ctx.cpu, modrm_byte);",
+                    `jit64::gen_generic_mem(ctx, "${mem_wrapper}", &addr, &[jit64::A::I32((modrm_byte >> 3 & 7) as i32 | ctx.cpu.rex_r() as i32)]);`,
+                ],
+            }],
+            else_block: {
+                body: [`jit64::gen_sse_punpckqdq(ctx, ${op}, modrm_byte);`],
+            },
+        }];
+    }
+
     // dst/src: "rm" (the modrm operand), "r" (the modrm reg field), "imm", "eax"
     function modrm_form(bits, operand_code_fn)
     {
