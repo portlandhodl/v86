@@ -9,25 +9,14 @@
             "sha256": "5389ca9c2ed206d9c1f7a92d213668de9c1c76493faf8cb1d7680a03cf9a0513"
         }
     ],
-    "examples": [
+    "moved": [
         {
-            "page": "bitcoin-wallet-check",
-            "title": "Bitcoin Core wallet check: prove a wallet.dat opens, offline, in your browser",
-            "description": "Drop a wallet file, or try one of seven demo wallets: it is imported by an unmodified Bitcoin Core 31.1 running in a Linux VM emulated in the tab, with no network device. Nothing is uploaded.",
-            "image": "og-bitcoin-wallet-check.png",
-            "image_alt": "Bitcoin Core wallet check: an encrypted demo wallet imported and unlocked offline, every step marked ok",
-            "files": [
-                "examples/bitcoin-wallets/*.dat"
-            ]
+            "page": "examples/bitcoin-wallet-check.html",
+            "to": "https://portlandhodl.github.io/wasm-bitcoin-tools/apps/bitcoin-wallet-check.html"
         },
         {
-            "page": "anchorwatch-recovery",
-            "title": "Vault recovery check: verify an AnchorWatch recovery kit with Bitcoin Core, offline, in your browser",
-            "description": "Upload a Trident Vault recovery kit: an unmodified Bitcoin Core 31.1, running offline in a Linux VM emulated in the tab, validates its descriptors, builds the watch-only wallet, lists your receive and change addresses and lets you download the wallet. Nothing is uploaded.",
-            "theme_color": "#014143",
-            "files": [
-                "examples/anchorwatch-recovery/recovery-kit.pdf"
-            ]
+            "page": "examples/anchorwatch-recovery.html",
+            "to": "https://portlandhodl.github.io/wasm-bitcoin-tools/apps/anchorwatch-recovery.html"
         }
     ],
     "title": "v86_64 — 64-bit Linux in your browser",
