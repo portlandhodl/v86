@@ -1278,15 +1278,14 @@ pub fn set_tlb_code(
     };
     let c = match *slot {
         None => {
-            let state_table = [u16::MAX; 0x1000];
             unsafe {
-                let mut c = NonNull::new_unchecked(Box::into_raw(Box::new(cpu::Code {
-                    wasm_table_index,
-                    state_flags,
-                    state_table,
-                })));
+                let mut c = cpu::code_alloc();
                 *slot = Some(c);
-                c.as_mut()
+                let c = c.as_mut();
+                c.state_table.fill(u16::MAX);
+                c.state_flags = state_flags;
+                c.wasm_table_index = wasm_table_index;
+                c
             }
         },
         Some(mut c) => unsafe {
@@ -2509,7 +2508,7 @@ fn jit_dirty_page_ctx(ctx: &mut JitState, page: Page) {
                         Some(c) => unsafe {
                             let w = c.as_ref().wasm_table_index;
                             if wasm_table_index == w {
-                                drop(Box::from_raw(c.as_ptr()));
+                                cpu::code_free(c);
                                 *slot = None;
                                 if !ctx.entry_points.contains_key(&tlb_physical_page)
                                     && !ctx.pages.contains_key(&tlb_physical_page)

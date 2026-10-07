@@ -164,9 +164,14 @@ were both measured slower, because compile time dominates.
   block-end commit is dead when the next block overwrites the flags before
   reading them, which needs join-point-aware liveness. imul's cf/of isn't
   deferred either.
-- **Remaining interpreter calls**: 8/16-bit shifts, mul/div, cli, rep
-  movs/stos (could become memory.copy/fill within a page), popf, SSE moves,
-  mov cr, rdtsc.
+- **Remaining interpreter calls**: mul/div, popf, mov cr, rdtsc,
+  vm86-only string ops (`rep`).
+  8/16-bit shifts and cli are now native (jit64.rs `gen_shift`,
+  `gen_cli`), as are the common integer SSE ops (movdqa/movdqu,
+  pxor/por/pand, padd/psub, shifts 71/72/73, pshufd, punpckqdq,
+  pshufb, palignr, movups/movaps) and plain movs/stos/lods.
+  The wrapper-count profile is in `tests/longmode/alpine-wrappers.mjs`
+  (`jit64_print_profile`).
 - Inline flags for 8/16-bit operations (conditions on them still call out).
 - Code in the last 16 bytes of a page always runs interpreted.
 - A second data-TLB-cache entry, for blocks that alternate between the stack
