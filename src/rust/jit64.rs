@@ -322,9 +322,7 @@ fn gen_xmm_load_v128(ctx: &mut JitContext, r: u32) {
 
 /// Store the v128 on the stack into the xmm register; the caller must have pushed the
 /// register's address first (wasm stores take the address below the value)
-fn gen_xmm_store_v128(ctx: &mut JitContext, _r: u32) {
-    ctx.builder.store_v128(0);
-}
+fn gen_xmm_store_v128(ctx: &mut JitContext, _r: u32) { ctx.builder.store_v128(0); }
 
 /// Push the address of an xmm register (for gen_xmm_store_v128)
 fn gen_xmm_addr(ctx: &mut JitContext, r: u32) {
@@ -455,7 +453,6 @@ pub fn gen_sse_punpckqdq(ctx: &mut JitContext, op: u32, modrm_byte: u8) {
     ctx.builder.i8x16_shuffle(&lanes);
     gen_xmm_store_v128(ctx, r);
 }
-
 
 /// Start and end of the current instruction within its page, packed for the wrappers
 fn instruction_ips(ctx: &JitContext) -> i32 {
