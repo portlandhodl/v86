@@ -9,7 +9,15 @@
             "sha256": "5389ca9c2ed206d9c1f7a92d213668de9c1c76493faf8cb1d7680a03cf9a0513"
         }
     ],
-    "examples": ["bitcoin-wallet-check"],
+    "examples": [
+        {
+            "page": "bitcoin-wallet-check",
+            "title": "Bitcoin Core wallet check: prove a wallet.dat opens, offline, in your browser",
+            "description": "Drop a wallet file, or try one of seven demo wallets: it is imported by an unmodified Bitcoin Core 31.1 running in a Linux VM emulated in the tab, with no network device. Nothing is uploaded.",
+            "image": "og-bitcoin-wallet-check.png",
+            "image_alt": "Bitcoin Core wallet check: an encrypted demo wallet imported and unlocked offline, every step marked ok"
+        }
+    ],
     "title": "v86_64 — 64-bit Linux in your browser",
     "description": "A virtual machine manager for x86-64 Linux distributions, emulated in WebAssembly with a 64-bit JIT. Pick an ISO and boot it in your browser: nothing to install.",
     "image": "og.png",

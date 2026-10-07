@@ -41,6 +41,11 @@ const FILES = [
     "build/xterm.js",
     "bios/seabios.bin",
     "bios/vgabios.bin",
+    "icons/favicon.svg",
+    "icons/icon-32.png",
+    "icons/icon-180.png",
+    "icons/icon-192.png",
+    "icons/icon-512.png",
 ];
 const REQUIRED = new Set(["v86.css", "build/v86_all.js", "build/v86.wasm", "bios/seabios.bin", "bios/vgabios.bin"]);
 
@@ -98,10 +103,37 @@ if(bundled_profiles.length)
     const index = { schema: "v86-machine-catalogue/1", image_base: "../images/", profiles: bundled_profiles };
     fs.writeFileSync(path.join(out, "profiles", "index.json"), JSON.stringify(index, null, 4) + "\n");
 }
-// examples published with the site (pages/site.json "examples")
-const examples = site.examples || [];
-if(examples.includes("bitcoin-wallet-check"))
+const escape = s => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+
+// Open Graph / Twitter card tags for a page published at url
+function card_tags({ url, title, description, image, image_alt, site_name = "v86_64" })
 {
+    const image_url = image && new URL(image, site_url).href;
+    return [
+        `<link rel="canonical" href="${escape(url)}">`,
+        `<meta property="og:type" content="website">`,
+        `<meta property="og:site_name" content="${escape(site_name)}">`,
+        `<meta property="og:url" content="${escape(url)}">`,
+        `<meta property="og:title" content="${escape(title)}">`,
+        `<meta property="og:description" content="${escape(description)}">`,
+        ...(image ? [
+            `<meta property="og:image" content="${escape(image_url)}">`,
+            `<meta property="og:image:width" content="1200">`,
+            `<meta property="og:image:height" content="630">`,
+            `<meta property="og:image:alt" content="${escape(image_alt)}">`,
+            `<meta name="twitter:image" content="${escape(image_url)}">`,
+            `<meta name="twitter:image:alt" content="${escape(image_alt)}">`,
+        ] : []),
+        `<meta name="twitter:card" content="${image ? "summary_large_image" : "summary"}">`,
+        `<meta name="twitter:title" content="${escape(title)}">`,
+        `<meta name="twitter:description" content="${escape(description)}">`,
+    ].join("\n");
+}
+
+// examples published with the site (pages/site.json "examples"), each with its own link preview
+for(const example of site.examples || [])
+{
+    if(example.page !== "bitcoin-wallet-check") throw new Error(`unknown example ${example.page}`);
     // Alpine's kernel and initramfs, from the bundled ISO, and Bitcoin Core with its glibc runtime
     const alpine = site.bundle.find(item => item.file.startsWith("alpine-virt-"));
     if(!alpine) throw new Error("bitcoin-wallet-check needs the Alpine virt ISO in bundle");
@@ -125,7 +157,16 @@ if(examples.includes("bitcoin-wallet-check"))
     const manifest = JSON.parse(fs.readFileSync(path.join(bitcoin, "manifest.json"), "utf8"));
     for(const file of ["manifest.json", ...manifest.files.map(f => f.name)]) copy(path.join(bitcoin, file), `images/bitcoin/${file}`);
     copy(path.join(root, "build/libv86.js"), "build/libv86.js");
-    copy(path.join(root, "examples/bitcoin-wallet-check.html"), "examples/bitcoin-wallet-check.html");
+    const page = `examples/${example.page}.html`;
+    let page_html = fs.readFileSync(path.join(root, page), "utf8");
+    if(!/<\/title>\n/.test(page_html)) throw new Error(`${page}: no <title> to insert the meta tags after`);
+    page_html = page_html.replace(/<\/title>\n/, () => "</title>\n" + card_tags({
+        url: new URL(page, site_url).href,
+        ...example,
+    }) + `\n<meta name="description" content="${escape(example.description)}">\n<meta name="theme-color" content="#f7931a">\n`);
+    fs.mkdirSync(path.dirname(path.join(out, page)), { recursive: true });
+    fs.writeFileSync(path.join(out, page), page_html);
+    if(example.image) copy(path.join(here, example.image), example.image);
     for(const file of fs.readdirSync(path.join(root, "examples/bitcoin-wallets")).filter(f => f.endsWith(".dat")))
     {
         copy(path.join(root, "examples/bitcoin-wallets", file), `examples/bitcoin-wallets/${file}`);
@@ -136,26 +177,10 @@ if(examples.includes("bitcoin-wallet-check"))
 // the image server first, the bundled machines while it's unreachable
 const catalogues = [catalogue, ...(bundled_profiles.length ? ["profiles/index.json"] : [])].filter(Boolean);
 
-const escape = s => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-const image_url = new URL(site.image, site_url).href;
 const head = [
     `<meta name="v86-catalogue" content="${escape(catalogues.join(" "))}">`,
-    `<link rel="canonical" href="${escape(site_url)}">`,
-    `<meta property="og:type" content="website">`,
-    `<meta property="og:site_name" content="v86_64">`,
-    `<meta property="og:url" content="${escape(site_url)}">`,
-    `<meta property="og:title" content="${escape(site.title)}">`,
-    `<meta property="og:description" content="${escape(site.description)}">`,
-    ...(has_image ? [
-        `<meta property="og:image" content="${escape(image_url)}">`,
-        `<meta property="og:image:width" content="1200">`,
-        `<meta property="og:image:height" content="630">`,
-        `<meta property="og:image:alt" content="${escape(site.image_alt)}">`,
-        `<meta name="twitter:image" content="${escape(image_url)}">`,
-    ] : []),
-    `<meta name="twitter:card" content="${has_image ? "summary_large_image" : "summary"}">`,
-    `<meta name="twitter:title" content="${escape(site.title)}">`,
-    `<meta name="twitter:description" content="${escape(site.description)}">`,
+    card_tags({ url: site_url, title: site.title, description: site.description,
+                image: has_image && site.image, image_alt: site.image_alt }),
     `<meta name="theme-color" content="#04070a">`,
 ].join("\n");
 
@@ -168,7 +193,6 @@ fs.writeFileSync(path.join(out, "index.html"), html);
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 manifest.start_url = "./";
-manifest.icons = [];
 fs.writeFileSync(path.join(out, "manifest.json"), JSON.stringify(manifest, null, 4) + "\n");
 
 console.log(`site in ${out}, catalogues: ${catalogues.join(", ")}`);
