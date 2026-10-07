@@ -1769,7 +1769,7 @@ fn gen_pointer_from_entry(ctx: &mut JitContext, address: &WasmLocalI64, entry: &
             ctx.builder.get_local_i64(address);
             ctx.builder.xor_i64();
             // strip the address' sign bits, which cancel against the entry's above only for
-            // canonical forms (see TODOS §4c phase 2)
+            // canonical forms (see TODOS.md §4.1, §4.3)
             ctx.builder.const_i64(0xFFFF_FFFF_FFFF);
             ctx.builder.and_i64();
         },
