@@ -115,7 +115,9 @@ serial console, `?mem=<MiB>` to change the memory size.
 boots Alpine headlessly (no display, no network device), runs the official x86_64
 Bitcoin Core in it with networking disabled, and imports a wallet file dropped on
 the page to verify it can be loaded. `./tools/stage-bitcoin.sh` downloads the
-release and stages it, with the glibc runtime it needs, in `images/bitcoin/`.
+release and stages it, with the glibc runtime it needs, in `images/bitcoin/`. Demo wallets
+(descriptor, legacy, encrypted, watch-only, signet, and failing cases) can be run
+with one click. Live: https://portlandhodl.github.io/v86_64/examples/bitcoin-wallet-check.html
 
 **Internet access in the guest.** `./tools/serve.mjs --wisp` (after
 `npm install`) also runs a [Wisp](https://github.com/MercuryWorkshop/wisp-protocol)

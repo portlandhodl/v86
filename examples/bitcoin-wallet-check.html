@@ -21,113 +21,231 @@ Setup (from the repository root):
 <style>
     :root {
         color-scheme: light dark;
-        --bg: #f6f7f9; --fg: #1b1f24; --muted: #5c6670; --card: #ffffff; --line: #d7dde4;
-        --ok: #1a7f37; --bad: #c62828; --accent: #e8711a; --accent-bg: #fff4ec;
+        --bg: #f4f2ee; --bg2: #ebe7e0; --fg: #1d1b18; --muted: #6b655c; --card: #ffffff; --card2: #faf8f5;
+        --line: #e0dbd2; --line2: #cfc8bc;
+        --ok: #18794e; --ok-bg: #e9f6ef; --bad: #c62828; --bad-bg: #fdeeee;
+        --accent: #f7931a; --accent-strong: #d97b0a; --accent-bg: #fff3e3; --accent-fg: #1d1b18;
+        --term-bg: #0d1014; --term-fg: #c9d1d9;
+        --shadow: 0 1px 2px rgba(40, 30, 10, .06), 0 4px 16px rgba(40, 30, 10, .06);
     }
     @media (prefers-color-scheme: dark) {
-        :root { --bg: #121417; --fg: #e6e8eb; --muted: #9aa4ae; --card: #1b1f24; --line: #2f363d;
-                --ok: #3fb950; --bad: #ff6b6b; --accent: #f49342; --accent-bg: #2a1f17; }
+        :root {
+            --bg: #0d0f12; --bg2: #13161b; --fg: #e9e6e1; --muted: #9a958d; --card: #161a20; --card2: #1b2027;
+            --line: #262c35; --line2: #343c47;
+            --ok: #3fcf8e; --ok-bg: #10261c; --bad: #ff6b6b; --bad-bg: #2b1414;
+            --accent: #f7931a; --accent-strong: #ffa940; --accent-bg: #2a1d0c; --accent-fg: #14110c;
+            --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .25);
+        }
     }
     * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
-    main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
-    h1 { font-size: 24px; margin: 0 0 8px; }
-    h2 { font-size: 18px; margin: 24px 0 8px; }
-    p.lead { color: var(--muted); margin: 0 0 20px; }
-    code, pre { font: 13px/1.45 ui-monospace, Menlo, Consolas, monospace; }
-    .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 32px 20px; text-align: center;
-            background: var(--card); transition: border-color .15s, background .15s; }
-    .drop.over { border-color: var(--accent); background: var(--accent-bg); }
-    .drop.disabled { opacity: .6; }
-    .drop label { color: var(--accent); cursor: pointer; text-decoration: underline; }
-    .drop input { display: none; }
-    .drop small { color: var(--muted); }
-    .options { display: flex; flex-wrap: wrap; gap: 16px 28px; margin: 14px 0 20px; color: var(--muted); }
-    .options label { display: flex; align-items: center; gap: 8px; }
-    select, input[type=password] { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
-            background: var(--card); color: var(--fg); }
-    .machine { padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
-    .machine .line { display: flex; align-items: center; gap: 10px; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+           -webkit-font-smoothing: antialiased; }
+    main { max-width: 920px; margin: 0 auto; padding: 0 16px 56px; }
+    code, pre, .mono { font: 13px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    a { color: var(--accent-strong); }
+    h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 36px 0 12px;
+         display: flex; align-items: center; gap: 10px; }
+    h2 .n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
+            color: var(--accent-fg); font-size: 12px; letter-spacing: 0; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+
+    /* header */
+    header.hero { padding: 40px 0 8px; display: grid; grid-template-columns: auto 1fr; gap: 18px 20px; align-items: center; }
+    .logo { width: 56px; height: 56px; border-radius: 16px; background: linear-gradient(145deg, #ffb347, #f7931a 55%, #d9720a);
+            display: grid; place-items: center; box-shadow: 0 6px 20px rgba(247, 147, 26, .35); }
+    .logo svg { width: 32px; height: 32px; }
+    header h1 { font-size: clamp(24px, 4vw, 32px); line-height: 1.15; margin: 0; letter-spacing: -.01em; }
+    header p.lead { grid-column: 1 / -1; color: var(--muted); margin: 0; max-width: 70ch; font-size: 16px; }
+    .badges { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 13px;
+             background: var(--card); border: 1px solid var(--line); color: var(--muted); }
+    .badge svg { width: 14px; height: 14px; color: var(--accent); }
+
+    /* machine status */
+    .machine { padding: 14px 18px; margin-top: 24px; }
+    .machine .line { display: flex; align-items: center; gap: 12px; }
+    .machine .label { font-weight: 600; }
     .machine .pct { margin-left: auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
-    .bar { height: 6px; background: var(--line); border-radius: 3px; margin-top: 8px; overflow: hidden; }
-    .bar div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+    .bar { height: 6px; background: var(--bg2); border-radius: 3px; margin-top: 10px; overflow: hidden; }
+    .bar div { height: 100%; width: 0; background: linear-gradient(90deg, #ffb347, var(--accent)); transition: width .4s ease; border-radius: 3px; }
     .bar.ready div { background: var(--ok); }
     .bar.bad div { background: var(--bad); }
     .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
-    .dot.busy { background: var(--accent); animation: pulse 1s infinite alternate; }
+    .dot.busy { background: var(--accent); box-shadow: 0 0 0 0 rgba(247, 147, 26, .6); animation: ping 1.4s infinite; }
     .dot.ready { background: var(--ok); }
     .dot.bad { background: var(--bad); }
-    @keyframes pulse { from { opacity: .4 } to { opacity: 1 } }
-    .verdict { padding: 14px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--card);
-            font-weight: 600; font-size: 17px; }
-    .verdict.ok { border-color: var(--ok); color: var(--ok); }
-    .verdict.bad { border-color: var(--bad); color: var(--bad); }
-    .verdict.wait { color: var(--muted); font-weight: normal; }
-    dl.summary { display: grid; grid-template-columns: max-content 1fr; gap: 4px 18px; margin: 14px 0; }
+    @keyframes ping { 0% { box-shadow: 0 0 0 0 rgba(247, 147, 26, .55) } 80%, 100% { box-shadow: 0 0 0 8px rgba(247, 147, 26, 0) } }
+
+    /* demo wallets */
+    .demos { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+    .demo { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 8px; padding: 14px 16px;
+            background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+            transition: border-color .15s, transform .15s, background .15s; position: relative; }
+    .demo:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .demo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .demo.active { border-color: var(--accent); background: var(--accent-bg); }
+    .demo .top { display: flex; align-items: center; gap: 10px; }
+    .demo .icon { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; flex: none;
+                  background: var(--accent-bg); color: var(--accent-strong); }
+    .demo .icon svg { width: 18px; height: 18px; }
+    .demo.expect-fail .icon { background: var(--bad-bg); color: var(--bad); }
+    .demo .name { font-weight: 600; }
+    .demo .desc { color: var(--muted); font-size: 13.5px; flex: 1; }
+    .demo .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tag { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: var(--bg2); color: var(--muted); white-space: nowrap; }
+    .tag.ok { background: var(--ok-bg); color: var(--ok); }
+    .tag.bad { background: var(--bad-bg); color: var(--bad); }
+    .demo .go { position: absolute; top: 14px; right: 14px; font-size: 12px; color: var(--accent-strong); font-weight: 600;
+                opacity: 0; transition: opacity .15s; }
+    .demo:hover .go, .demo:focus-visible .go { opacity: 1; }
+    .demo[disabled] { opacity: .55; cursor: progress; transform: none; }
+    .note { color: var(--muted); font-size: 13px; margin: 10px 2px 0; }
+
+    /* own wallet */
+    .own { display: grid; grid-template-columns: 1.4fr 1fr; gap: 0; overflow: hidden; }
+    .drop { padding: 28px 22px; text-align: center; border-right: 1px solid var(--line); transition: background .15s;
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+    .drop .ring { width: 52px; height: 52px; border-radius: 50%; border: 2px dashed var(--line2); display: grid; place-items: center;
+                  color: var(--accent-strong); transition: border-color .15s, transform .15s; }
+    .drop .ring svg { width: 22px; height: 22px; }
+    .drop.over { background: var(--accent-bg); }
+    .drop.over .ring { border-color: var(--accent); transform: scale(1.06); }
+    .drop.disabled { opacity: .6; }
+    .drop strong { font-size: 16px; }
+    .drop small { color: var(--muted); max-width: 46ch; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--accent);
+           background: var(--accent); color: var(--accent-fg); font: inherit; font-weight: 600; cursor: pointer; }
+    .btn:hover { background: var(--accent-strong); }
+    .drop input { display: none; }
+    .options { padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; background: var(--card2); }
+    .options label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; }
+    .options label span { font-weight: normal; color: var(--muted); font-size: 12.5px; }
+    select, input[type=password], input[type=text] { font: inherit; font-size: 14px; padding: 7px 10px; border: 1px solid var(--line2);
+            border-radius: 8px; background: var(--card); color: var(--fg); width: 100%; }
+    select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+
+    /* result */
+    #result { margin-top: 0; }
+    .verdict { padding: 18px 20px; display: flex; gap: 14px; align-items: flex-start; font-size: 16px; }
+    .verdict .vi { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; flex: none; font-size: 18px;
+                   font-weight: 700; background: var(--bg2); color: var(--muted); }
+    .verdict .vt { padding-top: 6px; overflow-wrap: anywhere; }
+    .verdict .vt b { display: block; font-size: 17px; }
+    .verdict .vt .sub { color: var(--muted); font-size: 14px; }
+    .verdict.ok { border-color: var(--ok); background: var(--ok-bg); }
+    .verdict.ok .vi { background: var(--ok); color: #fff; }
+    .verdict.bad { border-color: var(--bad); background: var(--bad-bg); }
+    .verdict.bad .vi { background: var(--bad); color: #fff; }
+    .verdict.wait .vi { border: 3px solid var(--line2); border-top-color: var(--accent); background: none; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg) } }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+    .panel { padding: 14px 16px; min-width: 0; }
+    .panel h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+    dl.summary { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 14px; }
     dl.summary dt { color: var(--muted); }
     dl.summary dd { margin: 0; overflow-wrap: anywhere; }
-    .step { border: 1px solid var(--line); border-radius: 8px; background: var(--card); margin: 8px 0; }
-    .step summary { padding: 8px 12px; cursor: pointer; display: flex; gap: 10px; align-items: baseline; }
-    .step summary .rc { margin-left: auto; font-size: 13px; color: var(--muted); }
+    dl.summary dd.mono { font-size: 12.5px; }
+    dl.summary dd.error { color: var(--bad); font-weight: 600; }
+    #steps { display: flex; flex-direction: column; }
+    .step { border-left: 2px solid var(--line); margin-left: 9px; padding: 0 0 2px 0; }
+    .step:last-child { border-left-color: transparent; }
+    .step summary { list-style: none; padding: 4px 0 10px; cursor: pointer; display: flex; gap: 10px; align-items: center;
+                    margin-left: -11px; font-size: 14px; }
+    .step summary::-webkit-details-marker { display: none; }
+    .step .si { width: 20px; height: 20px; border-radius: 50%; flex: none; display: grid; place-items: center; font-size: 11px; font-weight: 700;
+                background: var(--card); border: 2px solid var(--line2); color: var(--muted); }
+    .step.running .si { border-color: var(--line2); border-top-color: var(--accent); animation: spin 1s linear infinite; }
+    .step.ok .si { background: var(--ok); border-color: var(--ok); color: #fff; }
+    .step.bad .si { background: var(--bad); border-color: var(--bad); color: #fff; }
+    .step.pending summary, .step.skipped summary { color: var(--muted); cursor: default; }
+    .step.ok, .step.bad { border-left-color: var(--line2); }
+    .step summary .rc { margin-left: auto; font-size: 12px; color: var(--muted); }
     .step summary .rc.ok { color: var(--ok); }
     .step summary .rc.bad { color: var(--bad); }
-    .step pre { margin: 0; padding: 10px 12px; border-top: 1px solid var(--line); white-space: pre-wrap;
-            overflow-wrap: anywhere; max-height: 360px; overflow: auto; }
-    details.console summary { cursor: pointer; color: var(--muted); margin-top: 24px; }
-    #serial { background: #0d1117; color: #c9d1d9; padding: 12px; border-radius: 8px; height: 320px; overflow: auto;
-            white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; }
+    .step pre { margin: -4px 0 12px 20px; padding: 10px 12px; background: var(--term-bg); color: var(--term-fg); border-radius: 8px;
+                white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; font-size: 12px; }
+    .step pre:empty { display: none; }
+
+    details.console { margin-top: 28px; }
+    details.console summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+    #serial { background: var(--term-bg); color: var(--term-fg); padding: 12px; border-radius: 10px; height: 320px; overflow: auto;
+              white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0 0; font-size: 12px; }
     .error { color: var(--bad); }
-    footer { color: var(--muted); font-size: 13px; margin-top: 28px; }
+    footer { color: var(--muted); font-size: 12.5px; margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); }
+    @media (max-width: 700px) {
+        .own, .grid2 { grid-template-columns: 1fr; }
+        .drop { border-right: 0; border-bottom: 1px solid var(--line); }
+        header.hero { padding-top: 24px; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
 <main>
-    <h1>Bitcoin Core wallet check</h1>
-    <p class="lead">Drop a Bitcoin Core wallet file below. It is copied into an Alpine Linux machine
-    emulated by this page, which has no network device, and imported there into an offline
-    Bitcoin Core <span id="btc_version">…</span> (x86_64). Nothing leaves the browser, and the
-    machine is discarded when you close the tab.</p>
+    <header class="hero">
+        <div class="logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 5h6a3.5 3.5 0 0 1 0 7H8zm0 7h7a3.5 3.5 0 0 1 0 7H8zM8 5v14M10 3v2M14 3v2M10 19v2M14 19v2"/></svg>
+        </div>
+        <h1>Bitcoin Core wallet check</h1>
+        <p class="lead">Proves a wallet file opens in Bitcoin Core <span id="btc_version">…</span>. The file is imported by a real,
+        unmodified bitcoind running in an Alpine Linux machine emulated in this tab, with no network device. Your file never
+        leaves the browser, and the machine is gone when you close the tab.</p>
+        <div class="badges">
+            <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M2 2l20 20M8.5 16.4a5 5 0 0 1 7 0M5 12.9a10 10 0 0 1 5.2-2.8M19 12.9a10 10 0 0 0-2.3-1.6M2 8.8a15 15 0 0 1 4.2-2.6M22 8.8A15 15 0 0 0 10.7 5M12 20h.01"/></svg>No network device</span>
+            <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Runs entirely in your browser</span>
+            <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Official binaries, sha256-verified</span>
+            <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></svg>x86-64 Linux in WebAssembly</span>
+        </div>
+    </header>
 
-    <div id="drop" class="drop">
-        <p><strong>Drop wallet.dat here</strong> or <label>choose a file<input type="file" id="file"></label>.<br>
-        <small>A wallet directory (the one containing wallet.dat) can be dropped too. Legacy Berkeley DB
-        wallets are migrated to descriptors, which is how Bitcoin Core 31 imports them; SQLite wallets are
-        restored as they are.<br>
-        No wallet at hand? Try an example (mainnet, empty, never funded):
-        <a href="#" data-example="example-descriptor.dat">descriptor wallet</a> ·
-        <a href="#" data-example="example-legacy.dat">legacy wallet</a></small></p>
-    </div>
-
-    <div class="options">
-        <label>Chain
-            <select id="chain">
-                <option value="auto">auto (from the file; mainnet for legacy wallets)</option>
-                <option value="main">mainnet</option>
-                <option value="testnet4">testnet4</option>
-                <option value="testnet">testnet3</option>
-                <option value="signet">signet</option>
-                <option value="regtest">regtest</option>
-            </select>
-        </label>
-        <label>Passphrase (optional)
-            <input type="password" id="passphrase" autocomplete="off" placeholder="checks it unlocks the wallet">
-        </label>
-    </div>
-
-    <div class="machine">
-        <div class="line"><span class="dot" id="dot"></span><span id="status">Starting the machine…</span><span class="pct" id="pct"></span></div>
+    <div class="machine card">
+        <div class="line"><span class="dot" id="dot"></span><span><span class="label">Machine</span> · <span id="status">Starting…</span></span><span class="pct" id="pct"></span></div>
         <div class="bar" id="bar"><div id="bar_fill"></div></div>
     </div>
 
+    <h2><span class="n">1</span> Try a demo wallet</h2>
+    <div class="demos" id="demos"></div>
+    <p class="note">The demo wallets are empty and were never funded. Their keys are public because they are in this
+    repository, so never send coins to them. Pick one now: it runs as soon as the machine has booted.</p>
+
+    <h2><span class="n">2</span> Or check your own</h2>
+    <div class="own card">
+        <div id="drop" class="drop">
+            <div class="ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg></div>
+            <strong>Drop wallet.dat here</strong>
+            <label class="btn">Choose a file<input type="file" id="file"></label>
+            <small>A wallet directory (the one that contains wallet.dat) works too. SQLite descriptor wallets are restored as they
+            are. Legacy Berkeley DB wallets are migrated to descriptors, which is how Bitcoin Core 31 imports them.</small>
+        </div>
+        <div class="options">
+            <label>Chain <span>SQLite wallets record their network; legacy wallets default to mainnet.</span>
+                <select id="chain">
+                    <option value="auto">Auto-detect from the file</option>
+                    <option value="main">mainnet</option>
+                    <option value="testnet4">testnet4</option>
+                    <option value="testnet">testnet3</option>
+                    <option value="signet">signet</option>
+                    <option value="regtest">regtest</option>
+                </select>
+            </label>
+            <label>Passphrase <span>Optional. If given, the check also unlocks the wallet with it.</span>
+                <input type="password" id="passphrase" autocomplete="off" placeholder="wallet passphrase">
+            </label>
+        </div>
+    </div>
+
     <section id="result" hidden>
-        <h2>Result</h2>
-        <div id="verdict" class="verdict wait"></div>
-        <dl class="summary" id="summary"></dl>
-        <div id="steps"></div>
+        <h2><span class="n">3</span> Result</h2>
+        <div id="verdict" class="verdict card wait"></div>
+        <div class="grid2">
+            <div class="panel card"><h3>Summary</h3><dl class="summary" id="summary"></dl></div>
+            <div class="panel card"><h3>Steps in the guest</h3><div id="steps"></div></div>
+        </div>
     </section>
 
     <details class="console">
-        <summary>Serial console</summary>
+        <summary>Serial console (raw guest output)</summary>
         <pre id="serial"></pre>
     </details>
 
@@ -473,7 +591,7 @@ function check_prompts()
     {
         serial_text = "";
         guest_state = "ready";
-        set_status("Ready: drop a wallet file (booted in " + Math.round((Date.now() - boot_start) / 1000) + " s)", "ready");
+        set_status("Ready: pick a demo or drop a wallet file (booted in " + Math.round((Date.now() - boot_start) / 1000) + " s)", "ready");
         set_progress(1);
         run_next();
     }
@@ -539,15 +657,26 @@ function step_json(step)
     return null;
 }
 
+function step_element(name)
+{
+    const el = document.createElement("details");
+    el.className = "step pending";
+    el.dataset.name = name;
+    el.innerHTML = "<summary><span class=si></span><span class=title></span><span class=rc></span></summary><pre></pre>";
+    el.querySelector(".title").textContent = STEP_TITLES[name] || name;
+    // only steps that have started can be expanded
+    el.querySelector("summary").addEventListener("click", e => { if(el.classList.contains("pending") || el.classList.contains("skipped")) e.preventDefault(); });
+    $("steps").appendChild(el);
+    return el;
+}
+
 function render_step(step)
 {
     if(!step.el)
     {
-        step.el = document.createElement("details");
-        step.el.className = "step";
-        step.el.innerHTML = "<summary><span class=title></span><span class=rc>running…</span></summary><pre></pre>";
-        step.el.querySelector(".title").textContent = STEP_TITLES[step.name] || step.name;
-        $("steps").appendChild(step.el);
+        step.el = $("steps").querySelector(".step.pending[data-name='" + step.name + "']") || step_element(step.name);
+        step.el.className = "step running";
+        step.el.querySelector(".rc").textContent = "running…";
     }
     step.el.querySelector("pre").textContent = step.lines.join("\n");
 }
@@ -558,6 +687,8 @@ function finish_step(step)
     const rc = step.el.querySelector(".rc");
     rc.textContent = step.rc === 0 ? "ok" : "failed (exit " + step.rc + ")";
     rc.className = "rc " + (step.rc === 0 ? "ok" : "bad");
+    step.el.className = "step " + (step.rc === 0 ? "ok" : "bad");
+    step.el.querySelector(".si").textContent = step.rc === 0 ? "✓" : "✕";
     if(step.rc !== 0) step.el.open = true;
     update_summary();
 }
@@ -630,33 +761,53 @@ function update_summary()
     }
 }
 
+function set_verdict(state, title, sub)
+{
+    const verdict = $("verdict");
+    verdict.className = "verdict card " + state;
+    verdict.innerHTML = "<span class=vi></span><span class=vt><b></b><span class=sub></span></span>";
+    verdict.querySelector(".vi").textContent = { ok: "✓", bad: "✕", wait: "" }[state];
+    verdict.querySelector("b").textContent = title;
+    verdict.querySelector(".sub").textContent = sub || "";
+}
+
 function finish_run(rc)
 {
     const imp = current.steps.find(s => s.name === "import");
-    const verdict = $("verdict");
+    const pass = current.steps.find(s => s.name === "passphrase");
+    const seconds = Math.round((Date.now() - current.started) / 1000);
     if(rc === 0 && imp && imp.rc === 0)
     {
-        verdict.className = "verdict ok";
         const chain = current.steps.find(s => s.name === "chain");
         const used = chain && step_json(chain) ? step_json(chain).chain : current.chain;
-        verdict.textContent = "✔ " + current.file_name + " imports into Bitcoin Core " + current.btc_version + " (offline, " + used + ")";
+        const pass_ok = !pass || pass.rc === 0;
+        set_verdict(pass_ok ? "ok" : "bad",
+            pass_ok ? current.file_name + " imports into Bitcoin Core " + current.btc_version
+                    : current.file_name + " imports, but the passphrase does not unlock it",
+            "Checked offline on " + used + " in " + seconds + " s" + (pass ? (pass_ok ? "; the passphrase unlocks it." : ": " +
+                pass.lines.join(" ").replace(/\s+/g, " ").trim().slice(0, 200)) : "."));
     }
     else
     {
-        verdict.className = "verdict bad";
         const failed = current.steps.find(s => s.rc && s.rc !== 0);
         const reason = failed ? failed.lines.join(" ").replace(/\s+/g, " ").trim().slice(0, 300) : "";
-        verdict.textContent = "✘ " + current.file_name + " could not be imported" + (reason ? ": " + reason : "") +
+        set_verdict("bad", current.file_name + " could not be imported", reason +
             (/across chains|cannot be identified to belong|not in recognized format/.test(reason) ?
-                " — the wallet seems to belong to another chain; select the chain it was created on and try again." : "");
+                " The wallet seems to belong to another chain: select the chain it was created on and try again." : ""));
+    }
+    for(const el of $("steps").querySelectorAll(".step.pending"))
+    {
+        el.className = "step skipped";
+        el.querySelector(".rc").textContent = "skipped";
     }
     update_summary();
     current.done = true;
     current = null;
     guest_state = "ready";
-    set_status("Ready: drop another wallet file", "ready");
+    set_status("Ready: pick another demo or drop a wallet file", "ready");
     set_progress(1);
     drop.classList.remove("disabled");
+    for(const b of document.querySelectorAll(".demo.active")) b.classList.remove("active");
     run_next();
 }
 
@@ -671,11 +822,14 @@ async function run_next()
     drop.classList.add("disabled");
     set_status("Checking " + job.file_name + "…", "busy");
     set_progress(0.02, true);
+    job.started = Date.now();
     $("result").hidden = false;
     $("steps").textContent = "";
     $("summary").textContent = "";
-    $("verdict").className = "verdict wait";
-    $("verdict").textContent = "Checking…";
+    for(const name of STEP_ORDER) if(name !== "passphrase" || job.passphrase) step_element(name);
+    set_verdict("wait", "Checking " + job.file_name + "…", "Each step runs in the guest; expand one to see its output.");
+    if(job.demo) for(const b of document.querySelectorAll(".demo")) b.classList.toggle("active", b.dataset.file === job.demo);
+    if(job.scroll) $("result").scrollIntoView({ behavior: "smooth", block: "start" });
     try
     {
         const manifest = await binaries;
@@ -693,16 +847,16 @@ async function run_next()
     }
     catch(e)
     {
-        $("verdict").className = "verdict bad";
-        $("verdict").textContent = "✘ " + e.message;
+        set_verdict("bad", "The check could not start", e.message);
         current = null;
         guest_state = "ready";
-        set_status("Ready: drop another wallet file", "ready");
+        set_status("Ready: pick another demo or drop a wallet file", "ready");
         drop.classList.remove("disabled");
     }
 }
 
-function enqueue(file)
+// options: chain and passphrase (default: the form's), demo (the demo's file name)
+function enqueue(file, options = {})
 {
     file.arrayBuffer().then(buf =>
     {
@@ -710,8 +864,10 @@ function enqueue(file)
             file_name: file.name,
             size: buf.byteLength,
             data: new Uint8Array(buf),
-            chain: $("chain").value,
-            passphrase: $("passphrase").value,
+            chain: options.chain || $("chain").value,
+            passphrase: options.passphrase !== undefined ? options.passphrase : $("passphrase").value,
+            demo: options.demo,
+            scroll: true,
         });
         if(guest_state !== "ready")
         {
@@ -769,20 +925,81 @@ drop.addEventListener("drop", async e =>
         }
     }
 });
-for(const a of document.querySelectorAll("a[data-example]"))
+// --- demo wallets (examples/bitcoin-wallets/) ------------------------------------------------------
+
+const ICONS = {
+    wallet: '<path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h14a1 1 0 0 1 1 1v3M20 15v3a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2V5"/><path d="M21 11h-4a2 2 0 0 0 0 4h4z"/>',
+    archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
+    lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    signal: '<path d="M4.9 19.1a10 10 0 0 1 0-14.2M19.1 4.9a10 10 0 0 1 0 14.2M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4"/><circle cx="12" cy="12" r="2"/>',
+    key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>',
+    x: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z"/><path d="m9.5 12.5 5 5M14.5 12.5l-5 5"/>',
+};
+const DEMOS = [
+    { file: "example-descriptor.dat", icon: "wallet", name: "Descriptor wallet",
+      desc: "A standard wallet made by Bitcoin Core 31.1, restored as it is.",
+      tags: ["SQLite", "mainnet"], expect: "imports" },
+    { file: "example-legacy.dat", icon: "archive", name: "Legacy wallet",
+      desc: "A Berkeley DB wallet from Bitcoin Core 26.2, migrated to descriptors on import.",
+      tags: ["Berkeley DB", "mainnet"], expect: "imports" },
+    { file: "example-encrypted.dat", icon: "lock", name: "Encrypted wallet",
+      desc: "Encrypted with the passphrase \u201csatoshi\u201d, which the check uses to unlock it.",
+      tags: ["SQLite", "mainnet", "passphrase"], passphrase: "satoshi", expect: "imports and unlocks" },
+    { file: "example-encrypted.dat", id: "wrong-pass", icon: "key", name: "Wrong passphrase",
+      desc: "The same encrypted wallet, unlocked with the wrong passphrase.",
+      tags: ["SQLite", "mainnet", "passphrase"], passphrase: "not-satoshi", expect: "rejected", fail: true },
+    { file: "example-watchonly.dat", icon: "eye", name: "Watch-only wallet",
+      desc: "Public descriptors only (private keys disabled), as made for a hardware wallet.",
+      tags: ["SQLite", "mainnet", "watch-only"], expect: "imports" },
+    { file: "example-signet.dat", icon: "signal", name: "Signet wallet",
+      desc: "A signet wallet: the chain is read from the file and the node is restarted on signet.",
+      tags: ["SQLite", "signet"], expect: "imports" },
+    { file: "not-a-wallet.txt", icon: "x", name: "Not a wallet",
+      desc: "A text file renamed to look like a wallet, to show what a failed check looks like.",
+      tags: ["text"], expect: "rejected", fail: true,
+      content: "This is not a Bitcoin Core wallet.\n" },
+];
+
+for(const demo of DEMOS)
 {
-    a.addEventListener("click", async e =>
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "demo" + (demo.fail ? " expect-fail" : "");
+    b.dataset.file = demo.id || demo.file;
+    b.innerHTML = '<div class=top><span class=icon><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+        'stroke-linecap="round" stroke-linejoin="round">' + ICONS[demo.icon] + '</svg></span><span class=name></span></div>' +
+        '<span class=desc></span><span class=tags></span><span class=go>Run ▸</span>';
+    b.querySelector(".name").textContent = demo.name;
+    b.querySelector(".desc").textContent = demo.desc;
+    for(const t of [...demo.tags, "expected: " + demo.expect])
     {
-        e.preventDefault();
-        const name = a.dataset.example;
-        const r = await fetch("bitcoin-wallets/" + name);
-        if(!r.ok)
+        const tag = document.createElement("span");
+        tag.className = "tag" + (t.startsWith("expected") ? (demo.fail ? " bad" : " ok") : "");
+        tag.textContent = t;
+        b.querySelector(".tags").appendChild(tag);
+    }
+    b.addEventListener("click", async () =>
+    {
+        let data;
+        if(demo.content)
         {
-            set_status("Cannot fetch " + name + " (" + r.status + ")", "bad");
-            return;
+            data = new TextEncoder().encode(demo.content);
         }
-        enqueue(new File([await r.arrayBuffer()], name));
+        else
+        {
+            const r = await fetch("bitcoin-wallets/" + demo.file);
+            if(!r.ok)
+            {
+                set_status("Cannot fetch " + demo.file + " (" + r.status + ")", "bad");
+                return;
+            }
+            data = await r.arrayBuffer();
+        }
+        const name = demo.content ? "wallet.dat" : demo.file;
+        enqueue(new File([data], name), { chain: "auto", passphrase: demo.passphrase || "", demo: demo.id || demo.file });
     });
+    $("demos").appendChild(b);
 }
 $("file").addEventListener("change", e =>
 {
