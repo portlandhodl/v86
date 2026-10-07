@@ -233,8 +233,6 @@ function gen_instruction_body_after_fixed_g(encoding, size)
     }
     if(encoding.opcode === 0xFA && !process.env.DISABLE_NATIVE_CLI)
     {
-        // the cold #GP path of jit64::gen_cli calls the interpreter's handler
-        register_wrapper(encoding, "instr_FA", []);
         return ["jit64::gen_cli(ctx);"];
     }
     if(!process.env.DISABLE_NATIVE_STRING &&

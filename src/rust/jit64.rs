@@ -183,7 +183,9 @@ pub fn gen_sse_task_switch_check(ctx: &mut JitContext) {
 
 /// cli: clear IF when IOPL allows it. In 64-bit mode protected mode is always on and the
 /// vm86 flag is never set, so the interpreter's check reduces to iopl >= cpl. The (rare)
-/// #GP path runs the interpreter's handler.
+/// #GP path raises the fault through exit_with_fault_label. It must not spill the registers
+/// itself: gen_spill_dirty_registers clears the compile-time dirty set, which the hot path
+/// would then inherit (and later register writes before a wrapper call would be lost).
 pub fn gen_cli(ctx: &mut JitContext) {
     // if iopl >= cpl: flags &= ~FLAG_INTERRUPT
     ctx.builder.load_fixed_i32(global_pointers::flags as u32);
@@ -205,12 +207,7 @@ pub fn gen_cli(ctx: &mut JitContext) {
     ctx.builder.else_();
     {
         gen_commit_deferred_flags_cold(ctx);
-        gen_spill_dirty_registers(ctx);
-        ctx.builder.const_i32(instruction_ips(ctx));
-        ctx.builder.const_i32(ctx.cpu.prefixes as i32);
-        ctx.builder.call_fn2_ret("jit64_instr_FA");
-        ctx.builder.drop_();
-        ctx.builder.br(ctx.exit_with_fault_label);
+        codegen::gen_trigger_gp(ctx, 0);
     }
     ctx.builder.block_end();
 }
