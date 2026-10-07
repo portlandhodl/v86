@@ -159,6 +159,21 @@ const expected = [
     0x5566778811223344n, // 124: pshufd 0x1B high qword
     0xAAAAAAAAn,         // 125: punpcklqdq low qword
     0x0000000013121110n, // 126: psrldq 12
+    0n,                  // 127: shl r8, 9 (count > operand width)
+    0x1F0n,              // 128: shl r8, 4 (value 0xF0, cf 1 in bit 8)
+    0x8n,                // 129: shr r16, 12
+    0x1FFn,              // 130: sar r8, 12 (sign fill 0xFF, cf 1 in bit 8)
+    0x0En,               // 131: sar r8, 3
+    0n,                  // 132: shl m16, 20
+    0x08n,               // 133: shl r8, cl=35 (masked to 5 bits)
+    0x4000n,             // 134: shr r16, cl=1
+    0xF8n,               // 135: sar r8, 1
+    0n,                  // 136: cli clears IF at cpl 0
+    0x1600141F101F0012n, // 137: pshufb low qword
+    0x1E1D1C1B1A191817n, // 138: pshufb high qword
+    0x0C0B0A0908070605n, // 139: palignr 5 low qword
+    0x0D0C0B0A09080706n, // 140: palignr 17 of the previous result (from its destination)
+    0n,                  // 141: palignr 40 (zero)
 ];
 
 const emulator = new V86({

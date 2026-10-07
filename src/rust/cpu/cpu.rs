@@ -388,6 +388,40 @@ pub fn tlb_entry_to_u64(e: TlbEntry) -> u64 { e as u32 as u64 }
 #[inline(always)]
 pub fn tlb_entry_to_u64(e: TlbEntry) -> u64 { e as u64 }
 
+/// Free list of Code allocations. Codes live in dedicated chunks that are never moved, so
+/// the pointers in tlb_code / tlb_code_high (and in generated code) stay valid until freed.
+/// Freed Codes are only pushed to this list, which keeps full tlb clears free of allocator
+/// traffic (they free one entry per compiled page).
+static mut code_free_list: Vec<ptr::NonNull<Code>> = Vec::new();
+
+/// Allocate a Code (zeroed; set_tlb_code initialises all fields). Chunks are allocated
+/// without dropping, so their addresses are stable for the lifetime of the emulator.
+pub unsafe fn code_alloc() -> ptr::NonNull<Code> {
+    #[allow(static_mut_refs)]
+    if let Some(c) = code_free_list.pop() {
+        return c;
+    }
+    const CHUNK: usize = 64;
+    let bytes = std::mem::size_of::<Code>() * CHUNK;
+    let align = std::mem::align_of::<Code>();
+    let base = std::alloc::alloc_zeroed(
+        std::alloc::Layout::from_size_align(bytes, align).unwrap(),
+    ) as *mut Code;
+    dbg_assert!(!base.is_null());
+    #[allow(static_mut_refs)]
+    for i in (0..CHUNK).rev() {
+        code_free_list.push(ptr::NonNull::new_unchecked(base.add(i)));
+    }
+    #[allow(static_mut_refs)]
+    code_free_list.pop().unwrap()
+}
+
+/// Return a Code to the free list (the memory is not deallocated)
+pub unsafe fn code_free(c: ptr::NonNull<Code>) {
+    #[allow(static_mut_refs)]
+    code_free_list.push(c)
+}
+
 pub static mut tlb_data: [TlbEntry; 0x100000] = [0; 0x100000];
 pub static mut tlb_code: [Option<ptr::NonNull<Code>>; 0x100000] = [None; 0x100000];
 
@@ -411,7 +445,7 @@ pub unsafe fn tlb_high_evict(idx: usize) {
     tlb_high_page[idx] = 0;
     tlb_high_entry[idx] = 0;
     if let Some(c) = tlb_code_high[idx].take() {
-        drop(Box::from_raw(c.as_ptr()));
+        code_free(c);
     }
 }
 
@@ -3538,8 +3572,10 @@ pub unsafe fn handle_irqs_or_defer() {
 /// When any of these are armed the CPU runs interpreter-only: JIT dispatch
 /// and compilation are gated off so the per-instruction checks in
 /// jit_run_interpreted see everything. Recomputed on every DR7 write.
-pub static mut debug_exec_bp_armed: bool = false;
-pub static mut debug_data_wp_armed: bool = false;
+// Debug facilities that force interpreter-only execution, maintained by
+// dr7_update_armed (the only writer). Bit 0: instruction breakpoints armed, bit 1:
+// data watchpoints armed.
+pub static mut debug_bp_armed: u8 = 0;
 /// Data-watchpoint hits (B0-B3 bits) accumulated by the current instruction;
 /// delivered as a trap-class #DB after it completes. Cleared on any other
 /// exception delivery (a faulting instruction is re-executed and re-hits).
@@ -3560,7 +3596,7 @@ pub const DR6_RESERVED_READ: i32 = 0xFFFF0FF0u32 as i32;
 
 #[inline(always)]
 pub unsafe fn debug_mode_active() -> bool {
-    debug_exec_bp_armed || debug_data_wp_armed || *flags & (FLAG_TRAP | FLAG_RF) != 0
+    debug_bp_armed != 0 || *flags & (FLAG_TRAP | FLAG_RF) != 0
 }
 
 /// Deliver #DB. `matched` holds the B0-B3 bits of the breakpoints that fired.
@@ -3613,8 +3649,7 @@ pub unsafe fn dr7_update_armed() {
             }
         }
     }
-    debug_exec_bp_armed = exec;
-    debug_data_wp_armed = data;
+    debug_bp_armed = exec as u8 | (data as u8) << 1;
     if exec || data {
         // leave compiled 64-bit code (a no-op outside jit64); 0F 23 is a
         // block boundary, so the 32-bit JIT returns to the gated dispatcher
@@ -4786,7 +4821,7 @@ unsafe fn jit_run_interpreted(mut phys_addr: u64) {
                 // one instruction; it is cleared once that instruction ran
                 *flags &= !FLAG_RF;
             }
-            else if debug_exec_bp_armed {
+            else if debug_bp_armed & 1 != 0 {
                 let linear_ip = if *is_64 {
                     start_eip
                 }
@@ -5147,14 +5182,14 @@ pub unsafe fn virt_boundary_write32(low: u64, high: u64, value: i32) {
 }
 
 pub unsafe fn safe_read8(addr: u64) -> OrPageFault<i32> {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 1, false);
     }
     Ok(memory::read8(translate_address_read(addr)?))
 }
 
 pub unsafe fn safe_read16(addr: u64) -> OrPageFault<i32> {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 2, false);
     }
     if addr & 0xFFF == 0xFFF {
@@ -5166,7 +5201,7 @@ pub unsafe fn safe_read16(addr: u64) -> OrPageFault<i32> {
 }
 
 pub unsafe fn safe_read32s(addr: u64) -> OrPageFault<i32> {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 4, false);
     }
     if addr & 0xFFF >= 0xFFD {
@@ -5182,7 +5217,7 @@ pub unsafe fn safe_read_f32(addr: u64) -> OrPageFault<f32> {
 }
 
 pub unsafe fn safe_read64s(addr: u64) -> OrPageFault<u64> {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 8, false);
     }
     if addr & 0xFFF > 0x1000 - 8 {
@@ -5194,7 +5229,7 @@ pub unsafe fn safe_read64s(addr: u64) -> OrPageFault<u64> {
 }
 
 pub unsafe fn safe_read128s(addr: u64) -> OrPageFault<reg128> {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 16, false);
     }
     if addr & 0xFFF > 0x1000 - 16 {
@@ -5716,7 +5751,7 @@ pub unsafe fn writable_or_pagefault_jit(
 }
 
 pub unsafe fn safe_write8(addr: u64, value: i32) -> OrPageFault<()> {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 1, true);
     }
     let (phys_addr, can_skip_dirty_page) = translate_address_write_and_can_skip_dirty(addr)?;
@@ -5736,7 +5771,7 @@ pub unsafe fn safe_write8(addr: u64, value: i32) -> OrPageFault<()> {
 }
 
 pub unsafe fn safe_write16(addr: u64, value: i32) -> OrPageFault<()> {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 2, true);
     }
     let (phys_addr, can_skip_dirty_page) = translate_address_write_and_can_skip_dirty(addr)?;
@@ -5760,7 +5795,7 @@ pub unsafe fn safe_write16(addr: u64, value: i32) -> OrPageFault<()> {
 }
 
 pub unsafe fn safe_write32(addr: u64, value: i32) -> OrPageFault<()> {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 4, true);
     }
     let (phys_addr, can_skip_dirty_page) = translate_address_write_and_can_skip_dirty(addr)?;
@@ -5787,7 +5822,7 @@ pub unsafe fn safe_write32(addr: u64, value: i32) -> OrPageFault<()> {
 }
 
 pub unsafe fn safe_write64(addr: u64, value: u64) -> OrPageFault<()> {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 8, true);
     }
     if addr & 0xFFF > 0x1000 - 8 {
@@ -5814,7 +5849,7 @@ pub unsafe fn safe_write64(addr: u64, value: u64) -> OrPageFault<()> {
 }
 
 pub unsafe fn safe_write128(addr: u64, value: reg128) -> OrPageFault<()> {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 16, true);
     }
     if addr & 0xFFF > 0x1000 - 16 {
@@ -5842,7 +5877,7 @@ pub unsafe fn safe_write128(addr: u64, value: reg128) -> OrPageFault<()> {
 
 #[inline(always)]
 pub unsafe fn safe_read_write8(addr: u64, instruction: &dyn Fn(i32) -> i32) {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 1, true);
     }
     let (phys_addr, can_skip_dirty_page) =
@@ -5866,7 +5901,7 @@ pub unsafe fn safe_read_write8(addr: u64, instruction: &dyn Fn(i32) -> i32) {
 
 #[inline(always)]
 pub unsafe fn safe_read_write16(addr: u64, instruction: &dyn Fn(i32) -> i32) {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 2, true);
     }
     let (phys_addr, can_skip_dirty_page) =
@@ -5897,7 +5932,7 @@ pub unsafe fn safe_read_write16(addr: u64, instruction: &dyn Fn(i32) -> i32) {
 
 #[inline(always)]
 pub unsafe fn safe_read_write32(addr: u64, instruction: &dyn Fn(i32) -> i32) {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 4, true);
     }
     let (phys_addr, can_skip_dirty_page) =
@@ -5928,7 +5963,7 @@ pub unsafe fn safe_read_write32(addr: u64, instruction: &dyn Fn(i32) -> i32) {
 
 #[inline(always)]
 pub unsafe fn safe_read_write64(addr: u64, instruction: &dyn Fn(u64) -> u64) {
-    if debug_data_wp_armed {
+    if debug_bp_armed & 2 != 0 {
         dbg_check_data_wp(addr, 8, true);
     }
     let (phys_addr, can_skip_dirty_page) =
@@ -6375,7 +6410,7 @@ pub fn clear_tlb_code(page: u64) {
     unsafe {
         if let Some(slot) = tlb_code_slot(page) {
             if let Some(c) = slot.take() {
-                drop(Box::from_raw(c.as_ptr()));
+                code_free(c);
             }
         }
     }

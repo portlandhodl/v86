@@ -1015,6 +1015,15 @@ impl WasmBuilder {
     /// Lane shift: v128 below, i32 shift count on top
     pub fn simd_shift(&mut self, opcode: u32) { self.simd_op(opcode) }
 
+    /// i8x16.swizzle: out[i] = sel[i] < 16 ? data[i] : 0 (data below, selector on top)
+    pub fn simd_op_swizzle(&mut self) { self.simd_op(op::SIMD_I8X16_SWIZZLE); }
+
+    /// i8x16.eq (both operands on the stack)
+    pub fn simd_op_i8x16_eq(&mut self) { self.simd_op(op::SIMD_I8X16_EQ); }
+
+    /// v128.bitselect: pops c (mask), v2, v1; out = (v1 & c) | (v2 & ~c)
+    pub fn simd_op_bitselect(&mut self) { self.simd_op(op::SIMD_V128_BITSELECT); }
+
     pub fn add_i32(&mut self) { self.instruction_body.push(op::OP_I32ADD); }
     pub fn add_i64(&mut self) { self.instruction_body.push(op::OP_I64ADD); }
     pub fn sub_i32(&mut self) { self.instruction_body.push(op::OP_I32SUB); }
