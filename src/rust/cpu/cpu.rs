@@ -404,9 +404,8 @@ pub unsafe fn code_alloc() -> ptr::NonNull<Code> {
     const CHUNK: usize = 64;
     let bytes = std::mem::size_of::<Code>() * CHUNK;
     let align = std::mem::align_of::<Code>();
-    let base = std::alloc::alloc_zeroed(
-        std::alloc::Layout::from_size_align(bytes, align).unwrap(),
-    ) as *mut Code;
+    let base = std::alloc::alloc_zeroed(std::alloc::Layout::from_size_align(bytes, align).unwrap())
+        as *mut Code;
     dbg_assert!(!base.is_null());
     #[allow(static_mut_refs)]
     for i in (0..CHUNK).rev() {

@@ -414,8 +414,9 @@ unsafe fn string_instruction(
                 Instruction::Lods => {
                     // the elements are read from translated ram: the reads have no side
                     // effects, so only the last element is observable in the register
-                    phys_src = phys_src
-                        .wrapping_add(((count_until_end_of_page as i64 - 1) * increment as i64) as u64);
+                    phys_src = phys_src.wrapping_add(
+                        ((count_until_end_of_page as i64 - 1) * increment as i64) as u64,
+                    );
                     let src_val = match size {
                         Size::B => memory::read8_no_mmap_check(phys_src) as u64,
                         Size::W => memory::read16_no_mmap_check(phys_src) as u32 as u64,
