@@ -1,0 +1,1013 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Core wallet check</title>
+<!--
+Checks that a Bitcoin Core wallet file can be imported into Bitcoin Core, inside an
+Alpine Linux machine emulated in this page. The machine has no network device and no
+display; the official x86_64 bitcoind runs with networking disabled and is driven over
+the serial port. The wallet and the binaries reach the guest through a virtio 9p share.
+
+Setup (from the repository root):
+
+    ./tools/stage-images.sh path/to/alpine-virt-3.19.9-x86_64.iso   # the guest
+    ./tools/stage-bitcoin.sh                                         # Bitcoin Core 31.1 + glibc runtime
+    ./tools/serve.mjs --port 8000
+    open http://localhost:8000/examples/bitcoin-wallet-check.html
+-->
+<script src="../build/libv86.js"></script>
+<style>
+    :root {
+        color-scheme: light dark;
+        --bg: #f4f2ee; --bg2: #ebe7e0; --fg: #1d1b18; --muted: #6b655c; --card: #ffffff; --card2: #faf8f5;
+        --line: #e0dbd2; --line2: #cfc8bc;
+        --ok: #18794e; --ok-bg: #e9f6ef; --bad: #c62828; --bad-bg: #fdeeee;
+        --accent: #f7931a; --accent-strong: #d97b0a; --accent-bg: #fff3e3; --accent-fg: #1d1b18;
+        --term-bg: #0d1014; --term-fg: #c9d1d9;
+        --shadow: 0 1px 2px rgba(40, 30, 10, .06), 0 4px 16px rgba(40, 30, 10, .06);
+    }
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --bg: #0d0f12; --bg2: #13161b; --fg: #e9e6e1; --muted: #9a958d; --card: #161a20; --card2: #1b2027;
+            --line: #262c35; --line2: #343c47;
+            --ok: #3fcf8e; --ok-bg: #10261c; --bad: #ff6b6b; --bad-bg: #2b1414;
+            --accent: #f7931a; --accent-strong: #ffa940; --accent-bg: #2a1d0c; --accent-fg: #14110c;
+            --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .25);
+        }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+           -webkit-font-smoothing: antialiased; }
+    main { max-width: 920px; margin: 0 auto; padding: 0 16px 56px; }
+    code, pre, .mono { font: 13px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    a { color: var(--accent-strong); }
+    h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 36px 0 12px;
+         display: flex; align-items: center; gap: 10px; }
+    h2 .n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
+            color: var(--accent-fg); font-size: 12px; letter-spacing: 0; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+
+    /* header */
+    header.hero { padding: 40px 0 8px; display: grid; grid-template-columns: auto 1fr; gap: 18px 20px; align-items: center; }
+    .logo { width: 56px; height: 56px; border-radius: 16px; background: linear-gradient(145deg, #ffb347, #f7931a 55%, #d9720a);
+            display: grid; place-items: center; box-shadow: 0 6px 20px rgba(247, 147, 26, .35); }
+    .logo svg { width: 32px; height: 32px; }
+    header h1 { font-size: clamp(24px, 4vw, 32px); line-height: 1.15; margin: 0; letter-spacing: -.01em; }
+    header p.lead { grid-column: 1 / -1; color: var(--muted); margin: 0; max-width: 70ch; font-size: 16px; }
+    .badges { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 13px;
+             background: var(--card); border: 1px solid var(--line); color: var(--muted); }
+    .badge svg { width: 14px; height: 14px; color: var(--accent); }
+
+    /* machine status */
+    .machine { padding: 14px 18px; margin-top: 24px; }
+    .machine .line { display: flex; align-items: center; gap: 12px; }
+    .machine .label { font-weight: 600; }
+    .machine .pct { margin-left: auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .bar { height: 6px; background: var(--bg2); border-radius: 3px; margin-top: 10px; overflow: hidden; }
+    .bar div { height: 100%; width: 0; background: linear-gradient(90deg, #ffb347, var(--accent)); transition: width .4s ease; border-radius: 3px; }
+    .bar.ready div { background: var(--ok); }
+    .bar.bad div { background: var(--bad); }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+    .dot.busy { background: var(--accent); box-shadow: 0 0 0 0 rgba(247, 147, 26, .6); animation: ping 1.4s infinite; }
+    .dot.ready { background: var(--ok); }
+    .dot.bad { background: var(--bad); }
+    @keyframes ping { 0% { box-shadow: 0 0 0 0 rgba(247, 147, 26, .55) } 80%, 100% { box-shadow: 0 0 0 8px rgba(247, 147, 26, 0) } }
+
+    /* demo wallets */
+    .demos { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+    .demo { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 8px; padding: 14px 16px;
+            background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+            transition: border-color .15s, transform .15s, background .15s; position: relative; }
+    .demo:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .demo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .demo.active { border-color: var(--accent); background: var(--accent-bg); }
+    .demo .top { display: flex; align-items: center; gap: 10px; }
+    .demo .icon { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; flex: none;
+                  background: var(--accent-bg); color: var(--accent-strong); }
+    .demo .icon svg { width: 18px; height: 18px; }
+    .demo.expect-fail .icon { background: var(--bad-bg); color: var(--bad); }
+    .demo .name { font-weight: 600; }
+    .demo .desc { color: var(--muted); font-size: 13.5px; flex: 1; }
+    .demo .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tag { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: var(--bg2); color: var(--muted); white-space: nowrap; }
+    .tag.ok { background: var(--ok-bg); color: var(--ok); }
+    .tag.bad { background: var(--bad-bg); color: var(--bad); }
+    .demo .go { position: absolute; top: 14px; right: 14px; font-size: 12px; color: var(--accent-strong); font-weight: 600;
+                opacity: 0; transition: opacity .15s; }
+    .demo:hover .go, .demo:focus-visible .go { opacity: 1; }
+    .demo[disabled] { opacity: .55; cursor: progress; transform: none; }
+    .note { color: var(--muted); font-size: 13px; margin: 10px 2px 0; }
+
+    /* own wallet */
+    .own { display: grid; grid-template-columns: 1.4fr 1fr; gap: 0; overflow: hidden; }
+    .drop { padding: 28px 22px; text-align: center; border-right: 1px solid var(--line); transition: background .15s;
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+    .drop .ring { width: 52px; height: 52px; border-radius: 50%; border: 2px dashed var(--line2); display: grid; place-items: center;
+                  color: var(--accent-strong); transition: border-color .15s, transform .15s; }
+    .drop .ring svg { width: 22px; height: 22px; }
+    .drop.over { background: var(--accent-bg); }
+    .drop.over .ring { border-color: var(--accent); transform: scale(1.06); }
+    .drop.disabled { opacity: .6; }
+    .drop strong { font-size: 16px; }
+    .drop small { color: var(--muted); max-width: 46ch; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--accent);
+           background: var(--accent); color: var(--accent-fg); font: inherit; font-weight: 600; cursor: pointer; }
+    .btn:hover { background: var(--accent-strong); }
+    .drop input { display: none; }
+    .options { padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; background: var(--card2); }
+    .options label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; }
+    .options label span { font-weight: normal; color: var(--muted); font-size: 12.5px; }
+    select, input[type=password], input[type=text] { font: inherit; font-size: 14px; padding: 7px 10px; border: 1px solid var(--line2);
+            border-radius: 8px; background: var(--card); color: var(--fg); width: 100%; }
+    select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+
+    /* result */
+    #result { margin-top: 0; }
+    .verdict { padding: 18px 20px; display: flex; gap: 14px; align-items: flex-start; font-size: 16px; }
+    .verdict .vi { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; flex: none; font-size: 18px;
+                   font-weight: 700; background: var(--bg2); color: var(--muted); }
+    .verdict .vt { padding-top: 6px; overflow-wrap: anywhere; }
+    .verdict .vt b { display: block; font-size: 17px; }
+    .verdict .vt .sub { color: var(--muted); font-size: 14px; }
+    .verdict.ok { border-color: var(--ok); background: var(--ok-bg); }
+    .verdict.ok .vi { background: var(--ok); color: #fff; }
+    .verdict.bad { border-color: var(--bad); background: var(--bad-bg); }
+    .verdict.bad .vi { background: var(--bad); color: #fff; }
+    .verdict.wait .vi { border: 3px solid var(--line2); border-top-color: var(--accent); background: none; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg) } }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+    .panel { padding: 14px 16px; min-width: 0; }
+    .panel h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+    dl.summary { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 14px; }
+    dl.summary dt { color: var(--muted); }
+    dl.summary dd { margin: 0; overflow-wrap: anywhere; }
+    dl.summary dd.mono { font-size: 12.5px; }
+    dl.summary dd.error { color: var(--bad); font-weight: 600; }
+    #steps { display: flex; flex-direction: column; }
+    .step { border-left: 2px solid var(--line); margin-left: 9px; padding: 0 0 2px 0; }
+    .step:last-child { border-left-color: transparent; }
+    .step summary { list-style: none; padding: 4px 0 10px; cursor: pointer; display: flex; gap: 10px; align-items: center;
+                    margin-left: -11px; font-size: 14px; }
+    .step summary::-webkit-details-marker { display: none; }
+    .step .si { width: 20px; height: 20px; border-radius: 50%; flex: none; display: grid; place-items: center; font-size: 11px; font-weight: 700;
+                background: var(--card); border: 2px solid var(--line2); color: var(--muted); }
+    .step.running .si { border-color: var(--line2); border-top-color: var(--accent); animation: spin 1s linear infinite; }
+    .step.ok .si { background: var(--ok); border-color: var(--ok); color: #fff; }
+    .step.bad .si { background: var(--bad); border-color: var(--bad); color: #fff; }
+    .step.pending summary, .step.skipped summary { color: var(--muted); cursor: default; }
+    .step.ok, .step.bad { border-left-color: var(--line2); }
+    .step summary .rc { margin-left: auto; font-size: 12px; color: var(--muted); }
+    .step summary .rc.ok { color: var(--ok); }
+    .step summary .rc.bad { color: var(--bad); }
+    .step pre { margin: -4px 0 12px 20px; padding: 10px 12px; background: var(--term-bg); color: var(--term-fg); border-radius: 8px;
+                white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; font-size: 12px; }
+    .step pre:empty { display: none; }
+
+    details.console { margin-top: 28px; }
+    details.console summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+    #serial { background: var(--term-bg); color: var(--term-fg); padding: 12px; border-radius: 10px; height: 320px; overflow: auto;
+              white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0 0; font-size: 12px; }
+    .error { color: var(--bad); }
+    footer { color: var(--muted); font-size: 12.5px; margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); }
+    @media (max-width: 700px) {
+        .own, .grid2 { grid-template-columns: 1fr; }
+        .drop { border-right: 0; border-bottom: 1px solid var(--line); }
+        header.hero { padding-top: 24px; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+    <header class="hero">
+        <div class="logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 5h6a3.5 3.5 0 0 1 0 7H8zm0 7h7a3.5 3.5 0 0 1 0 7H8zM8 5v14M10 3v2M14 3v2M10 19v2M14 19v2"/></svg>
+        </div>
+        <h1>Bitcoin Core wallet check</h1>
+        <p class="lead">Proves a wallet file opens in Bitcoin Core <span id="btc_version">…</span>. The file is imported by a real,
+        unmodified bitcoind running in an Alpine Linux machine emulated in this tab, with no network device. Your file never
+        leaves the browser, and the machine is gone when you close the tab.</p>
+        <div class="badges">
+            <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M2 2l20 20M8.5 16.4a5 5 0 0 1 7 0M5 12.9a10 10 0 0 1 5.2-2.8M19 12.9a10 10 0 0 0-2.3-1.6M2 8.8a15 15 0 0 1 4.2-2.6M22 8.8A15 15 0 0 0 10.7 5M12 20h.01"/></svg>No network device</span>
+            <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Runs entirely in your browser</span>
+            <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Official binaries, sha256-verified</span>
+            <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></svg>x86-64 Linux in WebAssembly</span>
+        </div>
+    </header>
+
+    <div class="machine card">
+        <div class="line"><span class="dot" id="dot"></span><span><span class="label">Machine</span> · <span id="status">Starting…</span></span><span class="pct" id="pct"></span></div>
+        <div class="bar" id="bar"><div id="bar_fill"></div></div>
+    </div>
+
+    <h2><span class="n">1</span> Try a demo wallet</h2>
+    <div class="demos" id="demos"></div>
+    <p class="note">The demo wallets are empty and were never funded. Their keys are public because they are in this
+    repository, so never send coins to them. Pick one now: it runs as soon as the machine has booted.</p>
+
+    <h2><span class="n">2</span> Or check your own</h2>
+    <div class="own card">
+        <div id="drop" class="drop">
+            <div class="ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg></div>
+            <strong>Drop wallet.dat here</strong>
+            <label class="btn">Choose a file<input type="file" id="file"></label>
+            <small>A wallet directory (the one that contains wallet.dat) works too. SQLite descriptor wallets are restored as they
+            are. Legacy Berkeley DB wallets are migrated to descriptors, which is how Bitcoin Core 31 imports them.</small>
+        </div>
+        <div class="options">
+            <label>Chain <span>SQLite wallets record their network; legacy wallets default to mainnet.</span>
+                <select id="chain">
+                    <option value="auto">Auto-detect from the file</option>
+                    <option value="main">mainnet</option>
+                    <option value="testnet4">testnet4</option>
+                    <option value="testnet">testnet3</option>
+                    <option value="signet">signet</option>
+                    <option value="regtest">regtest</option>
+                </select>
+            </label>
+            <label>Passphrase <span>Optional. If given, the check also unlocks the wallet with it.</span>
+                <input type="password" id="passphrase" autocomplete="off" placeholder="wallet passphrase">
+            </label>
+        </div>
+    </div>
+
+    <section id="result" hidden>
+        <h2><span class="n">3</span> Result</h2>
+        <div id="verdict" class="verdict card wait"></div>
+        <div class="grid2">
+            <div class="panel card"><h3>Summary</h3><dl class="summary" id="summary"></dl></div>
+            <div class="panel card"><h3>Steps in the guest</h3><div id="steps"></div></div>
+        </div>
+    </section>
+
+    <details class="console">
+        <summary>Serial console (raw guest output)</summary>
+        <pre id="serial"></pre>
+    </details>
+
+    <footer id="footer"></footer>
+</main>
+
+<script>
+"use strict";
+
+const ALPINE_ISO = "../images/alpine-virt-3.19.9-x86_64.iso";
+const ALPINE_BOOT = "../images/alpine-virt-3.19.9-x86_64/boot/";
+const BITCOIN_DIR = "../images/bitcoin/";
+const MEMORY_MB = 1024;
+
+// The guest side of the check (busybox sh). Written to the 9p share as /verify.sh and run as
+//   sh /mnt/verify.sh <chain> <wallet file> <wallet name> [passphrase file]
+// It frames every step as @@STEP name@@ … @@END name rc@@ on the serial console, which the
+// page parses. The command line itself never contains a marker.
+const GUEST_SCRIPT = String.raw`#!/bin/sh
+M=/mnt
+D=/tmp/btc
+CHAIN=$1; WF=$2; NAME=$3; PF=$4
+PASS=
+[ -n "$PF" ] && [ -s "$PF" ] && PASS=$(cat "$PF")
+LD="$M/ld-linux-x86-64.so.2 --library-path $M"
+CLI="$LD $M/bitcoin-cli -datadir=$D -chain=$CHAIN"
+alive() { grep -qs '^State:[[:space:]]*[RSDT]' /proc/$1/status; }
+step() { echo "@@STEP $1@@"; }
+end() { echo "@@END $1 $2@@"; }
+fail() { echo "@@DONE $1@@"; exit $1; }
+
+step file
+TYPE=unknown
+if [ "$(head -c 15 "$WF" 2>/dev/null)" = "SQLite format 3" ]; then
+    TYPE=sqlite
+else
+    m=$(od -An -tx1 -j12 -N4 "$WF" 2>/dev/null | tr -d ' \n')
+    [ "$m" = 62310500 ] || [ "$m" = 00053162 ] && TYPE=bdb
+fi
+echo "type=$TYPE"
+echo "size=$(stat -c %s "$WF")"
+echo "sha256=$(sha256sum "$WF" | cut -d' ' -f1)"
+WCHAIN=
+if [ "$TYPE" = sqlite ]; then
+    # Bitcoin Core stores the network magic as the SQLite application id (offset 68)
+    case $(od -An -tx1 -j68 -N4 "$WF" 2>/dev/null | tr -d ' \n') in
+    f9beb4d9) WCHAIN=main ;;
+    0b110907) WCHAIN=testnet ;;
+    1c163f28) WCHAIN=testnet4 ;;
+    0a03cf40) WCHAIN=signet ;;
+    fabfb5da) WCHAIN=regtest ;;
+    esac
+    echo "wallet_chain=$WCHAIN"
+fi
+if [ "$CHAIN" = auto ]; then
+    CHAIN=$WCHAIN
+    [ -n "$CHAIN" ] || CHAIN=main
+    echo "chain=$CHAIN"
+fi
+CLI="$LD $M/bitcoin-cli -datadir=$D -chain=$CHAIN"
+end file 0
+if [ "$TYPE" = unknown ]; then
+    step import
+    echo "not a Bitcoin Core wallet file: neither a SQLite database nor a Berkeley DB file"
+    end import 2
+    fail 2
+fi
+
+step node
+if [ -s $D/chain ] && [ "$(cat $D/chain)" != "$CHAIN" ]; then
+    echo "stopping bitcoind ($(cat $D/chain))"
+    $LD $M/bitcoin-cli -datadir=$D -chain=$(cat $D/chain) stop >/dev/null 2>&1
+    while alive $(cat $D/pid 2>/dev/null || echo none); do sleep 1; done
+    rm -f $D/chain
+fi
+if $CLI getblockchaininfo >/dev/null 2>&1; then
+    echo "bitcoind is already running"
+else
+    ip link set lo up 2>/dev/null || ifconfig lo up 2>/dev/null
+    mkdir -p $D/wallets
+    rm -f $D/debug.log $D/*/debug.log
+    $LD $M/bitcoind -datadir=$D -chain=$CHAIN -walletdir=$D/wallets \
+        -networkactive=0 -connect=0 -listen=0 -dnsseed=0 -listenonion=0 \
+        -dbcache=16 -maxmempool=5 -par=1 -server=1 -printtoconsole=0 >$D/bitcoind.out 2>&1 &
+    echo $! > $D/pid
+    echo "$CHAIN" > $D/chain
+    echo "bitcoind started (pid $!), waiting for rpc"
+    # not bitcoin-cli -rpcwait: it gives up when the cookie file doesn't exist yet
+    i=0
+    until $CLI getblockchaininfo >/dev/null 2>&1; do
+        i=$((i + 1))
+        if ! alive $(cat $D/pid) || [ $i -gt 300 ]; then
+            alive $(cat $D/pid) && echo "no rpc after $i attempts" || echo "bitcoind exited"
+            cat $D/bitcoind.out
+            dmesg | tail -n 5
+            for l in $D/debug.log $D/*/debug.log; do [ -f "$l" ] && tail -n 30 "$l"; done
+            end node 1
+            fail 1
+        fi
+        sleep 1
+    done
+    echo "rpc is up after $i s"
+fi
+end node 0
+
+step net
+$CLI getnetworkinfo 2>&1
+end net $?
+step chain
+$CLI getblockchaininfo 2>&1
+end chain $?
+
+step import
+case $TYPE in
+sqlite)
+    # copied to tmpfs first so that bitcoind itself never touches the share
+    mkdir -p $D/in && cp "$WF" $D/in/$NAME.dat
+    $CLI restorewallet "$NAME" "$D/in/$NAME.dat" 2>&1
+    rc=$?
+    rm -f $D/in/$NAME.dat
+    ;;
+bdb)
+    mkdir -p $D/wallets/$NAME && cp "$WF" $D/wallets/$NAME/wallet.dat
+    if [ -n "$PASS" ]; then
+        printf '%s\n' "$NAME" "$PASS" | $CLI -stdin migratewallet 2>&1
+    else
+        $CLI migratewallet "$NAME" 2>&1
+    fi
+    rc=$?
+    ;;
+esac
+end import $rc
+[ $rc = 0 ] || fail $rc
+
+step info
+$CLI -rpcwallet="$NAME" getwalletinfo 2>&1
+end info $?
+step descriptors
+$CLI -rpcwallet="$NAME" listdescriptors 2>&1
+end descriptors $?
+if [ -n "$PASS" ]; then
+    step passphrase
+    printf '%s\n' "$PASS" 5 | $CLI -stdin -rpcwallet="$NAME" walletpassphrase 2>&1
+    rc=$?
+    if [ $rc = 0 ]; then
+        echo "passphrase accepted"
+        $CLI -rpcwallet="$NAME" walletlock >/dev/null 2>&1
+    fi
+    end passphrase $rc
+fi
+step unload
+$CLI unloadwallet "$NAME" 2>&1
+for s in _watchonly _solvables; do $CLI unloadwallet "$NAME$s" >/dev/null 2>&1; done
+end unload 0
+echo "@@DONE 0@@"
+`;
+
+const $ = id => document.getElementById(id);
+const status_el = $("status"), dot = $("dot"), serial_el = $("serial"), drop = $("drop");
+let emulator;
+let serial_text = "";          // tail of the serial output, for prompt detection
+let guest_state = "boot";      // boot | login | mount | ready | busy | dead
+let boot_start = Date.now();
+let run_count = 0;
+const queue = [];
+let current = null;            // the running check
+let binaries;                  // promise: the Bitcoin Core files are in the share
+
+let progress = 0;
+function set_status(text, state)
+{
+    status_el.textContent = text;
+    dot.className = "dot " + (state || "");
+    $("bar").className = "bar " + (state === "ready" || state === "bad" ? state : "");
+}
+
+// The bar: 0..1 of the current phase (the boot, then each check). Never moves backwards within a phase.
+function set_progress(fraction, reset)
+{
+    if(reset) progress = 0;
+    progress = Math.max(progress, Math.min(1, fraction));
+    $("bar_fill").style.width = (progress * 100).toFixed(1) + "%";
+    $("pct").textContent = Math.round(progress * 100) + "%";
+}
+
+let serial_log = "";
+let serial_render_pending = false;
+function log_serial(text)
+{
+    serial_log += text;
+    if(serial_log.length > 300000) serial_log = serial_log.slice(-200000);
+    if(serial_render_pending) return;
+    serial_render_pending = true;
+    requestAnimationFrame(() =>
+    {
+        serial_render_pending = false;
+        // drop terminal escape sequences (the initramfs progress bar, the shell's cursor queries)
+        serial_el.textContent = serial_log.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b[78]|\r/g, "");
+        serial_el.scrollTop = serial_el.scrollHeight;
+    });
+}
+
+function fmt_bytes(n)
+{
+    return n < 1024 * 1024 ? (n / 1024).toFixed(1) + " KiB" : (n / 1024 / 1024).toFixed(1) + " MiB";
+}
+
+async function sha256_hex(data)
+{
+    if(!crypto.subtle) return null; // not a secure context (plain http on a LAN address)
+    const hash = await crypto.subtle.digest("SHA-256", data);
+    return Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Fetches Bitcoin Core and the glibc runtime and puts them in the root of the 9p share.
+async function load_binaries()
+{
+    const r = await fetch(BITCOIN_DIR + "manifest.json");
+    if(!r.ok) throw new Error("images/bitcoin/manifest.json is missing: run ./tools/stage-bitcoin.sh");
+    const manifest = await r.json();
+    $("btc_version").textContent = manifest.bitcoin_core;
+    $("footer").textContent = "Guest: Alpine Linux 3.19 (virt), " + MEMORY_MB + " MiB, no network device. " +
+        "Bitcoin Core " + manifest.bitcoin_core + " from " + manifest.tarball + " (sha256 " +
+        manifest.tarball_sha256.slice(0, 16) + "…), run through " + manifest.glibc + ".";
+
+    let loaded = 0;
+    const total = manifest.files.reduce((n, f) => n + f.size, 0);
+    for(const f of manifest.files)
+    {
+        const res = await fetch(BITCOIN_DIR + f.name);
+        if(!res.ok) throw new Error("cannot fetch " + BITCOIN_DIR + f.name + " (" + res.status + ")");
+        const data = new Uint8Array(await res.arrayBuffer());
+        const hash = await sha256_hex(data);
+        if(hash && hash !== f.sha256) throw new Error(f.name + " does not match the manifest's sha256");
+        await emulator.create_file("/" + f.name, data);
+        loaded += data.length;
+        if(guest_state === "boot")
+        {
+            set_status("Booting Alpine Linux… (Bitcoin Core " + fmt_bytes(loaded) + " of " + fmt_bytes(total) + " loaded)", "busy");
+            set_progress(0.02 + 0.28 * loaded / total);
+        }
+    }
+    await emulator.create_file("/verify.sh", new TextEncoder().encode(GUEST_SCRIPT));
+    return manifest;
+}
+
+function start_machine()
+{
+    emulator = new V86({
+        wasm_path: "../build/v86.wasm",
+        memory_size: MEMORY_MB * 1024 * 1024,
+        vga_memory_size: 8 * 1024 * 1024,
+        bios: { url: "../bios/seabios.bin" },
+        vga_bios: { url: "../bios/vgabios.bin" },
+        // The kernel and initramfs are booted directly so that the serial console can be put on
+        // the command line; the ISO stays attached as the live system's boot media.
+        cdrom: { url: ALPINE_ISO, async: true },
+        bzimage: { url: ALPINE_BOOT + "vmlinuz-virt" },
+        initrd: { url: ALPINE_BOOT + "initramfs-virt" },
+        cmdline: "console=tty0 console=ttyS0,115200 modules=loop,squashfs,sd-mod,usb-storage quiet",
+        filesystem: {},
+        net_device: { type: "none" },
+        autostart: true,
+        disable_keyboard: true,
+        disable_mouse: true,
+    });
+    window.emulator = emulator;
+    set_progress(0.02, true);
+
+    const decoder = new TextDecoder();
+    let line_buf = "";
+    emulator.add_listener("serial0-output-byte", byte =>
+    {
+        const chr = decoder.decode(new Uint8Array([byte]), { stream: true });
+        if(!chr) return;
+        log_serial(chr);
+        serial_text = (serial_text + chr).slice(-4096);
+        if(chr === "\n")
+        {
+            const line = line_buf.replace(/\r/g, "");
+            line_buf = "";
+            if(current) parse_line(line);
+            else if(guest_state === "boot" && /OpenRC .* is starting up/.test(line)) set_progress(0.45);
+            else if(guest_state === "boot" && /Starting busybox syslog/.test(line)) set_progress(0.6);
+        }
+        else
+        {
+            line_buf += chr;
+        }
+        // prompts don't end with a newline; they end with a space or a marker
+        if(guest_state !== "ready" && guest_state !== "busy" && (chr === " " || chr === "@"))
+        {
+            check_prompts();
+        }
+    });
+
+    binaries = load_binaries().catch(e =>
+    {
+        set_status("Cannot load Bitcoin Core: " + e.message, "bad");
+        guest_state = "dead";
+        throw e;
+    });
+
+    const tick = setInterval(() =>
+    {
+        if(guest_state === "boot" || guest_state === "login" || guest_state === "mount")
+        {
+            const s = Math.round((Date.now() - boot_start) / 1000);
+            if(status_el.textContent.startsWith("Booting Alpine Linux") && !status_el.textContent.includes("Bitcoin Core"))
+            {
+                set_status("Booting Alpine Linux… " + s + " s", "busy");
+            }
+        }
+        else
+        {
+            clearInterval(tick);
+        }
+    }, 1000);
+}
+
+// Walks the guest from the login prompt to a mounted share.
+function check_prompts()
+{
+    const tail = serial_text.replace(/\r/g, "");
+    if(guest_state === "boot" && /login: $/.test(tail))
+    {
+        guest_state = "login";
+        set_status("Logging in…", "busy");
+        set_progress(0.7);
+        emulator.serial0_send("root\n");
+    }
+    else if(guest_state === "login" && /:~# $/.test(tail))
+    {
+        guest_state = "mount";
+        set_status("Mounting the shared folder…", "busy");
+        set_progress(0.85);
+        // the marker is split so that the echoed command line doesn't match it
+        emulator.serial0_send("modprobe 9pnet_virtio; modprobe 9p; " +
+            "mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose host9p /mnt && " +
+            "chmod 755 /mnt/ld-linux-x86-64.so.2 /mnt/bitcoin* && echo @@MOU''NTED@@\n");
+    }
+    else if(guest_state === "mount" && tail.includes("@@MOUNTED@@"))
+    {
+        serial_text = "";
+        guest_state = "ready";
+        set_status("Ready: pick a demo or drop a wallet file (booted in " + Math.round((Date.now() - boot_start) / 1000) + " s)", "ready");
+        set_progress(1);
+        run_next();
+    }
+}
+
+// --- one check -----------------------------------------------------------------------------------
+
+// One complete serial line while a check is running.
+function parse_line(line)
+{
+    let m;
+    if((m = /^@@STEP (\S+)@@$/.exec(line)))
+    {
+        current.step = { name: m[1], lines: [] };
+        current.steps.push(current.step);
+        render_step(current.step);
+        const steps = STEP_ORDER.filter(n => n !== "passphrase" || current.passphrase);
+        const index = Math.max(0, steps.indexOf(m[1]));
+        set_status("Checking " + current.file_name + ": " + (STEP_TITLES[m[1]] || m[1]) +
+            " (step " + (index + 1) + " of " + steps.length + ")", "busy");
+        set_progress((index + 0.5) / steps.length);
+    }
+    else if((m = /^@@END (\S+) (\d+)@@$/.exec(line)))
+    {
+        if(current.step && current.step.name === m[1])
+        {
+            current.step.rc = +m[2];
+            finish_step(current.step);
+            current.step = null;
+        }
+    }
+    else if((m = /^@@DONE (\d+)@@$/.exec(line)))
+    {
+        finish_run(+m[1]);
+    }
+    else if(current.step)
+    {
+        current.step.lines.push(line);
+        render_step(current.step);
+    }
+}
+
+const STEP_ORDER = ["file", "node", "net", "chain", "import", "info", "descriptors", "passphrase", "unload"];
+const STEP_TITLES = {
+    file: "Wallet file",
+    node: "bitcoind",
+    net: "Network state (getnetworkinfo)",
+    chain: "Chain (getblockchaininfo)",
+    import: "Import (restorewallet / migratewallet)",
+    info: "Wallet (getwalletinfo)",
+    descriptors: "Descriptors (listdescriptors)",
+    passphrase: "Passphrase (walletpassphrase)",
+    unload: "Unload (unloadwallet)",
+};
+
+function step_json(step)
+{
+    const text = step.lines.join("\n").trim();
+    if(/^[\[{]/.test(text))
+    {
+        try { return JSON.parse(text); } catch(e) {}
+    }
+    return null;
+}
+
+function step_element(name)
+{
+    const el = document.createElement("details");
+    el.className = "step pending";
+    el.dataset.name = name;
+    el.innerHTML = "<summary><span class=si></span><span class=title></span><span class=rc></span></summary><pre></pre>";
+    el.querySelector(".title").textContent = STEP_TITLES[name] || name;
+    // only steps that have started can be expanded
+    el.querySelector("summary").addEventListener("click", e => { if(el.classList.contains("pending") || el.classList.contains("skipped")) e.preventDefault(); });
+    $("steps").appendChild(el);
+    return el;
+}
+
+function render_step(step)
+{
+    if(!step.el)
+    {
+        step.el = $("steps").querySelector(".step.pending[data-name='" + step.name + "']") || step_element(step.name);
+        step.el.className = "step running";
+        step.el.querySelector(".rc").textContent = "running…";
+    }
+    step.el.querySelector("pre").textContent = step.lines.join("\n");
+}
+
+function finish_step(step)
+{
+    render_step(step);
+    const rc = step.el.querySelector(".rc");
+    rc.textContent = step.rc === 0 ? "ok" : "failed (exit " + step.rc + ")";
+    rc.className = "rc " + (step.rc === 0 ? "ok" : "bad");
+    step.el.className = "step " + (step.rc === 0 ? "ok" : "bad");
+    step.el.querySelector(".si").textContent = step.rc === 0 ? "✓" : "✕";
+    if(step.rc !== 0) step.el.open = true;
+    update_summary();
+}
+
+function add_summary(dt, dd, cls)
+{
+    const t = document.createElement("dt"), d = document.createElement("dd");
+    t.textContent = dt;
+    d.textContent = dd;
+    if(cls) d.className = cls;
+    $("summary").append(t, d);
+}
+
+function update_summary()
+{
+    const summary = $("summary");
+    summary.textContent = "";
+    const by_name = {};
+    for(const s of current.steps) by_name[s.name] = s;
+
+    add_summary("File", current.file_name + " (" + fmt_bytes(current.size) + ")");
+    const file = by_name.file && Object.fromEntries(by_name.file.lines.filter(l => l.includes("=")).map(l => l.split(/=(.*)/s)));
+    if(file)
+    {
+        add_summary("Format", { sqlite: "SQLite (descriptor wallet)", bdb: "Berkeley DB (legacy wallet; migrated to descriptors on import)",
+            unknown: "not a Bitcoin Core wallet file" }[file.type] || file.type, file.type === "unknown" ? "error" : "");
+        if(file.sha256) add_summary("SHA-256", file.sha256);
+        if(file.wallet_chain !== undefined)
+        {
+            add_summary("Wallet chain", file.wallet_chain ? file.wallet_chain + " (from the SQLite application id)" : "unknown application id");
+        }
+    }
+    const net = by_name.net && step_json(by_name.net);
+    if(net)
+    {
+        add_summary("Bitcoin Core", net.subversion + " (" + net.version + ")");
+        add_summary("Network", (net.networkactive ? "ACTIVE" : "disabled") + ", " + net.connections + " connections, " +
+            (net.networks || []).filter(n => n.reachable).length + " reachable networks", net.networkactive ? "error" : "");
+    }
+    const chain = by_name.chain && step_json(by_name.chain);
+    if(chain) add_summary("Chain", chain.chain + " at height " + chain.blocks + " (no blocks beyond genesis: offline node)");
+    const imp = by_name.import;
+    if(imp && imp.rc !== undefined)
+    {
+        const j = step_json(imp);
+        add_summary("Import", imp.rc === 0 ? "ok" + (j && j.backup_path ? " (migrated; backup of the legacy wallet at " + j.backup_path + ")" : "") +
+            (j && j.warnings && j.warnings.length ? "; warnings: " + j.warnings.join(" ") : "") : "FAILED", imp.rc === 0 ? "" : "error");
+    }
+    const info = by_name.info && step_json(by_name.info);
+    if(info)
+    {
+        add_summary("Wallet", "format " + info.format + ", " + (info.descriptors ? "descriptors" : "legacy") +
+            (info.private_keys_enabled === false ? ", watch-only" : "") +
+            (info.blank ? ", blank" : "") + (info.avoid_reuse ? ", avoid_reuse" : ""));
+        add_summary("Encrypted", "unlocked_until" in info ? "yes" : "no");
+        add_summary("Keys", "keypool " + info.keypoolsize + (info.keypoolsize_hd_internal !== undefined ? " + " + info.keypoolsize_hd_internal + " internal" : "") +
+            ", " + info.txcount + " transactions" + (info.birthtime ? ", birth " + new Date(info.birthtime * 1000).toISOString().slice(0, 10) : ""));
+    }
+    const desc = by_name.descriptors && step_json(by_name.descriptors);
+    if(desc && desc.descriptors)
+    {
+        const active = desc.descriptors.filter(d => d.active).length;
+        add_summary("Descriptors", desc.descriptors.length + " (" + active + " active): " +
+            desc.descriptors.map(d => d.desc.replace(/\(.*$/, "")).filter((v, i, a) => a.indexOf(v) === i).join(", "));
+    }
+    const pass = by_name.passphrase;
+    if(pass && pass.rc !== undefined)
+    {
+        add_summary("Passphrase", pass.rc === 0 ? "accepted" : "rejected", pass.rc === 0 ? "" : "error");
+    }
+}
+
+function set_verdict(state, title, sub)
+{
+    const verdict = $("verdict");
+    verdict.className = "verdict card " + state;
+    verdict.innerHTML = "<span class=vi></span><span class=vt><b></b><span class=sub></span></span>";
+    verdict.querySelector(".vi").textContent = { ok: "✓", bad: "✕", wait: "" }[state];
+    verdict.querySelector("b").textContent = title;
+    verdict.querySelector(".sub").textContent = sub || "";
+}
+
+function finish_run(rc)
+{
+    const imp = current.steps.find(s => s.name === "import");
+    const pass = current.steps.find(s => s.name === "passphrase");
+    const seconds = Math.round((Date.now() - current.started) / 1000);
+    if(rc === 0 && imp && imp.rc === 0)
+    {
+        const chain = current.steps.find(s => s.name === "chain");
+        const used = chain && step_json(chain) ? step_json(chain).chain : current.chain;
+        const pass_ok = !pass || pass.rc === 0;
+        set_verdict(pass_ok ? "ok" : "bad",
+            pass_ok ? current.file_name + " imports into Bitcoin Core " + current.btc_version
+                    : current.file_name + " imports, but the passphrase does not unlock it",
+            "Checked offline on " + used + " in " + seconds + " s" + (pass ? (pass_ok ? "; the passphrase unlocks it." : ": " +
+                pass.lines.join(" ").replace(/\s+/g, " ").trim().slice(0, 200)) : "."));
+    }
+    else
+    {
+        const failed = current.steps.find(s => s.rc && s.rc !== 0);
+        const reason = failed ? failed.lines.join(" ").replace(/\s+/g, " ").trim().slice(0, 300) : "";
+        set_verdict("bad", current.file_name + " could not be imported", reason +
+            (/across chains|cannot be identified to belong|not in recognized format/.test(reason) ?
+                " The wallet seems to belong to another chain: select the chain it was created on and try again." : ""));
+    }
+    for(const el of $("steps").querySelectorAll(".step.pending"))
+    {
+        el.className = "step skipped";
+        el.querySelector(".rc").textContent = "skipped";
+    }
+    update_summary();
+    current.done = true;
+    current = null;
+    guest_state = "ready";
+    set_status("Ready: pick another demo or drop a wallet file", "ready");
+    set_progress(1);
+    drop.classList.remove("disabled");
+    for(const b of document.querySelectorAll(".demo.active")) b.classList.remove("active");
+    run_next();
+}
+
+async function run_next()
+{
+    if(guest_state !== "ready" || !queue.length) return;
+    const job = queue.shift();
+    guest_state = "busy";
+    job.steps = [];
+    job.step = null;
+    current = job;
+    drop.classList.add("disabled");
+    set_status("Checking " + job.file_name + "…", "busy");
+    set_progress(0.02, true);
+    job.started = Date.now();
+    $("result").hidden = false;
+    $("steps").textContent = "";
+    $("summary").textContent = "";
+    for(const name of STEP_ORDER) if(name !== "passphrase" || job.passphrase) step_element(name);
+    set_verdict("wait", "Checking " + job.file_name + "…", "Each step runs in the guest; expand one to see its output.");
+    if(job.demo) for(const b of document.querySelectorAll(".demo")) b.classList.toggle("active", b.dataset.file === job.demo);
+    if(job.scroll) $("result").scrollIntoView({ behavior: "smooth", block: "start" });
+    try
+    {
+        const manifest = await binaries;
+        job.btc_version = manifest.bitcoin_core;
+        const n = ++run_count;
+        await emulator.create_file("/wallet-" + n + ".dat", job.data);
+        let pass_file = "";
+        if(job.passphrase)
+        {
+            pass_file = "/mnt/pass-" + n;
+            await emulator.create_file("/pass-" + n, new TextEncoder().encode(job.passphrase));
+        }
+        job.data = null;
+        emulator.serial0_send("sh /mnt/verify.sh " + job.chain + " /mnt/wallet-" + n + ".dat w" + n + " " + pass_file + "\n");
+    }
+    catch(e)
+    {
+        set_verdict("bad", "The check could not start", e.message);
+        current = null;
+        guest_state = "ready";
+        set_status("Ready: pick another demo or drop a wallet file", "ready");
+        drop.classList.remove("disabled");
+    }
+}
+
+// options: chain and passphrase (default: the form's), demo (the demo's file name)
+function enqueue(file, options = {})
+{
+    file.arrayBuffer().then(buf =>
+    {
+        queue.push({
+            file_name: file.name,
+            size: buf.byteLength,
+            data: new Uint8Array(buf),
+            chain: options.chain || $("chain").value,
+            passphrase: options.passphrase !== undefined ? options.passphrase : $("passphrase").value,
+            demo: options.demo,
+            scroll: true,
+        });
+        if(guest_state !== "ready")
+        {
+            set_status(status_el.textContent.replace(/ \(.*queued.*\)$/, "") + " (" + file.name + " queued)", "busy");
+        }
+        run_next();
+    }).catch(e => set_status("Cannot read " + file.name + ": " + e.message, "bad"));
+}
+
+// --- drag and drop ---------------------------------------------------------------------------------
+
+function entry_file(entry)
+{
+    return new Promise((resolve, reject) => entry.file(resolve, reject));
+}
+
+function read_entries(dir)
+{
+    const reader = dir.createReader();
+    return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+}
+
+// A dropped item: a wallet file, or a wallet directory containing wallet.dat.
+async function item_to_file(item)
+{
+    const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+    if(entry && entry.isDirectory)
+    {
+        const entries = await read_entries(entry);
+        const wallet = entries.find(e => e.isFile && e.name === "wallet.dat");
+        if(!wallet) throw new Error(entry.name + "/ contains no wallet.dat");
+        const file = await entry_file(wallet);
+        return new File([file], entry.name + "/wallet.dat", { type: file.type });
+    }
+    return item.getAsFile();
+}
+
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", async e =>
+{
+    e.preventDefault();
+    drop.classList.remove("over");
+    for(const item of e.dataTransfer.items)
+    {
+        if(item.kind !== "file") continue;
+        try
+        {
+            const file = await item_to_file(item);
+            if(file) enqueue(file);
+        }
+        catch(err)
+        {
+            set_status(err.message, "bad");
+        }
+    }
+});
+// --- demo wallets (examples/bitcoin-wallets/) ------------------------------------------------------
+
+const ICONS = {
+    wallet: '<path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h14a1 1 0 0 1 1 1v3M20 15v3a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2V5"/><path d="M21 11h-4a2 2 0 0 0 0 4h4z"/>',
+    archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
+    lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    signal: '<path d="M4.9 19.1a10 10 0 0 1 0-14.2M19.1 4.9a10 10 0 0 1 0 14.2M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4"/><circle cx="12" cy="12" r="2"/>',
+    key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>',
+    x: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z"/><path d="m9.5 12.5 5 5M14.5 12.5l-5 5"/>',
+};
+const DEMOS = [
+    { file: "example-descriptor.dat", icon: "wallet", name: "Descriptor wallet",
+      desc: "A standard wallet made by Bitcoin Core 31.1, restored as it is.",
+      tags: ["SQLite", "mainnet"], expect: "imports" },
+    { file: "example-legacy.dat", icon: "archive", name: "Legacy wallet",
+      desc: "A Berkeley DB wallet from Bitcoin Core 26.2, migrated to descriptors on import.",
+      tags: ["Berkeley DB", "mainnet"], expect: "imports" },
+    { file: "example-encrypted.dat", icon: "lock", name: "Encrypted wallet",
+      desc: "Encrypted with the passphrase \u201csatoshi\u201d, which the check uses to unlock it.",
+      tags: ["SQLite", "mainnet", "passphrase"], passphrase: "satoshi", expect: "imports and unlocks" },
+    { file: "example-encrypted.dat", id: "wrong-pass", icon: "key", name: "Wrong passphrase",
+      desc: "The same encrypted wallet, unlocked with the wrong passphrase.",
+      tags: ["SQLite", "mainnet", "passphrase"], passphrase: "not-satoshi", expect: "rejected", fail: true },
+    { file: "example-watchonly.dat", icon: "eye", name: "Watch-only wallet",
+      desc: "Public descriptors only (private keys disabled), as made for a hardware wallet.",
+      tags: ["SQLite", "mainnet", "watch-only"], expect: "imports" },
+    { file: "example-signet.dat", icon: "signal", name: "Signet wallet",
+      desc: "A signet wallet: the chain is read from the file and the node is restarted on signet.",
+      tags: ["SQLite", "signet"], expect: "imports" },
+    { file: "not-a-wallet.txt", icon: "x", name: "Not a wallet",
+      desc: "A text file renamed to look like a wallet, to show what a failed check looks like.",
+      tags: ["text"], expect: "rejected", fail: true,
+      content: "This is not a Bitcoin Core wallet.\n" },
+];
+
+for(const demo of DEMOS)
+{
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "demo" + (demo.fail ? " expect-fail" : "");
+    b.dataset.file = demo.id || demo.file;
+    b.innerHTML = '<div class=top><span class=icon><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+        'stroke-linecap="round" stroke-linejoin="round">' + ICONS[demo.icon] + '</svg></span><span class=name></span></div>' +
+        '<span class=desc></span><span class=tags></span><span class=go>Run ▸</span>';
+    b.querySelector(".name").textContent = demo.name;
+    b.querySelector(".desc").textContent = demo.desc;
+    for(const t of [...demo.tags, "expected: " + demo.expect])
+    {
+        const tag = document.createElement("span");
+        tag.className = "tag" + (t.startsWith("expected") ? (demo.fail ? " bad" : " ok") : "");
+        tag.textContent = t;
+        b.querySelector(".tags").appendChild(tag);
+    }
+    b.addEventListener("click", async () =>
+    {
+        let data;
+        if(demo.content)
+        {
+            data = new TextEncoder().encode(demo.content);
+        }
+        else
+        {
+            const r = await fetch("bitcoin-wallets/" + demo.file);
+            if(!r.ok)
+            {
+                set_status("Cannot fetch " + demo.file + " (" + r.status + ")", "bad");
+                return;
+            }
+            data = await r.arrayBuffer();
+        }
+        const name = demo.content ? "wallet.dat" : demo.file;
+        enqueue(new File([data], name), { chain: "auto", passphrase: demo.passphrase || "", demo: demo.id || demo.file });
+    });
+    $("demos").appendChild(b);
+}
+$("file").addEventListener("change", e =>
+{
+    for(const file of e.target.files) enqueue(file);
+    e.target.value = "";
+});
+
+window.onload = start_machine;
+</script>
+</body>
+</html>

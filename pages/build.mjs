@@ -7,12 +7,17 @@
 // verified and published with the site, as a fallback catalogue used while the image server is
 // unreachable.
 //
+// The examples listed under "examples" are published too, with what they load (currently
+// examples/bitcoin-wallet-check.html: Alpine's kernel and initramfs from the bundled ISO, which
+// needs bsdtar, and Bitcoin Core from tools/stage-bitcoin.sh, which needs an x86_64 glibc host).
+//
 //   make all build/v86-fallback.wasm && node pages/build.mjs [--out _site] [--catalogue <url>]
 
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..");
@@ -93,6 +98,41 @@ if(bundled_profiles.length)
     const index = { schema: "v86-machine-catalogue/1", image_base: "../images/", profiles: bundled_profiles };
     fs.writeFileSync(path.join(out, "profiles", "index.json"), JSON.stringify(index, null, 4) + "\n");
 }
+// examples published with the site (pages/site.json "examples")
+const examples = site.examples || [];
+if(examples.includes("bitcoin-wallet-check"))
+{
+    // Alpine's kernel and initramfs, from the bundled ISO, and Bitcoin Core with its glibc runtime
+    const alpine = site.bundle.find(item => item.file.startsWith("alpine-virt-"));
+    if(!alpine) throw new Error("bitcoin-wallet-check needs the Alpine virt ISO in bundle");
+    const alpine_name = alpine.file.replace(/\.iso$/, "");
+    const boot = path.join(root, "images", alpine_name, "boot");
+    if(!fs.existsSync(path.join(boot, "vmlinuz-virt")))
+    {
+        execFileSync(path.join(root, "tools/stage-images.sh"), [path.join(cache, alpine.file)], { stdio: "inherit" });
+    }
+    const bitcoin = path.join(root, "images", "bitcoin");
+    if(!fs.existsSync(path.join(bitcoin, "manifest.json")))
+    {
+        execFileSync(path.join(root, "tools/stage-bitcoin.sh"), [], { stdio: "inherit" });
+    }
+    const copy = (src, dest) =>
+    {
+        fs.mkdirSync(path.dirname(path.join(out, dest)), { recursive: true });
+        fs.copyFileSync(src, path.join(out, dest));
+    };
+    for(const file of ["vmlinuz-virt", "initramfs-virt"]) copy(path.join(boot, file), `images/${alpine_name}/boot/${file}`);
+    const manifest = JSON.parse(fs.readFileSync(path.join(bitcoin, "manifest.json"), "utf8"));
+    for(const file of ["manifest.json", ...manifest.files.map(f => f.name)]) copy(path.join(bitcoin, file), `images/bitcoin/${file}`);
+    copy(path.join(root, "build/libv86.js"), "build/libv86.js");
+    copy(path.join(root, "examples/bitcoin-wallet-check.html"), "examples/bitcoin-wallet-check.html");
+    for(const file of fs.readdirSync(path.join(root, "examples/bitcoin-wallets")).filter(f => f.endsWith(".dat")))
+    {
+        copy(path.join(root, "examples/bitcoin-wallets", file), `examples/bitcoin-wallets/${file}`);
+    }
+    console.log(`example: examples/bitcoin-wallet-check.html (Bitcoin Core ${manifest.bitcoin_core})`);
+}
+
 // the image server first, the bundled machines while it's unreachable
 const catalogues = [catalogue, ...(bundled_profiles.length ? ["profiles/index.json"] : [])].filter(Boolean);
 
