@@ -1277,16 +1277,14 @@ pub fn set_tlb_code(
         },
     };
     let c = match *slot {
-        None => {
-            unsafe {
-                let mut c = cpu::code_alloc();
-                *slot = Some(c);
-                let c = c.as_mut();
-                c.state_table.fill(u16::MAX);
-                c.state_flags = state_flags;
-                c.wasm_table_index = wasm_table_index;
-                c
-            }
+        None => unsafe {
+            let mut c = cpu::code_alloc();
+            *slot = Some(c);
+            let c = c.as_mut();
+            c.state_table.fill(u16::MAX);
+            c.state_flags = state_flags;
+            c.wasm_table_index = wasm_table_index;
+            c
         },
         Some(mut c) => unsafe {
             let c = c.as_mut();

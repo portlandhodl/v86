@@ -186,8 +186,7 @@ pub fn gen_sse_task_switch_check(ctx: &mut JitContext) {
 /// #GP path runs the interpreter's handler.
 pub fn gen_cli(ctx: &mut JitContext) {
     // if iopl >= cpl: flags &= ~FLAG_INTERRUPT
-    ctx.builder
-        .load_fixed_i32(global_pointers::flags as u32);
+    ctx.builder.load_fixed_i32(global_pointers::flags as u32);
     ctx.builder.const_i32(12);
     ctx.builder.shr_u_i32();
     ctx.builder.const_i32(3);
@@ -197,10 +196,8 @@ pub fn gen_cli(ctx: &mut JitContext) {
 
     ctx.builder.if_void();
     {
-        ctx.builder
-            .const_i32(global_pointers::flags as i32);
-        ctx.builder
-            .load_fixed_i32(global_pointers::flags as u32);
+        ctx.builder.const_i32(global_pointers::flags as i32);
+        ctx.builder.load_fixed_i32(global_pointers::flags as u32);
         ctx.builder.const_i32(!crate::cpu::cpu::FLAG_INTERRUPT);
         ctx.builder.and_i32();
         ctx.builder.store_aligned_i32(0);
@@ -566,10 +563,8 @@ fn gen_string_increment(ctx: &mut JitContext, size_bytes: i32) -> WasmLocal {
     // select takes the condition last: DF set ? -size : size
     ctx.builder.const_i32(-size_bytes);
     ctx.builder.const_i32(size_bytes);
-    ctx.builder
-        .load_fixed_i32(global_pointers::flags as u32);
-    ctx.builder
-        .const_i32(crate::cpu::cpu::FLAG_DIRECTION);
+    ctx.builder.load_fixed_i32(global_pointers::flags as u32);
+    ctx.builder.const_i32(crate::cpu::cpu::FLAG_DIRECTION);
     ctx.builder.and_i32();
     ctx.builder.select();
     ctx.builder.set_local(&inc);
@@ -1398,8 +1393,7 @@ fn gen_get_last_result(ctx: &mut JitContext, bits: u32) {
 /// pushing 0/1. Only the conditions that don't need the parity table are handled.
 fn gen_condition_from_flags_word(ctx: &mut JitContext, cc: u8) {
     dbg_assert!(cc & 1 == 0);
-    ctx.builder
-        .load_fixed_i32(global_pointers::flags as u32);
+    ctx.builder.load_fixed_i32(global_pointers::flags as u32);
     match cc {
         0 => {
             // o: bit 11
