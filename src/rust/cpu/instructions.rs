@@ -1020,11 +1020,20 @@ pub unsafe fn instr32_8F_0_mem(modrm_byte: i32) {
 pub unsafe fn instr32_8F_0_reg(r: i32) { write_reg32(r, return_on_pagefault!(pop32s())); }
 
 pub unsafe fn instr_90() {
-    // nop, or xchg rax, r8 with a REX.B prefix in 64-bit mode
+    // nop, or with a REX.B prefix in 64-bit mode: xchg r8, rax in the current operand size
+    // (49 90: xchg r8, rax; 41 90: xchg r8d, eax; 66 41 90: xchg r8w, ax)
     if *prefixes & prefix::PREFIX_REX_B != 0 {
-        let t = read_reg64(EAX);
-        write_reg64(EAX, read_reg64(8));
-        write_reg64(8, t);
+        if *prefixes & prefix::PREFIX_REX_W != 0 {
+            let t = read_reg64(EAX);
+            write_reg64(EAX, read_reg64(8));
+            write_reg64(8, t);
+        }
+        else if *prefixes & prefix::PREFIX_MASK_OPSIZE != 0 {
+            xchg16r(8);
+        }
+        else {
+            xchg32r(8);
+        }
     }
 }
 pub unsafe fn instr16_91() { xchg16r(1 + rex_b()); }

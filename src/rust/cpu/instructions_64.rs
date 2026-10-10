@@ -805,8 +805,12 @@ pub unsafe fn instr64_8F_0_mem(modrm_byte: i32) {
             write_reg64(ESP, read_reg64(ESP).wrapping_sub(8));
         },
         Ok(addr) => {
-            let stack_value = return_on_pagefault!(safe_read64s(get_stack_pointer64(-8)));
+            // restore rsp while accessing memory, so that the instruction can be restarted if
+            // either access page-faults (same as instr32_8F_0_mem)
+            write_reg64(ESP, read_reg64(ESP).wrapping_sub(8));
+            let stack_value = return_on_pagefault!(safe_read64s(get_stack_pointer64(0)));
             return_on_pagefault!(safe_write64(addr, stack_value));
+            write_reg64(ESP, read_reg64(ESP).wrapping_add(8));
         },
     }
 }
