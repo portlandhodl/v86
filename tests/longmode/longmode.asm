@@ -347,7 +347,7 @@ after_nx:
     add rsp, 8                         ; discard the fake return address
     mov [r15 + 51*8], rax              ; 0xDEAD
 
-    ; ======== test 142/143: pop m64 restart after #PF ========
+    ; ======== test 142-150: pop m64 restart after #PF, xchg r8/rax operand sizes ========
     jmp t142_far                     ; out of line: no room left before 0x1F00
 t142_back:
 
@@ -1694,6 +1694,25 @@ t142_far:
     mov [r15 + 143*8], rax           ; 0x1111111111111111 (the top of the stack)
     lea rsp, [rbx + 16]              ; drop both values, whatever the pop did
 
+    ; test 144-150: xchg r8, rax (opcode 90 + REX.B) in each operand size
+    mov rax, 0x1111111122223333
+    mov r8, 0xBBBBBBBBCCCCDDDD
+    db 0x49, 0x90                    ; xchg r8, rax
+    mov [r15 + 144*8], rax           ; 0xBBBBBBBBCCCCDDDD
+    mov [r15 + 145*8], r8            ; 0x1111111122223333
+    mov rax, 0x1111111122223333
+    mov r8, 0xBBBBBBBBCCCCDDDD
+    db 0x41, 0x90                    ; xchg r8d, eax (both zero-extended)
+    mov [r15 + 146*8], rax           ; 0x00000000CCCCDDDD
+    mov [r15 + 147*8], r8            ; 0x0000000022223333
+    mov rax, 0x1111111122223333
+    mov r8, 0xBBBBBBBBCCCCDDDD
+    db 0x66, 0x41, 0x90              ; xchg r8w, ax (upper 48 bits kept)
+    mov [r15 + 148*8], rax           ; 0x111111112222DDDD
+    mov [r15 + 149*8], r8            ; 0xBBBBBBBBCCCC3333
+    mov rax, 0x1111111122223333
+    db 0x66, 0x90                    ; without REX.B it stays a nop
+    mov [r15 + 150*8], rax           ; 0x1111111122223333
     jmp t142_back
 
     ; #PF handler part of test 142: PD2[1] -> 2MiB page @phys 0xA00000 (PD2
