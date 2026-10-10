@@ -174,6 +174,8 @@ const expected = [
     0x0C0B0A0908070605n, // 139: palignr 5 low qword
     0x0D0C0B0A09080706n, // 140: palignr 17 of the previous result (from its destination)
     0n,                  // 141: palignr 40 (zero)
+    8n,                  // 142: pop m64 with a faulting destination: rsp advanced once
+    0x1111111111111111n, // 143: pop m64 with a faulting destination: the top of the stack was stored
 ];
 
 const emulator = new V86({

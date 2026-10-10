@@ -347,6 +347,10 @@ after_nx:
     add rsp, 8                         ; discard the fake return address
     mov [r15 + 51*8], rax              ; 0xDEAD
 
+    ; ======== test 142/143: pop m64 restart after #PF ========
+    jmp t142_far                     ; out of line: no room left before 0x1F00
+t142_back:
+
     ; ======== test 52: movq xmm8 <-> r64 (REX.W+R, REX.W+B) ========
     mov rax, 0xDEC0DE1122334455
     movq xmm8, rax
@@ -1583,12 +1587,15 @@ gp_handler:
     mov [rsp], r10                      ; rip <- r10
     iretq
 
-; ---- #PF handler: demand-paging for 0x40000000, skip for the NX page ----
+; ---- #PF handler: demand-paging for 0x40000000 and 0x40200000, skip for the NX page ----
 pf_handler:
     mov r8, cr2
     mov rdx, 0x40000000
     cmp r8, rdx
     je .demand
+    mov edx, 0x40200000
+    cmp r8, rdx
+    je t142_demand
     ; NX page: store the I/D bit of the error code and resume at a fixed label
     mov r8, [rsp]                ; error code
     shr r8, 4
@@ -1669,6 +1676,33 @@ t108_far:
     add r9, 1
     add r9, 2
     jmp t108_back
+
+    ; test 142/143: pop m64 restarts cleanly after a #PF on its destination.
+    ; The destination page is unmapped: the handler maps it and iretq re-runs
+    ; the pop, which must not have moved rsp on the faulting attempt
+t142_far:
+    mov rax, 0x2222222222222222
+    push rax
+    mov rax, 0x1111111111111111
+    push rax
+    mov rbx, rsp
+    pop qword [abs 0x40200000]
+    mov rcx, rsp
+    sub rcx, rbx
+    mov [r15 + 142*8], rcx           ; 8 (one slot popped)
+    mov rax, [abs 0x40200000]
+    mov [r15 + 143*8], rax           ; 0x1111111111111111 (the top of the stack)
+    lea rsp, [rbx + 16]              ; drop both values, whatever the pop did
+
+    jmp t142_back
+
+    ; #PF handler part of test 142: PD2[1] -> 2MiB page @phys 0xA00000 (PD2
+    ; was installed by pf_handler.demand)
+t142_demand:
+    mov dword [abs 0x5008], 0xA00087 ; P|RW|US|PS
+    mov dword [abs 0x500C], 0
+    add rsp, 8
+    iretq                            ; re-executes the faulting pop
 
 [bits 16]
     ; reset vector at file offset 0xFFF0
